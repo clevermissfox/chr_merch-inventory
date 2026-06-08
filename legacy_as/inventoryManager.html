@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base target="_top" />
+  <?!= include("styles"); ?>
+  <?!= include("inventoryManagerStyles"); ?>
+</head>
+
+<body>
+  <main class="inventory-shell wrapper">
+    <section class="hero card">
+      <h1>Inventory Manager</h1>
+      <p>
+        Check warehouse counts, compare them with the website, and push stock
+        updates when you are ready.
+      </p>
+      <div id="heroMetrics" class="hero-grid"></div>
+    </section>
+
+    <section class="toolbar card">
+      <div class="toolbar-row">
+        <div>
+          <div class="badge">Signed In</div>
+          <div id="userLabel" class="small"></div>
+        </div>
+        <div class="toolbar-actions">
+          <button id="reloadBtn" type="button" class="secondary">
+            Refresh Website Stock
+          </button>
+          <button id="syncBtn" type="button">Push Warehouse Stock Live</button>
+        </div>
+      </div>
+      <div class="toolbar-row">
+        <div id="dirtyLabel" class="status-line" hidden></div>
+        <div id="statusLine" class="status-line muted">Preparing inventory...</div>
+      </div>
+    </section>
+
+    <section id="content" class="inventory-groups">
+      <div class="loading-block card">
+        <h2>Loading inventory</h2>
+        <p class="muted">Please wait while we refresh your inventory.</p>
+      </div>
+    </section>
+  </main>
+
+  <?!= include("inventoryManagerScript"); ?>
+</body>
+
+</html>

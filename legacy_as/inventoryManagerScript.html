@@ -1,0 +1,423 @@
+<script>
+  const state = {
+    data: null,
+    dirty: new Map(),
+    loading: false,
+    saving: false,
+    access: null,
+  };
+
+  const els = {};
+
+  document.addEventListener("DOMContentLoaded", () => {
+    els.heroMetrics = document.getElementById("heroMetrics");
+    els.userLabel = document.getElementById("userLabel");
+    els.reloadBtn = document.getElementById("reloadBtn");
+    els.syncBtn = document.getElementById("syncBtn");
+    els.dirtyLabel = document.getElementById("dirtyLabel");
+    els.statusLine = document.getElementById("statusLine");
+    els.content = document.getElementById("content");
+
+    els.reloadBtn.addEventListener("click", refreshWebsiteStock);
+    els.syncBtn.addEventListener("click", syncChanges);
+
+    loadInventory();
+  });
+
+  function loadInventory() {
+    if (state.loading || state.saving) return;
+
+    state.loading = true;
+    state.dirty.clear();
+    state.data = null;
+    state.access = null;
+    updateToolbar();
+    renderLoadingState("Checking access and permissions...");
+    runLoadStageCheckAccess_();
+  }
+
+  function refreshWebsiteStock() {
+    if (state.loading || state.saving || !state.data) return;
+
+    state.loading = true;
+    updateToolbar();
+    renderLoadingState("Refreshing website stock...");
+
+    google.script.run
+      .withSuccessHandler(() => {
+        renderLoadingState("Website stock is up to date. Rebuilding the inventory list...");
+        google.script.run
+          .withSuccessHandler((data) => {
+            state.loading = false;
+            state.data = data;
+            renderAll();
+            setStatus(
+              `Refreshed website stock for ${data.summary.rowCount} inventory rows.`,
+            );
+          })
+          .withFailureHandler((err) => {
+            handleLoadFailure_("rebuilding the inventory list", err);
+          })
+          .getInventoryManagerData();
+      })
+      .withFailureHandler((err) => {
+        handleLoadFailure_("refreshing website stock", err);
+      })
+      .refreshInventoryWooStockForUi();
+  }
+
+  function runLoadStageCheckAccess_() {
+    google.script.run
+      .withSuccessHandler((access) => {
+        state.access = access || null;
+        renderLoadingState("Access confirmed. Updating inventory rows...");
+        runLoadStageEnsureSkus_();
+      })
+      .withFailureHandler((err) => {
+        handleLoadFailure_("checking access and permissions", err);
+      })
+      .checkInventoryManagerAccessForUi();
+  }
+
+  function runLoadStageEnsureSkus_() {
+    google.script.run
+      .withSuccessHandler(() => {
+        renderLoadingState("Inventory rows updated. Pulling current stock from the website...");
+        runLoadStageRefreshWoo_();
+      })
+      .withFailureHandler((err) => {
+        handleLoadFailure_("updating inventory rows", err);
+      })
+      .ensureInventoryIndexForUi();
+  }
+
+  function runLoadStageRefreshWoo_() {
+    google.script.run
+      .withSuccessHandler(() => {
+        renderLoadingState("Website stock is up to date. Building the inventory list...");
+        runLoadStageBuildView_();
+      })
+      .withFailureHandler((err) => {
+        handleLoadFailure_("pulling current stock from the website", err);
+      })
+      .refreshInventoryWooStockForUi();
+  }
+
+  function runLoadStageBuildView_() {
+    google.script.run
+      .withSuccessHandler((data) => {
+        state.loading = false;
+        state.data = data;
+        renderAll();
+        setStatus(
+          `Loaded ${data.summary.rowCount} inventory rows across ${data.summary.productCount} products.`,
+        );
+      })
+      .withFailureHandler((err) => {
+        handleLoadFailure_("building the inventory list", err);
+      })
+      .getInventoryManagerViewData(state.access);
+  }
+
+  function syncChanges() {
+    if (state.loading || state.saving || !state.data || !state.data.canEdit) return;
+
+    const changes = Array.from(state.dirty.values());
+    if (!changes.length) {
+      setStatus("No stock changes to sync.");
+      return;
+    }
+
+    state.saving = true;
+    updateToolbar();
+    setStatus(`Saving ${changes.length} warehouse stock update(s) to the website...`);
+
+    google.script.run
+      .withSuccessHandler((result) => {
+        state.saving = false;
+        state.dirty.clear();
+        setStatus(`Saved ${result.updated} stock update(s) to the website.`);
+        updateToolbar();
+      })
+      .withFailureHandler((err) => {
+        state.saving = false;
+        updateToolbar();
+        setStatus(extractError(err), "error");
+      })
+      .syncInventoryManagerStock(changes);
+  }
+
+  function renderAll() {
+    renderHero();
+    renderGroups();
+    updateToolbar();
+  }
+
+  function renderHero() {
+    const data = state.data;
+    els.userLabel.textContent = data.userEmail
+      ? `${data.userEmail} (${data.role})`
+      : data.role;
+
+    const metricDefs = [
+      { label: "Products", value: data.summary.productCount },
+      { label: "Inventory Rows", value: data.summary.rowCount },
+      { label: "Stock Conflicts", value: data.summary.unsyncedCount },
+      { label: "Conflict Summary", value: data.summary.conflictGroups },
+    ];
+
+    els.heroMetrics.innerHTML = "";
+    metricDefs.forEach((metric) => {
+      const isConflictSummary = metric.label === "Conflict Summary";
+
+      if (isConflictSummary) {
+        if (!Array.isArray(metric.value) || metric.value.length === 0) {
+          return;
+        }
+
+        const card = document.createElement("div");
+        card.className = "conflict-summary metric";
+
+        const heading = document.createElement("div");
+        heading.innerHTML =
+          "<strong>Conflicts found</strong><p class='muted'>These products have different warehouse and website counts.</p>";
+
+        const list = document.createElement("ul");
+        list.className = "conflict-list";
+
+        metric.value.forEach((group) => {
+          const chip = document.createElement("li");
+          chip.className = "conflict-chip";
+          chip.textContent = `${group.displayName} (${group.count})`;
+          list.appendChild(chip);
+        });
+
+        card.appendChild(heading);
+        card.appendChild(list);
+        els.heroMetrics.appendChild(card);
+        return;
+      }
+
+      const card = document.createElement("div");
+      card.className = "metric";
+
+      const badge = document.createElement("div");
+      badge.className = "badge";
+      badge.innerHTML = `${escapeHtml(metric.label)}`;
+
+      const value = document.createElement("div");
+      value.className = "metric-value";
+      value.innerHTML = `${escapeHtml(String(metric.value))}`;
+
+      card.append(badge, value);
+      els.heroMetrics.appendChild(card);
+    });
+  }
+
+  function renderGroups() {
+    const groups = state.data.groups || [];
+    els.content.innerHTML = "";
+
+    if (!groups.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state card";
+      empty.innerHTML =
+        "<h2>No inventory rows found</h2><p class='muted'>Inventory data is empty after refresh.</p>";
+      els.content.appendChild(empty);
+      return;
+    }
+
+    groups.forEach((group, index) => {
+      const details = document.createElement("details");
+      details.className = "inventory-group card";
+      details.open = index < 1;
+
+      const summary = document.createElement("summary");
+      summary.innerHTML =
+        `<span class="summary-title"><strong>${escapeHtml(group.displayName)}</strong>` +
+        `<span class="summary-count">${escapeHtml(String(group.rowCount))} SKU${group.rowCount === 1 ? "" : "s"}</span></span>` +
+        `<span class="summary-count">${group.isOrphanGroup ? "review" : "toggle"}</span>`;
+      details.appendChild(summary);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-wrapper";
+
+      const table = document.createElement("table");
+      table.className = "inventory-table";
+      table.innerHTML =
+        "<colgroup><col style='width: fit-content;'><col style='width: 100%;'><col style='width: fit-content;'><col style='width: fit-content;'> </colgroup>" +
+        "<thead><tr><th>SKU</th><th>Item</th><th><abbr title='How many units are currently in your warehouse and available to sync to the website.'>Warehouse Stock</abbr></th><th><abbr title='How many units are currently showing on the website after the latest refresh.'>Website Stock</abbr></th></tr></thead>";
+
+      const tbody = document.createElement("tbody");
+      group.rows.forEach((row) => {
+        tbody.appendChild(renderRow(row));
+      });
+
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+      details.appendChild(wrapper);
+      els.content.appendChild(details);
+    });
+  }
+
+  function renderRow(row) {
+    const tr = document.createElement("tr");
+
+    const skuCell = document.createElement("td");
+    skuCell.className = "sku-cell";
+    skuCell.textContent = row.sku;
+
+    const labelCell = document.createElement("td");
+    labelCell.className = "variant-cell";
+    labelCell.textContent =
+      row.rowType === "product" ? `${row.label || row.sku} SKU` : row.label || row.sku;
+
+    const stockCell = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = "1";
+    input.value = displayQty(row.stockQty);
+    input.dataset.sku = row.sku;
+    input.dataset.original = canonicalQty(row.stockQty);
+    input.dataset.woo = canonicalQty(row.wooStock);
+    input.disabled = !state.data.canEdit;
+    input.addEventListener("input", handleQtyInput);
+    stockCell.appendChild(input);
+
+    const wooCell = document.createElement("td");
+    wooCell.dataset.role = "woo";
+    wooCell.dataset.mismatch =
+      canonicalQty(row.stockQty) !== canonicalQty(row.wooStock) ? "true" : "false";
+    const wooInput = document.createElement("input");
+    wooInput.type = "number";
+    wooInput.value = displayQty(row.wooStock);
+    wooInput.disabled = true;
+    wooCell.appendChild(wooInput);
+
+    tr.appendChild(skuCell);
+    tr.appendChild(labelCell);
+    tr.appendChild(stockCell);
+    tr.appendChild(wooCell);
+    return tr;
+  }
+
+  function handleQtyInput(event) {
+    const input = event.currentTarget;
+    const sku = input.dataset.sku;
+    const original = input.dataset.original;
+    const current = canonicalQty(input.value);
+
+    if (current === null) {
+      input.setCustomValidity("Use a whole number or leave blank.");
+      input.reportValidity();
+      return;
+    }
+
+    input.setCustomValidity("");
+
+    if (current === original) {
+      state.dirty.delete(sku);
+    } else {
+      state.dirty.set(sku, {
+        sku,
+        stock_qty: current === "" ? "" : Number(current),
+      });
+    }
+
+    const wooCell = input.closest("tr").querySelector('td[data-role="woo"]');
+    if (wooCell) {
+      wooCell.dataset.mismatch = current !== input.dataset.woo ? "true" : "false";
+    }
+
+    updateToolbar();
+  }
+
+  function updateToolbar() {
+    const dirtyCount = state.dirty.size;
+    const busy = state.loading || state.saving;
+    const canEdit = !!(state.data && state.data.canEdit);
+
+    els.reloadBtn.disabled = busy;
+    els.syncBtn.disabled = busy || !canEdit || dirtyCount === 0;
+
+    if (state.loading) {
+      els.dirtyLabel.hidden = false;
+      els.dirtyLabel.textContent = "Preparing inventory...";
+      els.statusLine.hidden = true;
+      els.statusLine.textContent = "";
+      return;
+    }
+
+    if (dirtyCount > 0) {
+      els.dirtyLabel.hidden = false;
+      els.dirtyLabel.textContent =
+        `${dirtyCount} unsaved warehouse stock change${dirtyCount === 1 ? "" : "s"}.`;
+      els.statusLine.hidden = false;
+      return;
+    }
+
+    els.dirtyLabel.hidden = true;
+    els.dirtyLabel.textContent = "";
+    els.statusLine.hidden = false;
+  }
+
+  function renderError(message) {
+    els.content.innerHTML = "";
+    const error = document.createElement("div");
+    error.className = "empty-state card";
+    error.innerHTML =
+      `<h2>Inventory could not load</h2><p class="muted">${escapeHtml(message)}</p>`;
+    els.content.appendChild(error);
+    setStatus(message, "error");
+  }
+
+  function renderLoadingState(message) {
+    els.content.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "loading-block card";
+    loading.innerHTML =
+      `<h2>Loading inventory</h2><p class="muted">${escapeHtml(message)}</p>`;
+    els.content.appendChild(loading);
+  }
+
+  function handleLoadFailure_(stepLabel, err) {
+    state.loading = false;
+    const message = `Error while ${stepLabel}: ${extractError(err)}`;
+    renderError(message);
+    updateToolbar();
+  }
+
+  function setStatus(message, tone) {
+    els.statusLine.hidden = false;
+    els.statusLine.textContent = message;
+    els.statusLine.dataset.tone = tone || "";
+  }
+
+  function displayQty(value) {
+    if (value === "" || value == null) return "";
+    return String(value);
+  }
+
+  function canonicalQty(value) {
+    if (value === "" || value == null) return "";
+    const trimmed = String(value).trim();
+    if (!trimmed) return "";
+    if (!/^\d+$/.test(trimmed)) return null;
+    return String(Number(trimmed));
+  }
+
+  function extractError(err) {
+    if (err && err.message) return err.message;
+    return String(err || "Unknown error");
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+</script>
