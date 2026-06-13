@@ -1,12 +1,12 @@
 import type { Route } from "./+types/merch.products";
-import { MerchShell } from "~/components/merch-shell";
 
 export function meta({}: Route.MetaArgs) {
   return [
     { title: "CHR Merch | Products" },
     {
       name: "description",
-      content: "Product-level merch management with nested descriptions and variants.",
+      content:
+        "Product-level merch management with nested descriptions and variants.",
     },
   ];
 }
@@ -28,11 +28,7 @@ const products = [
 
 export default function ProductsPage() {
   return (
-    <MerchShell
-      eyebrow="Product workspace"
-      title="Products are the top-level editor."
-      kicker="Descriptions and variants are not separate sections anymore. They belong under each product card so the team stays in one place while editing the right thing."
-    >
+    <>
       <section className="inventory-groups">
         {products.map((product) => (
           <details key={product.sku} className="inventory-group card" open>
@@ -84,6 +80,6 @@ export default function ProductsPage() {
           </details>
         ))}
       </section>
-    </MerchShell>
+    </>
   );
 }

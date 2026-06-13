@@ -1,5 +1,4 @@
 import type { Route } from "./+types/merch.inventory";
-import { MerchShell } from "~/components/merch-shell";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -40,11 +39,7 @@ const sampleGroups = [
 
 export default function InventoryPage() {
   return (
-    <MerchShell
-      eyebrow="Inventory workspace"
-      title="Inventory Manager"
-      kicker="Check warehouse counts, compare them with the website, and push stock updates when you are ready."
-    >
+    <>
       <section className="toolbar card">
         <div className="toolbar-row">
           <div>
@@ -126,6 +121,6 @@ export default function InventoryPage() {
           </details>
         ))}
       </section>
-    </MerchShell>
+    </>
   );
 }

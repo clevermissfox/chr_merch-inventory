@@ -23,6 +23,11 @@ export const links: Route.LinksFunction = () => [
   },
 ];
 
+// export const meta: Route.MetaFunction = () => [
+//   { name: "description", content: "CHR Merch Inventory" },
+//   { name: "theme-color", content: "#d3aa56" },
+// ];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">

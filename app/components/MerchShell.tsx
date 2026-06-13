@@ -10,7 +10,7 @@ const navItems = [
 type MerchShellProps = {
   title: string;
   eyebrow: string;
-  children: ReactNode;
+  children?: ReactNode;
   kicker?: string;
 };
 
@@ -52,8 +52,7 @@ export function MerchShell({
           <h2 className="merch-hero__title">{title}</h2>
           {kicker ? <p className="merch-hero__kicker">{kicker}</p> : null}
         </section>
-
-        <div className="merch-content">{children}</div>
+        {children && <div className="merch-content">{children}</div>}
       </main>
     </div>
   );
