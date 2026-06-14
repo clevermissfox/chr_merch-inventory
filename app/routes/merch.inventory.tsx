@@ -1,4 +1,7 @@
+import { useEffect } from "react";
 import type { Route } from "./+types/merch.inventory";
+import { useCatalog } from "../context/CatalogContext";
+import { useAuth } from "~/context/AuthContext";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -11,57 +14,51 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-const metrics = [
-  { label: "Products", value: 5 },
-  { label: "Inventory Rows", value: 44 },
-  { label: "Stock Conflicts", value: 3 },
-];
-
-const sampleGroups = [
-  {
-    title: "CHR Classic T-Shirt",
-    count: "22 SKUs",
-    rows: [
-      ["CHR-CLO-0001-BLK-SM", "black small", "2", "2", "ok"],
-      ["CHR-CLO-0001-BLK-MD", "black medium", "2", "2", "ok"],
-      ["CHR-CLO-0001-BLK-LG", "black large", "1", "1", "ok"],
-    ],
-  },
-  {
-    title: "CHR Desert Angels Baby Tee",
-    count: "6 SKUs",
-    rows: [
-      ["CHR-CLO-0012-CRM-SM", "cream small", "8", "6", "mismatch"],
-      ["CHR-CLO-0012-CRM-MD", "cream medium", "4", "4", "ok"],
-    ],
-  },
-];
-
 export default function InventoryPage() {
+  const { user, isLoading } = useAuth();
+  const canEdit = user?.canEdit === true;
+  const { state, loadCatalog, setStockQty } = useCatalog();
+  const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
+
+  useEffect(() => {
+    if (!state.catalog && !state.loading) {
+      void loadCatalog();
+    }
+  }, [state.catalog, state.loading, loadCatalog]);
+
+  if (state.loading && !state.catalog) {
+    return (
+      <section className="card">
+        <div className="status-line">Loading inventory…</div>
+      </section>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <section className="card">
+        <div className="status-line">Error: {state.error}</div>
+      </section>
+    );
+  }
+
+  if (!state.catalog) {
+    return (
+      <section className="card">
+        <div className="status-line">No inventory data available.</div>
+      </section>
+    );
+  }
+
+  const { catalog } = state;
+  const metrics = [
+    { label: "Products", value: catalog.summary.productCount },
+    { label: "Inventory Rows", value: catalog.summary.rowCount },
+    { label: "Stock Conflicts", value: catalog.summary.conflictGroups.length },
+  ];
+
   return (
     <>
-      <section className="toolbar card">
-        <div className="toolbar-row">
-          <div>
-            <div className="badge">Signed In</div>
-            <div className="small">dev@cochiseharmreduction.org (editor)</div>
-          </div>
-          <div className="toolbar-actions">
-            <button type="button" className="btn-secondary">
-              Refresh Website Stock
-            </button>
-            <button type="button" className="btn-primary">
-              Push Warehouse Stock Live
-            </button>
-          </div>
-        </div>
-        <div className="toolbar-row">
-          <div className="status-line">
-            Loaded 44 inventory rows across 5 products.
-          </div>
-        </div>
-      </section>
-
       <section className="hero card">
         <div className="hero-grid">
           {metrics.map((metric) => (
@@ -73,48 +70,134 @@ export default function InventoryPage() {
         </div>
       </section>
 
+      <section className="toolbar card">
+        <div className="toolbar-row">
+          <div>
+            <div className="badge">
+              {canEdit ? "Editor Access" : "View Access"}
+            </div>
+            <div className="small">
+              {user?.email ?? "Authorized user"}
+              {user?.role ? ` (${user.role})` : ""}
+            </div>
+          </div>
+
+          <div className="toolbar-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void loadCatalog(true)}
+              disabled={state.loading}
+            >
+              {state.loading ? "Refreshing..." : "Refresh Website Stock"}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!hasDirtyChanges || !canEdit}
+            >
+              Push Warehouse Stock Live
+            </button>
+          </div>
+        </div>
+
+        <div className="toolbar-row">
+          <div className="status-line">
+            {state.loading
+              ? "Refreshing website stock…"
+              : `Loaded ${catalog.summary.rowCount} inventory rows across ${catalog.summary.productCount} products.`}
+          </div>
+        </div>
+      </section>
+
       <section className="inventory-groups">
-        {sampleGroups.map((group) => (
-          <details key={group.title} className="inventory-group card" open>
+        {catalog.groups.map((group, i) => (
+          <details
+            key={group.productId}
+            className="inventory-group card"
+            open={i === 0}
+          >
             <summary>
               <div className="summary-title">
-                <strong>{group.title}</strong>
-                <span className="summary-count">{group.count}</span>
+                <strong>{group.displayName}</strong>
+                <span className="summary-count">
+                  {group.rowCount} SKU{group.rowCount === 1 ? "" : "s"}
+                </span>
               </div>
               <span className="toggle-label">Toggle</span>
             </summary>
 
             <div className="table-wrapper">
               <table className="inventory-table">
+                <colgroup>
+                  <col style={{ width: "fit-content" }} />
+                  <col style={{ width: "100%" }} />
+                  <col style={{ width: "fit-content" }} />
+                  <col style={{ width: "fit-content" }} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>SKU</th>
                     <th>Item</th>
                     <th>Warehouse Stock</th>
                     <th>Website Stock</th>
-                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {group.rows.map((row) => (
-                    <tr key={row[0]}>
-                      <td className="sku-cell">{row[0]}</td>
-                      <td className="variant-cell">{row[1]}</td>
-                      <td>{row[2]}</td>
-                      <td>{row[3]}</td>
-                      <td>
-                        <span
-                          className={
-                            row[4] === "mismatch"
-                              ? "merch-status merch-status--mismatch"
-                              : "merch-status merch-status--ok"
-                          }
-                        >
-                          {row[4]}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {group.rows.map((row) => {
+                    const dirtyValue = state.dirtyBySku[row.sku]?.stockQty;
+                    const displayStockQty =
+                      dirtyValue !== undefined ? dirtyValue : row.stockQty;
+
+                    const mismatch = row.stockQty !== row.wooStock;
+
+                    return (
+                      <tr
+                        key={row.sku}
+                        className={
+                          mismatch
+                            ? "merch-status merch-status--mismatch"
+                            : "merch-status merch-status--ok"
+                        }
+                      >
+                        <td className="sku-cell">{row.sku}</td>
+                        <td className="variant-cell">{row.label}</td>
+                        <td>
+                          {canEdit ? (
+                            <input
+                              type="number"
+                              name={`stock-${row.sku}`}
+                              aria-label={`Stock quantity for ${row.label} (SKU: ${row.sku})`}
+                              className="stock-input ta-cen"
+                              value={displayStockQty ?? ""}
+                              onChange={(event) => {
+                                const nextValue = event.target.value
+                                  ? event.target.value
+                                  : row.stockQty;
+                                setStockQty(
+                                  row.sku,
+                                  nextValue === "" ? "" : Number(nextValue),
+                                  row.stockQty ?? null,
+                                );
+                              }}
+                            />
+                          ) : (
+                            <span className="ta-cen">{row.stockQty ?? ""}</span>
+                          )}
+                        </td>
+                        <td data-mismatch={mismatch} className="ta-cen">
+                          <input
+                            type="number"
+                            name={`woo-${row.sku}`}
+                            aria-label={`Website stock quantity for ${row.label} (SKU: ${row.sku})`}
+                            className="stock-input ta-cen"
+                            value={row.wooStock ?? ""}
+                            disabled
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

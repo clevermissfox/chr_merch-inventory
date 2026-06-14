@@ -2,8 +2,6 @@
 .merch-nav__link,
 .merch-nav__disabled,
 .merch-chip,
-.merch-kpi__label,
-.metric-label,
 .summary-count,
 .toggle-label,
 .status-line {
@@ -11,7 +9,6 @@
   text-transform: uppercase;
 }
 
-.card,
 .merch-topbar,
 .merch-hero,
 .merch-card,
@@ -64,14 +61,13 @@
 .merch-sidebar__callout-eyebrow,
 .merch-note-box__eyebrow,
 .badge,
-.metric-label,
 .merch-kpi__label,
 .summary-count,
 .toggle-label,
 .status-line,
 .merch-nav__link,
 .merch-nav__disabled {
-  font-size: var(--fs-200);
+  font-size: var(--fs-300);
 }
 
 .merch-brand__eyebrow {
@@ -119,7 +115,7 @@
   border: 0.1em solid var(--clr-border-soft);
   border-radius: var(--br-round);
   padding: var(--spacing-050, 0.5rem) var(--spacing-100, 1rem);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   background: var(--clr-surface-secondary);
 }
 
@@ -150,7 +146,7 @@
 }
 
 .merch-hero__eyebrow {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .merch-hero__title {
@@ -160,7 +156,7 @@
 
 .merch-hero__kicker {
   max-width: var(--default-max-inline-size);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   font-size: var(--fs-300);
 }
 
@@ -186,8 +182,7 @@
 .merch-note-box,
 .merch-kpi,
 .metric,
-.toolbar,
-.inventory-group {
+.toolbar {
   padding: var(--spacing-125, 1.25rem);
 }
 
@@ -247,7 +242,7 @@
 }
 
 .merch-chip--soft {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .merch-kpi-grid,
@@ -271,9 +266,11 @@
 
 .merch-kpi__label,
 .metric-label {
-  color: var(--clr-muted);
-  font-family: var(--ff-secondary);
   font-size: var(--fs-300);
+  text-transform: uppercase;
+  font-weight: var(--fw-500);
+  font-family: var(--ff-secondary);
+  letter-spacing: 0.08em;
 }
 
 .merch-kpi__value,
@@ -282,13 +279,23 @@
   font-size: var(--fs-600);
   line-height: var(--lh-1);
   font-weight: var(--fw-700);
+  color: var(--clr-text-muted);
 }
 
 .merch-kpi__note {
   margin-top: var(--spacing-050, 0.5rem);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   font-size: var(--fs-300);
   line-height: var(--lh-400);
+}
+
+.conflict-summary:not([hidden], .conflict-list:empty) {
+  display: grid;
+  gap: var(--spacing-075, 0.75rem);
+  padding: var(--spacing-100, 1rem);
+  border: 1px solid color-mix(in oklch, var(--clr-primary), transparent 55%);
+  border-radius: var(--default-br);
+  background: color-mix(in oklch, var(--clr-primary), transparent 88%);
 }
 
 .merch-note-box__body {
@@ -333,7 +340,7 @@
 
 .merch-panel__body {
   margin-top: var(--spacing-050, 0.5rem);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   line-height: var(--lh-400);
 }
 
@@ -346,7 +353,7 @@
 }
 
 .merch-note-box__eyebrow {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   font-family: var(--ff-secondary);
 }
 
@@ -360,10 +367,6 @@
   width: 100%;
   min-width: 680px;
   border-collapse: collapse;
-}
-
-.merch-table thead {
-  background: var(--clr-surface-secondary);
 }
 
 .merch-table th,
@@ -393,7 +396,7 @@
   font-weight: var(--fw-700);
 }
 
-.merch-status {
+/* .merch-status {
   display: inline-flex;
   align-items: center;
   border-radius: var(--br-round);
@@ -401,31 +404,17 @@
   font-size: var(--fs-200);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
+} */
+/*
 .merch-status--mismatch {
   background: color-mix(in oklch, var(--clr-accent) 18%, transparent);
   color: color-mix(in oklch, var(--clr-accent) 85%, white 15%);
-}
+} */
 
-.merch-status--ok {
+/* .merch-status--ok {
   background: color-mix(in oklch, var(--clr-success) 18%, transparent);
   color: color-mix(in oklch, var(--clr-success) 18%, var(--clr-text));
-}
-
-.small {
-  color: var(--clr-muted);
-  font-size: var(--fs-300);
-}
-
-.muted {
-  color: var(--clr-muted);
-}
-
-.sticky {
-  position: sticky;
-  top: 0;
-}
+} */
 
 .selected-field {
   outline: 0.2em solid var(--clr-accent);
@@ -442,16 +431,9 @@
   gap: var(--spacing-100, 1rem);
 }
 
-.hero,
-.toolbar,
-.loading-block,
-.empty-state {
-  padding: var(--spacing-125, 1.25rem);
-}
-
 .hero p {
   max-width: var(--default-max-inline-size);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .metric {
@@ -480,20 +462,20 @@
 .badge {
   font-family: var(--ff-secondary);
   font-size: var(--fs-200);
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .small {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   margin-top: var(--spacing-025, 0.25rem);
 }
 
 .status-line {
-  color: var(--clr-surface-secondary);
+  color: var(--clr-text-muted);
 }
 
 .status-line.muted {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .status-line[data-tone="error"] {
@@ -507,17 +489,21 @@
 
 .inventory-group {
   overflow: hidden;
-  padding: 0;
 }
 
 .inventory-group summary {
   list-style: none;
   cursor: pointer;
-  padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-100, 1rem);
+  padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
+  background: color-mix(
+    in oklch,
+    var(--clr-surface-primary),
+    var(--clr-neutral-0) 6%
+  );
 }
 
 .inventory-group summary::-webkit-details-marker {
@@ -531,15 +517,22 @@
 }
 
 .summary-count {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .toggle-label {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
 }
 
 .table-wrapper {
+  display: grid;
+  gap: var(--spacing-075, 0.75rem);
   overflow: auto;
+  scrollbar-width: 0;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .table-wrapper th {
@@ -555,13 +548,9 @@
   border-collapse: collapse;
 }
 
-.inventory-table thead {
-  background: var(--clr-surface-tertiary);
-}
-
 .inventory-table th,
 .inventory-table td {
-  border-top: 0.1em solid var(--clr-border-soft);
+  border: 0.1em solid var(--clr-border-soft);
   padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem);
 }
 
@@ -577,8 +566,7 @@
 }
 
 .inventory-table input[type="number"] {
-  width: 5.5rem;
-  text-align: center;
+  border: none;
 }
 
 .inventory-table input[disabled] {
@@ -620,6 +608,8 @@
   -webkit-user-select: none;
   -ms-user-select: none;
   -webkit-appearance: none;
+  appearance: none;
+  user-select: none;
   background-color: WHITE;
   background-image: none;
   border: 1px solid #747775;
@@ -743,7 +733,7 @@
 }
 
 .auth-page p {
-  color: var(--clr-muted);
+  color: var(--clr-text-muted);
   margin-bottom: var(--spacing-150);
 }
 
@@ -783,15 +773,6 @@
   .merch-topbar,
   .merch-stage {
     width: min(100%, calc(100% - 1rem));
-  }
-
-  .merch-hero,
-  .merch-card,
-  .merch-note-box,
-  .toolbar,
-  .hero,
-  .loading-block {
-    padding: var(--spacing-100, 1rem);
   }
 
   .merch-table {

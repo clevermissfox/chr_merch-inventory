@@ -61,6 +61,7 @@ export function MerchShell({
             className="btn-logout btn-icon"
             onClick={handleLogout}
             aria-label="Logout"
+            title="Logout"
           >
             <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
           </button>

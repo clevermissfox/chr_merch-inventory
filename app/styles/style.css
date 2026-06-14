@@ -27,8 +27,13 @@
   --clr-neutral-1000: #000000;
   --clr-primary-500: #d3aa56;
   --clr-accent-300: #d3aae6;
+
+  --clr-primary: var(--clr-primary-500);
   --clr-accent: var(--clr-accent-300);
-  --clr-bg-body: var(--clr-primary-500);
+
+  --clr-text: var(--clr-neutral-0);
+  --clr-text-muted: color-mix(in oklch, var(--clr-text) 80%, transparent);
+
   --clr-surface-primary: var(--clr-neutral-900);
   --clr-surface-secondary: oklch(
     from var(--clr-surface-primary) calc(l + 0.01) c h
@@ -36,14 +41,11 @@
   --clr-surface-tertiary: oklch(
     from var(--clr-surface-secondary) calc(l + 0.01) c h
   );
-  --clr-text: var(--clr-neutral-0);
-  --clr-muted: color-mix(in oklch, var(--clr-text) 80%, transparent);
+
+  --clr-bg-body: var(--clr-primary);
   --clr-border: color-mix(in oklch, var(--clr-neutral-0) 30%, transparent);
   --clr-border-soft: color-mix(in oklch, var(--clr-neutral-0) 18%, transparent);
-  --clr-primary: var(--clr-primary-500);
-  --clr-surface: var(--clr-surface-primary);
-  --clr-surface-2: var(--clr-surface-secondary);
-  --clr-surface-3: var(--clr-surface-tertiary);
+
   --clr-success: #82d6ab;
   --clr-danger: #ff9ca4;
   --clr-warning: #ffd293;
@@ -94,6 +96,13 @@
   padding: 0;
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  outline-color: var(--clr-accent);
+  outline-offset: 0.2em;
+}
+
+::selection {
+  background-color: var(--clr-text);
+  color: var(--clr-bg);
 }
 
 :target {
@@ -146,6 +155,7 @@ input::-webkit-inner-spin-button {
 /* ... and for Firefox */
 input[type="number"] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* INPUT TYPE=SEARCH clear button */
@@ -198,8 +208,8 @@ input[type="color"] {
 }
 
 ::-webkit-scrollbar {
-  inline-size: 8px;
-  block-size: 4px;
+  inline-size: 0.5em;
+  block-size: 0.25em;
 }
 
 ::-webkit-scrollbar-track {
@@ -207,8 +217,12 @@ input[type="color"] {
 }
 
 ::-webkit-scrollbar-thumb {
-  border-radius: 10px;
+  border-radius: 0.75em;
   background: var(--clr-accent);
+}
+
+:is(html, body)::-webkit-scrollbar-thumb {
+  background: var(--clr-neutral-900);
 }
 
 ::placeholder {
@@ -326,4 +340,11 @@ button:disabled {
 
 .btn-logout {
   --_clr-btn-border: transparent;
+  --_btn-padding: var(--spacing-025, 0.25rem) var(--spacing-025, 0.25rem)
+    var(--spacing-025, 0.25rem) var(--spacing-050, 0.5rem);
+  transition: border-color var(--default-trans-dur) var(--default-timing);
+
+  &:is(:hover, :focus-visible) {
+    --_clr-btn-border: var(--clr-border-soft);
+  }
 }

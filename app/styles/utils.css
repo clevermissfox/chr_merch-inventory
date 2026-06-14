@@ -19,7 +19,7 @@
 }
 
 .small {
-  font-size: var(--fs-small, 0.825em);
+  font-size: var(--fs-300, 0.825em);
   line-height: var(--lh-1, 1.1);
 }
 
@@ -62,7 +62,7 @@
 }
 
 .text-small {
-  font-size: var(--fs-small, 0.875em);
+  font-size: var(--fs-300, 0.875em);
 }
 
 .text-large {
@@ -568,12 +568,4 @@
 
 .margin-be-auto {
   margin-block-end: auto;
-}
-
-.relative {
-  position: relative;
-}
-
-.display-block {
-  display: block;
 }

@@ -15,6 +15,8 @@ declare module "express-session" {
       id: string;
       email: string;
       name?: string;
+      role?: string;
+      canEdit?: boolean;
     };
     redirect?: string | null;
   }
@@ -40,7 +42,7 @@ app.use(express.json());
 app.use(
   session({
     name: "chr-merch-session",
-    secret: process.env.SESSION_SECRET || "chr-merch-dev-secret",
+    secret: process.env.SESSION_SECRET || "harmredux",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -55,7 +57,9 @@ function getSpreadsheetId(): string {
   const isProduction = process.env.NODE_ENV === "production";
   return isProduction
     ? process.env.PRODUCTION_SPREADSHEET_ID || ""
-    : process.env.STAGING_SPREADSHEET_ID || "";
+    : process.env.NODE_ENV === "development"
+      ? process.env.PRODUCTION_SPREADSHEET_ID || ""
+      : process.env.STAGING_SPREADSHEET_ID || "";
 }
 
 // Check spreadsheet access
@@ -73,11 +77,11 @@ async function checkSpreadsheetAccess(
       fields: "nextPageToken, permissions(id, type, emailAddress, role)", // 👈 Added standard list tokens
     });
 
-    // Debug tip: Log the whole array to see exactly what Google is sending back
-    console.log(
-      "All retrieved permissions:",
-      JSON.stringify(permissions.data.permissions, null, 2),
-    );
+    //  Log the whole array to see exactly what Google is sending back
+    // console.log(
+    //   "All retrieved permissions:",
+    //   JSON.stringify(permissions.data.permissions, null, 2),
+    // );
 
     const userPermission = permissions.data.permissions?.find(
       (p) => p.emailAddress?.toLowerCase() === userEmail.toLowerCase(),
@@ -127,7 +131,7 @@ const serviceAuth = new google.auth.GoogleAuth({
 // OAuth login endpoint
 app.get("/api/auth/google", async (req: Request, res: Response) => {
   try {
-    console.log("Full query from login:", req.query);
+    // console.log("Full query from login:", req.query);
     console.log("redirect param from login:", req.query.redirect);
 
     if (!req.session) {
@@ -145,7 +149,9 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
       process.env.OAUTH_CLIENT_SECRET,
       process.env.NODE_ENV === "production"
         ? `https://cochiseharmreduction.org/merch/auth/google/callback`
-        : `http://localhost:3001/api/auth/google/callback`,
+        : process.env.NODE_ENV === "development"
+          ? `http://localhost:3001/api/auth/google/callback`
+          : `http://localhost:3001/api/auth/google/callback`,
     );
 
     const authUrl = oauth2Client.generateAuthUrl({
@@ -165,7 +171,7 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
 // OAuth callback endpoint
 app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
   try {
-    console.log("Full query from callback:", req.query);
+    // console.log("Full query from callback:", req.query);
 
     if (!req.session) {
       return res.json({ success: false, error: "SESSION_NOT_AVAILABLE" });
@@ -199,6 +205,7 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     }
 
     req.session.user = {
+      id: userInfo.data.id || "",
       email: email,
       canEdit: access.canEdit,
       role: access.role,
@@ -234,11 +241,53 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
   });
 });
 
+app.get("/api/catalog/inventory", async (req: Request, res: Response) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({ ok: false, error: "not_authenticated" });
+    }
+
+    const action = "inventory_rebuild_index_and_refresh_woo_stock";
+    const url = new URL(process.env.WORKER_PROXY_URL!);
+    url.searchParams.set("action", action);
+
+    if (process.env.NODE_ENV !== "production") {
+      url.searchParams.set("environment", process.env.NODE_ENV!);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    const workerJson: unknown = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(workerJson);
+    }
+
+    const payload =
+      workerJson && typeof workerJson === "object" && "data" in workerJson
+        ? (workerJson as { data: unknown }).data
+        : workerJson;
+
+    return res.status(200).json(payload);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Error calling GAS inventory route:", error);
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
 // Test endpoint
 app.get("/api/test", async (req: Request, res: Response) => {
   try {
     if (process.env.NODE_ENV === "staging") {
       console.log("Running in staging environment");
+    } else if (process.env.NODE_ENV === "development") {
+      console.log("Running in development environment");
     } else {
       console.log("Running in non-staging environment");
     }
@@ -253,5 +302,5 @@ app.get("/api/test", async (req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(`Environment: ${process.env.NODE_ENV || "unknown"}`);
 });
