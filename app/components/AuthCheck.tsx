@@ -40,18 +40,35 @@ export default function AuthCheck({
 
   if (loading) {
     return (
-      <div className="auth-loading">
-        <h2>Loading...</h2>
-      </div>
+      <section className="card">
+        <div className="auth-loading wrapper ta-cen">
+          <h2>Loading...</h2>
+        </div>
+      </section>
     );
   }
 
   if (requireAuth && !user) {
     return (
-      <div className="auth-page">
-        <h1>Please sign in</h1>
-        <BtnGoogleLogin />
-      </div>
+      <section className="card">
+        <div className="auth-page wrapper">
+          <h1>Please sign in</h1>
+          <BtnGoogleLogin />
+        </div>
+      </section>
+    );
+  }
+
+  if (user && user.role === "none") {
+    return (
+      <section className="card">
+        <div className="auth-page wrapper">
+          <h1>Access Denied</h1>
+          <p>
+            Your account does not have permission to access this application.
+          </p>
+        </div>
+      </section>
     );
   }
 

@@ -68,19 +68,31 @@ async function checkSpreadsheetAccess(
 
     const permissions = await drive.permissions.list({
       fileId: spreadsheetId,
-      fields: "permissions(id, type, emailAddress, role)",
+      supportsAllDrives: true, // 👈 CRITICAL: Allows reading emails and Shared Drive permissions
+      useDomainAdminAccess: false,
+      fields: "nextPageToken, permissions(id, type, emailAddress, role)", // 👈 Added standard list tokens
     });
 
-    const userPermission = permissions.data.permissions?.find(
-      (p) => p.emailAddress === userEmail && p.role !== "owner",
+    // Debug tip: Log the whole array to see exactly what Google is sending back
+    console.log(
+      "All retrieved permissions:",
+      JSON.stringify(permissions.data.permissions, null, 2),
     );
+
+    const userPermission = permissions.data.permissions?.find(
+      (p) => p.emailAddress?.toLowerCase() === userEmail.toLowerCase(),
+    );
+
+    console.log("user email", userEmail, "has role", userPermission?.role);
 
     if (!userPermission) {
       return { canEdit: false, role: "none" };
     }
 
-    const canEdit = userPermission.role === "writer";
-    return { canEdit, role: canEdit ? "editor" : "viewer" };
+    const canEdit =
+      userPermission.role === "writer" || userPermission.role === "owner";
+
+    return { canEdit, role: canEdit ? "editor" : "reader" };
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -100,8 +112,8 @@ function requireAuth(req: Request, res: Response, next: any) {
 // Load service account
 const serviceAccountKeyPath = path.join(
   process.cwd(),
-  process.env.SERVICE_ACCOUNT_KEY_PATH ||
-    "./credentials/merch-gcc-service-account_key.json",
+  process.env.GCC_SERVICE_ACCOUNT_KEY_PATH ||
+    "./backend/credentials/merch-gcc-service-account_key.json",
 );
 
 const serviceAuth = new google.auth.GoogleAuth({
@@ -109,7 +121,6 @@ const serviceAuth = new google.auth.GoogleAuth({
   scopes: [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/oauth2",
   ],
 });
 
@@ -220,7 +231,6 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
   res.json({
     success: true,
     user: req.session.user,
-    canEdit: req.session.user.canEdit,
   });
 });
 

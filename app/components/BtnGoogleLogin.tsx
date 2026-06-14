@@ -28,12 +28,19 @@ export default function BtnGoogleLogin() {
     <>
       {error && <div className="auth-error">{error}</div>}
 
-      <button className="google-login-btn" onClick={handleLogin}>
-        <img
-          src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-          alt="Google logo"
-        />
-        Sign in with Google
+      <button
+        className="google-login-btn gsi-material-button"
+        onClick={handleLogin}
+      >
+        <div className="gsi-material-button-content-wrapper">
+          <img
+            src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+            alt="Google logo"
+          />
+          <span className="gsi-material-button-contents">
+            Sign in with Google
+          </span>
+        </div>
       </button>
     </>
   );

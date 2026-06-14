@@ -82,3 +82,14 @@ Make sure to deploy the output of `npm run build`
 Built with ❤️ using React Router.
 
 Dont forget to add service worker as editor to prod sheet and update SPREADSHEET_ID to the prod sheet.
+
+the shape of changes array to be passed when action=inventory_sync_stock is just this:
+
+```js
+[
+  {
+    sku: "CHR-MER-0002-BLK-6X2",
+    stock_qty: 50,
+  },
+];
+```

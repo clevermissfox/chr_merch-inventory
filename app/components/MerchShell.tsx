@@ -20,6 +20,19 @@ export function MerchShell({
   children,
   kicker,
 }: MerchShellProps) {
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (res.ok) {
+        window.location.href = "/merch";
+      } else {
+        console.error("Logout failed");
+      }
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
+
   return (
     <div className="merch-page">
       <header className="merch-topbar">
@@ -43,6 +56,14 @@ export function MerchShell({
               {item.label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            className="btn-logout btn-icon"
+            onClick={handleLogout}
+            aria-label="Logout"
+          >
+            <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
+          </button>
         </nav>
       </header>
 
