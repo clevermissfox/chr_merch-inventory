@@ -1,0 +1,422 @@
+{
+    "catalog": {
+        "ok": true,
+        "generatedAt": "2026-06-15T03:35:57.607Z",
+        "summary": {
+            "productCount": 5,
+            "groupCount": 5,
+            "rowCount": 44,
+            "unsyncedCount": 0,
+            "conflictGroups": []
+        },
+        "groups": [
+            {
+                "productId": "CLO-0001",
+                "productSku": "CHR-CLO-0001",
+                "displayName": "CHR Classic T-Shirt",
+                "rowCount": 22,
+                "rows": [
+                    {
+                        "sku": "CHR-CLO-0001-BLK-SM",
+                        "label": "black small",
+                        "stockQty": 2,
+                        "wooStock": 2,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-BLK-MD",
+                        "label": "black medium",
+                        "stockQty": 2,
+                        "wooStock": 2,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-BLK-LG",
+                        "label": "black large",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-BLK-XL",
+                        "label": "black x-large",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-BLK-XXL",
+                        "label": "black xx-large",
+                        "stockQty": 0,
+                        "wooStock": 0,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-SM",
+                        "label": "gold small",
+                        "stockQty": 7,
+                        "wooStock": 7,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-MD",
+                        "label": "gold medium",
+                        "stockQty": 10,
+                        "wooStock": 10,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-LG",
+                        "label": "gold large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-XL",
+                        "label": "gold x-large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-XXL",
+                        "label": "gold xx-large",
+                        "stockQty": 5,
+                        "wooStock": 5,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-GLD-XXXL",
+                        "label": "gold xxx-large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-SM",
+                        "label": "lilac small",
+                        "stockQty": 7,
+                        "wooStock": 7,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-MD",
+                        "label": "lilac medium",
+                        "stockQty": 7,
+                        "wooStock": 7,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-LG",
+                        "label": "lilac large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-XL",
+                        "label": "lilac x-large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-XXL",
+                        "label": "lilac xx-large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-LLC-XXXL",
+                        "label": "lilac xxx-large",
+                        "stockQty": 6,
+                        "wooStock": 6,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-SHW-SM",
+                        "label": "shadow small",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-SHW-MD",
+                        "label": "shadow medium",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-SHW-LG",
+                        "label": "shadow large",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-SHW-XL",
+                        "label": "shadow x-large",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0001-SHW-XXL",
+                        "label": "shadow xx-large",
+                        "stockQty": 0,
+                        "wooStock": 0,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    }
+                ]
+            },
+            {
+                "productId": "CLO-0002",
+                "productSku": "CHR-CLO-0002",
+                "displayName": "Desert Angels Long Sleeves",
+                "rowCount": 12,
+                "rows": [
+                    {
+                        "sku": "CHR-CLO-0002-CRM-SM",
+                        "label": "cream small",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-CRM-MD",
+                        "label": "cream medium",
+                        "stockQty": 5,
+                        "wooStock": 5,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-CRM-LG",
+                        "label": "cream large",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-CRM-XL",
+                        "label": "cream x-large",
+                        "stockQty": 5,
+                        "wooStock": 5,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-CRM-XXL",
+                        "label": "cream xx-large",
+                        "stockQty": 4,
+                        "wooStock": 4,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-CRM-XXXL",
+                        "label": "cream xxx-large",
+                        "stockQty": 5,
+                        "wooStock": 5,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-SM",
+                        "label": "real tree small",
+                        "stockQty": 5,
+                        "wooStock": 5,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-MD",
+                        "label": "real tree medium",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-LG",
+                        "label": "real tree large",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-XL",
+                        "label": "real tree x-large",
+                        "stockQty": 4,
+                        "wooStock": 4,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-XXL",
+                        "label": "real tree xx-large",
+                        "stockQty": 4,
+                        "wooStock": 4,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0002-TREE-XXXL",
+                        "label": "real tree xxx-large",
+                        "stockQty": 0,
+                        "wooStock": 0,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    }
+                ]
+            },
+            {
+                "productId": "CLO-0003",
+                "productSku": "CHR-CLO-0003",
+                "displayName": "CHR Cropped Hoodie",
+                "rowCount": 5,
+                "rows": [
+                    {
+                        "sku": "CHR-CLO-0003-DSHW-XS",
+                        "label": "dark shadow x-small",
+                        "stockQty": 4,
+                        "wooStock": 4,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0003-DSHW-SM",
+                        "label": "dark shadow small",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0003-DSHW-MD",
+                        "label": "dark shadow medium",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0003-DSHW-LG",
+                        "label": "dark shadow large",
+                        "stockQty": 3,
+                        "wooStock": 3,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-CLO-0003-DSHW-XL",
+                        "label": "dark shadow x-large",
+                        "stockQty": 1,
+                        "wooStock": 1,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    }
+                ]
+            },
+            {
+                "productId": "MER-0001",
+                "productSku": "CHR-MER-0001",
+                "displayName": "CHR Sticker-Circle",
+                "rowCount": 3,
+                "rows": [
+                    {
+                        "sku": "CHR-MER-0001-WHT-ORP-3X3",
+                        "label": "white 3\" orange poppy",
+                        "stockQty": 200,
+                        "wooStock": 200,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-MER-0001-HOL-PRPP-3X3",
+                        "label": "holographic 3\" purple poppy",
+                        "stockQty": 200,
+                        "wooStock": 200,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-MER-0001-BLK-3X3",
+                        "label": "black 3\"",
+                        "stockQty": 198,
+                        "wooStock": 198,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    }
+                ]
+            },
+            {
+                "productId": "MER-0002",
+                "productSku": "CHR-MER-0002",
+                "displayName": "CHR Baby Bumper Sticker",
+                "rowCount": 2,
+                "rows": [
+                    {
+                        "sku": "CHR-MER-0002-WHT-6X2",
+                        "label": "white 6\"x2\"",
+                        "stockQty": 50,
+                        "wooStock": 50,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    },
+                    {
+                        "sku": "CHR-MER-0002-BLK-6X2",
+                        "label": "black 6\"x2\"",
+                        "stockQty": 50,
+                        "wooStock": 50,
+                        "lastSyncAt": "Sun Jun 14 2026 20:35:47 GMT-0700 (Mountain Standard Time)",
+                        "rowType": "variant"
+                    }
+                ]
+            }
+        ]
+    },
+    "dirtyBySku": {
+        "CHR-CLO-0001-BLK-SM": {
+            "sku": "CHR-CLO-0001-BLK-SM",
+            "stockQty": 4,
+            "originalStockQty": 2
+        },
+        "CHR-CLO-0001-GLD-XL": {
+            "sku": "CHR-CLO-0001-GLD-XL",
+            "stockQty": 5,
+            "originalStockQty": 6
+        }
+    },
+    "loading": false,
+    "saving": false,
+    "error": null
+}

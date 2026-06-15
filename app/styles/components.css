@@ -357,45 +357,6 @@
   font-family: var(--ff-secondary);
 }
 
-.merch-table-wrap {
-  overflow: auto;
-  border: 0.1em solid var(--clr-border-soft);
-  border-radius: var(--br-900);
-}
-
-.merch-table {
-  width: 100%;
-  min-width: 680px;
-  border-collapse: collapse;
-}
-
-.merch-table th,
-.merch-table td {
-  padding: var(--spacing-100, 1rem);
-  border-bottom: 0.1em solid var(--clr-border-soft);
-  text-align: left;
-  vertical-align: middle;
-}
-
-.merch-table th {
-  font-family: var(--ff-secondary);
-  font-weight: var(--fw-400);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.merch-table tbody {
-  background: var(--clr-surface-secondary);
-}
-
-.merch-table tr:last-child td {
-  border-bottom: 0;
-}
-
-.merch-table__sku {
-  font-weight: var(--fw-700);
-}
-
 /* .merch-status {
   display: inline-flex;
   align-items: center;
@@ -465,9 +426,17 @@
   color: var(--clr-text-muted);
 }
 
-.small {
-  color: var(--clr-text-muted);
-  margin-top: var(--spacing-025, 0.25rem);
+.loader {
+  content: "";
+  font-size: var(--fs-200);
+  inline-size: 2ch;
+  block-size: 2ch;
+  aspect-ratio: 1;
+  border: 0.2em solid var(--clr-neutral-0);
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: rotation 1s linear infinite;
 }
 
 .status-line {
@@ -516,6 +485,30 @@
   gap: var(--spacing-075, 0.75rem);
 }
 
+.inventory-group:has(tr:is([data-dirty="true"]), td:is([data-mismatch="true"]))
+  .summary-title {
+  position: relative;
+
+  &::before {
+    content: "";
+    position: relative;
+    left: 0;
+    inset-block: 0;
+    inline-size: 1ch;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background-color: var(--_clr-feedback);
+  }
+}
+
+.inventory-group:has(td:is([data-mismatch="true"])) :is(.summary-title) {
+  --_clr-feedback: var(--clr-danger);
+}
+
+.inventory-group:has(tr:is([data-dirty="true"])) :is(.summary-title) {
+  --_clr-feedback: var(--clr-accent);
+}
+
 .summary-count {
   color: var(--clr-text-muted);
 }
@@ -561,8 +554,35 @@
   letter-spacing: 0.1em;
 }
 
-.inventory-table tbody tr td[data-mismatch="true"] {
+:where(.inventory-table tr:has(td[data-mismatch="true"])) {
+  --_clr-feedback: var(--clr-danger);
+}
+
+:where(.inventory-table tr[data-dirty="true"]) {
+  --_clr-feedback: var(--clr-accent);
+}
+
+.inventory-table tr td[data-mismatch="true"] {
   background: color-mix(in oklch, var(--clr-danger) 18%, transparent);
+}
+
+.inventory-table
+  tr:is([data-dirty="true"], :has(td:is([data-mismatch="true"]))) {
+  background-color: oklch(from var(--_clr-feedback) l c h / 0.2);
+}
+
+.inventory-table
+  tr:is([data-dirty="true"], :has(td[data-mismatch="true"]))
+  > :nth-child(1 of td) {
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    inline-size: 0.25em;
+    background-color: var(--_clr-feedback);
+  }
 }
 
 .inventory-table input[type="number"] {
@@ -774,8 +794,14 @@
   .merch-stage {
     width: min(100%, calc(100% - 1rem));
   }
+}
 
-  .merch-table {
-    min-width: 560px;
+@keyframes rotation {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
   }
 }

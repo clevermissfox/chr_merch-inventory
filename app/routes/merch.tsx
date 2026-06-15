@@ -7,7 +7,7 @@ export default function MerchLayout() {
   return (
     <AuthCheck requireAuth={true}>
       {(user) => (
-        <MerchShell eyebrow="CHR Merch" title="Merch Hub">
+        <MerchShell>
           <Outlet />
         </MerchShell>
       )}

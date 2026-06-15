@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useMatches } from "react-router";
 
 const navItems = [
   { to: "/merch", label: "Dashboard" },
@@ -8,18 +8,22 @@ const navItems = [
 ];
 
 type MerchShellProps = {
-  title: string;
-  eyebrow: string;
   children?: ReactNode;
-  kicker?: string;
 };
 
-export function MerchShell({
-  title,
-  eyebrow,
-  children,
-  kicker,
-}: MerchShellProps) {
+export function MerchShell({ children }: MerchShellProps) {
+  const matches = useMatches();
+
+  // Find the active child route's data
+  const currentMatch = [...matches]
+    .reverse()
+    .find((match) => (match.handle as any)?.title);
+
+  const currentHandle = (currentMatch?.handle as any) || {};
+  const routeTitle = currentHandle.title || "Merch Dashboard";
+  const routeEyebrow = currentHandle.eyebrow || "";
+  const routeKicker = currentHandle.kicker || "";
+
   const handleLogout = async () => {
     try {
       const res = await fetch("/api/auth/logout", { method: "POST" });
@@ -70,9 +74,13 @@ export function MerchShell({
 
       <main className="merch-stage">
         <section className="merch-hero card">
-          <p className="merch-hero__eyebrow">{eyebrow}</p>
-          <h2 className="merch-hero__title">{title}</h2>
-          {kicker ? <p className="merch-hero__kicker">{kicker}</p> : null}
+          {routeEyebrow && (
+            <p className="merch-hero__eyebrow">{routeEyebrow}</p>
+          )}
+          <h2 className="merch-hero__title">{routeTitle}</h2>
+          {routeKicker ? (
+            <p className="merch-hero__kicker">{routeKicker}</p>
+          ) : null}
         </section>
         {children && <div className="merch-content">{children}</div>}
       </main>

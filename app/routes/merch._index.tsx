@@ -10,6 +10,11 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
+export const handle = {
+  title: "Dashboard",
+  eyebrow: "Manage shop",
+};
+
 const stats = [
   {
     label: "Inventory",
@@ -30,5 +35,11 @@ const roadMap = [
 ];
 
 export default function MerchDashboard() {
-  return <></>;
+  return (
+    <>
+      <section className="card">
+        <h2>Coming soon!</h2>
+      </section>
+    </>
+  );
 }

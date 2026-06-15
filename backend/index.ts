@@ -241,45 +241,131 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
   });
 });
 
-app.get("/api/catalog/inventory", async (req: Request, res: Response) => {
-  try {
-    if (!req.session.user) {
-      return res.status(401).json({ ok: false, error: "not_authenticated" });
+// Get stock_qty and woo_stock
+app.get(
+  "/api/catalog/inventory/get_stock",
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.session.user) {
+        return res.status(401).json({ ok: false, error: "not_authenticated" });
+      }
+
+      const action = "inventory_rebuild_index_and_refresh_woo_stock";
+      const url = new URL(process.env.WORKER_PROXY_URL!);
+      url.searchParams.set("action", action);
+
+      if (process.env.NODE_ENV !== "production") {
+        url.searchParams.set("environment", process.env.NODE_ENV!);
+      }
+
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const workerJson: unknown = await response.json();
+
+      if (!response.ok) {
+        return res.status(response.status).json(workerJson);
+      }
+
+      const payload =
+        workerJson && typeof workerJson === "object" && "data" in workerJson
+          ? (workerJson as { data: unknown }).data
+          : workerJson;
+
+      return res.status(200).json(payload);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("Error calling GAS inventory route:", error);
+      return res.status(500).json({ ok: false, error: message });
     }
+  },
+);
 
-    const action = "inventory_rebuild_index_and_refresh_woo_stock";
-    const url = new URL(process.env.WORKER_PROXY_URL!);
-    url.searchParams.set("action", action);
+// push stock changes
+app.post(
+  "/api/catalog/inventory/sync_stock",
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.session.user) {
+        return res.status(401).json({ ok: false, error: "not_authenticated" });
+      }
 
-    if (process.env.NODE_ENV !== "production") {
-      url.searchParams.set("environment", process.env.NODE_ENV!);
+      if (!req.session.user.canEdit) {
+        return res.status(403).json({ ok: false, error: "forbidden" });
+      }
+
+      const rawChanges = Array.isArray(req.body?.changes)
+        ? req.body.changes
+        : [];
+
+      if (!rawChanges.length) {
+        return res.status(400).json({ ok: false, error: "no_changes" });
+      }
+
+      const changes = rawChanges.map((item) => {
+        const sku = String(item?.sku || "").trim();
+        const stockQty = item?.stockQty;
+
+        if (!sku) {
+          throw new Error("invalid_sku");
+        }
+
+        if (stockQty === "" || stockQty == null) {
+          return { sku, stock_qty: "" };
+        }
+
+        const parsedQty = Number(stockQty);
+
+        if (!Number.isFinite(parsedQty) || parsedQty < 0) {
+          throw new Error(`invalid_stock_qty_for_${sku}`);
+        }
+
+        return {
+          sku,
+          stock_qty: Math.round(parsedQty),
+        };
+      });
+
+      const response = await fetch(process.env.WORKER_PROXY_URL!, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "inventory_sync_stock",
+          secret: process.env.GAS_SECRET || "harmredux",
+          changes,
+          ...(process.env.NODE_ENV !== "production"
+            ? { environment: process.env.NODE_ENV }
+            : {}),
+        }),
+      });
+
+      const workerJson: unknown = await response.json();
+
+      if (
+        !response.ok ||
+        (workerJson &&
+          typeof workerJson === "object" &&
+          "ok" in workerJson &&
+          (workerJson as { ok?: boolean }).ok === false)
+      ) {
+        return res.status(response.ok ? 500 : response.status).json(workerJson);
+      }
+
+      return res.status(200).json(workerJson);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("Error calling GAS inventory route:", error);
+      return res.status(500).json({ ok: false, error: message });
     }
-
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    const workerJson: unknown = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json(workerJson);
-    }
-
-    const payload =
-      workerJson && typeof workerJson === "object" && "data" in workerJson
-        ? (workerJson as { data: unknown }).data
-        : workerJson;
-
-    return res.status(200).json(payload);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error calling GAS inventory route:", error);
-    return res.status(500).json({ ok: false, error: message });
-  }
-});
+  },
+);
 
 // Test endpoint
 app.get("/api/test", async (req: Request, res: Response) => {

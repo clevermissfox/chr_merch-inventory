@@ -23,6 +23,7 @@ export default {
     if (request.url.endsWith("/health") || request.url.endsWith("/health/")) {
       return new Response(
         JSON.stringify({
+          ok: true,
           status: "ok",
           timestamp: new Date().toISOString(),
         }),
@@ -35,7 +36,7 @@ export default {
       );
     }
 
-    // GET endpoint to fetch submissions
+    // GET endpoint to get data
     if (request.method === "GET") {
       try {
         // Extract query params from the incoming request
@@ -43,7 +44,8 @@ export default {
         const queryParams = requestUrl.searchParams;
 
         // Build the full GAS URL with query params
-        const googleScriptUrlWithParams = new URL(url);
+        const targetUrl = getTargetGasUrl(request);
+        const googleScriptUrlWithParams = new URL(targetUrl);
         queryParams.forEach((value, key) => {
           if (key !== "host") {
             googleScriptUrlWithParams.searchParams.set(key, value);
@@ -65,11 +67,12 @@ export default {
           console.error("GAS error:", errorText);
           return new Response(
             JSON.stringify({
-              success: false,
+              ok: false,
               error: `Google Apps Script returned status ${response.status}`,
+              details: errorText,
             }),
             {
-              status: 500,
+              status: response.status,
               headers: {
                 ...corsHeaders,
                 "Content-Type": "application/json",
@@ -91,11 +94,12 @@ export default {
           );
           return new Response(
             JSON.stringify({
-              success: false,
+              ok: false,
               error: "Google Apps Script returned invalid JSON",
+              details: resultText.substring(0, 200),
             }),
             {
-              status: 500,
+              status: 502,
               headers: {
                 ...corsHeaders,
                 "Content-Type": "application/json",
@@ -104,29 +108,31 @@ export default {
           );
         }
 
+        console.log("GAS action:", parsedResult.action || "unknown");
         console.log(
-          "Fetched submissions count:",
-          parsedResult.data?.length || 0,
+          "GAS groups count:",
+          parsedResult.data?.groups?.length || parsedResult.groups?.length || 0,
         );
+
+        return new Response(JSON.stringify(parsedResult), {
+          status: response.status,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+          },
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch from Google Apps Script";
+
+        console.error("Fetch error:", message);
 
         return new Response(
           JSON.stringify({
-            success: true,
-            data: parsedResult.data || [],
-          }),
-          {
-            headers: {
-              ...corsHeaders,
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      } catch (error) {
-        console.error("Fetch error:", error.message);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: error.message || "Failed to fetch submissions",
+            ok: false,
+            error: message,
           }),
           {
             status: 500,
@@ -145,8 +151,9 @@ export default {
         const body = await request.json();
         console.log("Received POST body:", body);
         console.log("Forwarding to GAS:", body);
+        const targetUrl = getTargetGasUrl(request, body);
 
-        const response = await fetch(url, {
+        const response = await fetch(targetUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -162,11 +169,12 @@ export default {
           console.error("GAS error:", errorText);
           return new Response(
             JSON.stringify({
-              success: false,
+              ok: false,
               error: `Google Apps Script returned status ${response.status}`,
+              details: errorText,
             }),
             {
-              status: 500,
+              status: response.status,
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             },
           );
@@ -185,11 +193,12 @@ export default {
           );
           return new Response(
             JSON.stringify({
-              success: false,
+              ok: false,
               error: "Google Apps Script returned invalid JSON",
+              details: resultText.substring(0, 200),
             }),
             {
-              status: 500,
+              status: 502,
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             },
           );
@@ -198,36 +207,36 @@ export default {
         // Check for success in your Apps Script response format
         if (parsedResult.ok !== true) {
           console.error("GAS did not confirm success:", parsedResult);
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: "Google Apps Script did not confirm success",
-              result: parsedResult,
-            }),
-            {
-              status: 500,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
+          return new Response(JSON.stringify(parsedResult), {
+            status: 502,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
             },
-          );
+          });
         }
 
         console.log("POST successful");
 
-        return new Response(
-          JSON.stringify({
-            success: true,
-            result: parsedResult,
-          }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify(parsedResult), {
+          status: response.status,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
           },
-        );
+        });
       } catch (error) {
-        console.error("POST error:", error.message);
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to process POST request";
+
+        console.error("POST error:", message);
+
         return new Response(
           JSON.stringify({
-            success: false,
-            error: error.message || "Failed to process POST request",
+            ok: false,
+            error: message,
           }),
           {
             status: 500,
@@ -240,7 +249,7 @@ export default {
     // Method not allowed
     return new Response(
       JSON.stringify({
-        success: false,
+        ok: false,
         error: "Method not allowed",
       }),
       {
@@ -248,12 +257,29 @@ export default {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json",
+          Allow: "GET, POST, OPTIONS",
         },
       },
     );
   },
 };
 
+function getTargetGasUrl(request, body = null) {
+  const requestUrl = new URL(request.url);
+  const envFromQuery = requestUrl.searchParams.get("environment");
+  const envFromBody =
+    body && typeof body === "object" ? body.environment : null;
+
+  const environment = String(
+    envFromQuery || envFromBody || "production",
+  ).toLowerCase();
+
+  return environment !== "production"
+    ? environment === "development"
+      ? url
+      : staging_url
+    : url;
+}
 /* This worker is available at https://chr-merch-node.dev-7a0.workers.dev/ */
 // NEED THE -i flag or it returns 'curl: (6) Could not resolve host: chr-merch-node.dev-7a0'
 // curl -i -X POST "https://chr-merch-node.dev-7a0.workers.dev/" \

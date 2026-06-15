@@ -32,6 +32,7 @@
   --clr-accent: var(--clr-accent-300);
 
   --clr-text: var(--clr-neutral-0);
+  --clr-text-primary: var(--clr-text);
   --clr-text-muted: color-mix(in oklch, var(--clr-text) 80%, transparent);
 
   --clr-surface-primary: var(--clr-neutral-900);
@@ -102,7 +103,7 @@
 
 ::selection {
   background-color: var(--clr-text);
-  color: var(--clr-bg);
+  color: var(--clr-neutral-900);
 }
 
 :target {
@@ -228,11 +229,6 @@ input[type="color"] {
 ::placeholder {
   color: inherit;
   opacity: 0.6;
-}
-
-::selection {
-  background-color: var(--clr-text-primary);
-  color: var(--clr-bg);
 }
 
 /* ELEMENT SELECTORS */

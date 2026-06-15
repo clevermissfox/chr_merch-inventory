@@ -11,6 +11,11 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
+export const handle = {
+  title: "Catalog",
+  eyebrow: "Manage products",
+};
+
 const products = [
   {
     name: "CHR Classic T-Shirt",
@@ -28,58 +33,64 @@ const products = [
 
 export default function ProductsPage() {
   return (
-    <>
-      <section className="inventory-groups">
-        {products.map((product) => (
-          <details key={product.sku} className="inventory-group card" open>
-            <summary>
-              <div className="summary-title">
-                <strong>{product.name}</strong>
-                <span className="summary-count">{product.sku}</span>
-              </div>
-              <span className="toggle-label">Toggle</span>
-            </summary>
-
-            <div className="merch-card merch-card--soft">
-              <p className="small">{product.note}</p>
-              <div className="merch-chip-row merch-chip-row--spaced">
-                <span className="merch-chip merch-chip--brand">
-                  Primary description
-                </span>
-                <span className="merch-chip merch-chip--soft">
-                  Short description
-                </span>
-                <span className="merch-chip merch-chip--soft">
-                  Variant descriptions
-                </span>
-              </div>
-            </div>
-
-            <div className="table-wrapper">
-              <table className="inventory-table">
-                <thead>
-                  <tr>
-                    <th>Variant</th>
-                    <th>Workflow</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {product.variants.map((variant) => (
-                    <tr key={variant}>
-                      <td className="variant-cell">{variant}</td>
-                      <td>
-                        <span className="merch-status merch-status--ok">
-                          Nested under product
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        ))}
-      </section>
-    </>
+    <section className="card">
+      <h2>Coming soon!!</h2>
+    </section>
   );
+
+  // return (
+  //   <>
+  //     <section className="inventory-groups">
+  //       {products.map((product) => (
+  //         <details key={product.sku} className="inventory-group card" open>
+  //           <summary>
+  //             <div className="summary-title">
+  //               <strong>{product.name}</strong>
+  //               <span className="summary-count">{product.sku}</span>
+  //             </div>
+  //             <span className="toggle-label">Toggle</span>
+  //           </summary>
+
+  //           <div className="merch-card merch-card--soft">
+  //             <p className="small">{product.note}</p>
+  //             <div className="merch-chip-row merch-chip-row--spaced">
+  //               <span className="merch-chip merch-chip--brand">
+  //                 Primary description
+  //               </span>
+  //               <span className="merch-chip merch-chip--soft">
+  //                 Short description
+  //               </span>
+  //               <span className="merch-chip merch-chip--soft">
+  //                 Variant descriptions
+  //               </span>
+  //             </div>
+  //           </div>
+
+  //           <div className="table-wrapper">
+  //             <table className="inventory-table">
+  //               <thead>
+  //                 <tr>
+  //                   <th>Variant</th>
+  //                   <th>Workflow</th>
+  //                 </tr>
+  //               </thead>
+  //               <tbody>
+  //                 {product.variants.map((variant) => (
+  //                   <tr key={variant}>
+  //                     <td className="variant-cell">{variant}</td>
+  //                     <td>
+  //                       <span className="merch-status merch-status--ok">
+  //                         Nested under product
+  //                       </span>
+  //                     </td>
+  //                   </tr>
+  //                 ))}
+  //               </tbody>
+  //             </table>
+  //           </div>
+  //         </details>
+  //       ))}
+  //     </section>
+  //   </>
+  // );
 }
