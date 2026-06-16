@@ -8,6 +8,7 @@ import cors from "cors";
 
 // dotenv.config();
 dotenv.config({ path: "./backend/.env" });
+dotenv.config({ path: "./app/.env" });
 
 declare module "express-session" {
   interface SessionData {
@@ -23,10 +24,10 @@ declare module "express-session" {
 }
 
 const app = express();
-// const PORT = 3001;
-// const FRONTEND_URL = "http://localhost:5173";
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const API_URL = process.env.VITE_API_URL || `http://localhost:${PORT}`;
+const TARGET_ENV = process.env.TARGET_ENV || "unknown";
 
 // Add CORS middleware
 app.use(
@@ -42,7 +43,7 @@ app.use(express.json());
 app.use(
   session({
     name: "chr-merch-session",
-    secret: process.env.SESSION_SECRET || "harmredux",
+    secret: process.env.SESSION_SECRET || "not_a_session_secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -54,10 +55,10 @@ app.use(
 
 // Helper to get spreadsheet ID
 function getSpreadsheetId(): string {
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = TARGET_ENV === "production";
   return isProduction
     ? process.env.PRODUCTION_SPREADSHEET_ID || ""
-    : process.env.NODE_ENV === "development"
+    : TARGET_ENV === "development"
       ? process.env.PRODUCTION_SPREADSHEET_ID || ""
       : process.env.STAGING_SPREADSHEET_ID || "";
 }
@@ -147,11 +148,11 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
-      process.env.NODE_ENV === "production"
+      TARGET_ENV === "production"
         ? `https://cochiseharmreduction.org/merch/auth/google/callback`
-        : process.env.NODE_ENV === "development"
-          ? `http://localhost:3001/api/auth/google/callback`
-          : `http://localhost:3001/api/auth/google/callback`,
+        : TARGET_ENV === "development"
+          ? `${API_URL}/api/auth/google/callback`
+          : `${API_URL}/api/auth/google/callback`,
     );
 
     const authUrl = oauth2Client.generateAuthUrl({
@@ -182,7 +183,7 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
-      process.env.NODE_ENV === "production"
+      TARGET_ENV === "production"
         ? `https://cochiseharmreduction.org/merch/auth/google/callback`
         : `http://localhost:3001/api/auth/google/callback`,
     );
@@ -212,7 +213,7 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     };
 
     res.redirect(
-      process.env.NODE_ENV === "production"
+      TARGET_ENV === "production"
         ? `https://cochiseharmreduction.org${redirectUrl}`
         : `http://localhost:5173${redirectUrl}`,
     );
@@ -250,12 +251,15 @@ app.get(
         return res.status(401).json({ ok: false, error: "not_authenticated" });
       }
 
+      const includeMeta =
+        req.query.includeMeta === "1" || req.query.includeMeta === "true";
+
       const action = "inventory_rebuild_index_and_refresh_woo_stock";
       const url = new URL(process.env.WORKER_PROXY_URL!);
       url.searchParams.set("action", action);
 
-      if (process.env.NODE_ENV !== "production") {
-        url.searchParams.set("environment", process.env.NODE_ENV!);
+      if (TARGET_ENV !== "production") {
+        url.searchParams.set("environment", TARGET_ENV!);
       }
 
       const response = await fetch(url.toString(), {
@@ -269,6 +273,10 @@ app.get(
 
       if (!response.ok) {
         return res.status(response.status).json(workerJson);
+      }
+
+      if (includeMeta) {
+        return res.status(200).json(workerJson);
       }
 
       const payload =
@@ -285,50 +293,140 @@ app.get(
   },
 );
 
-// push stock changes
-app.post(
-  "/api/catalog/inventory/sync_stock",
+// Get all products
+app.get(
+  "/api/catalog/inventory/get_products",
   async (req: Request, res: Response) => {
     try {
       if (!req.session.user) {
         return res.status(401).json({ ok: false, error: "not_authenticated" });
       }
 
-      if (!req.session.user.canEdit) {
-        return res.status(403).json({ ok: false, error: "forbidden" });
+      const includeMeta =
+        req.query.includeMeta === "1" || req.query.includeMeta === "true";
+
+      const action = "inventory_get_products";
+      const url = new URL(process.env.WORKER_PROXY_URL!);
+      url.searchParams.set("action", action);
+
+      if (TARGET_ENV !== "production") {
+        url.searchParams.set("environment", TARGET_ENV!);
       }
+
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const workerJson: unknown = await response.json();
+
+      if (!response.ok) {
+        return res.status(response.status).json(workerJson);
+      }
+
+      if (includeMeta) {
+        return res.status(200).json(workerJson);
+      }
+
+      const payload =
+        workerJson && typeof workerJson === "object" && "data" in workerJson
+          ? (workerJson as { data: unknown }).data
+          : workerJson;
+
+      return res.status(200).json(payload);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("Error calling GAS inventory route:", error);
+      return res.status(500).json({ ok: false, error: message });
+    }
+  },
+);
+
+// push stock changes or resolve conflicts
+app.post(
+  "/api/catalog/inventory/sync_stock",
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.session.user) {
+        return res.status(401).json({
+          ok: false,
+          error: "NOT_AUTHENTICATED",
+          message: "You must sign in to sync inventory.",
+          status: 401,
+        });
+      }
+
+      if (!req.session.user.canEdit) {
+        return res.status(403).json({
+          ok: false,
+          error: "FORBIDDEN",
+          message: "You do not have permission to sync inventory.",
+          status: 403,
+        });
+      }
+
+      const includeMeta =
+        req.query.includeMeta === "1" || req.query.includeMeta === "true";
+
+      const mode =
+        req.body?.mode === "resolve_conflicts"
+          ? "resolve_conflicts"
+          : "standard_sync";
 
       const rawChanges = Array.isArray(req.body?.changes)
         ? req.body.changes
         : [];
 
       if (!rawChanges.length) {
-        return res.status(400).json({ ok: false, error: "no_changes" });
+        return res.status(400).json({
+          ok: false,
+          error: "NO_CHANGES",
+          message: "No inventory changes were provided.",
+          status: 400,
+        });
       }
 
-      const changes = rawChanges.map((item) => {
+      const changes: Array<{ sku: string; stock_qty: number | "" }> = [];
+
+      for (const item of rawChanges as Array<{
+        sku?: unknown;
+        stockQty?: unknown;
+      }>) {
         const sku = String(item?.sku || "").trim();
         const stockQty = item?.stockQty;
 
         if (!sku) {
-          throw new Error("invalid_sku");
+          return res.status(400).json({
+            ok: false,
+            error: "INVALID_SKU",
+            message: "One or more changes is missing a SKU.",
+            status: 400,
+          });
         }
 
         if (stockQty === "" || stockQty == null) {
-          return { sku, stock_qty: "" };
+          changes.push({ sku, stock_qty: "" });
+          continue;
         }
 
         const parsedQty = Number(stockQty);
 
         if (!Number.isFinite(parsedQty) || parsedQty < 0) {
-          throw new Error(`invalid_stock_qty_for_${sku}`);
+          return res.status(400).json({
+            ok: false,
+            error: "INVALID_STOCK_QTY",
+            message: `Invalid stock quantity for ${sku}.`,
+            status: 400,
+          });
         }
 
-        return {
+        changes.push({
           sku,
           stock_qty: Math.round(parsedQty),
-        };
-      });
+        });
+      }
 
       const response = await fetch(process.env.WORKER_PROXY_URL!, {
         method: "POST",
@@ -339,10 +437,9 @@ app.post(
         body: JSON.stringify({
           action: "inventory_sync_stock",
           secret: process.env.GAS_SECRET || "harmredux",
+          mode,
           changes,
-          ...(process.env.NODE_ENV !== "production"
-            ? { environment: process.env.NODE_ENV }
-            : {}),
+          ...(TARGET_ENV !== "production" ? { environment: TARGET_ENV } : {}),
         }),
       });
 
@@ -355,14 +452,40 @@ app.post(
           "ok" in workerJson &&
           (workerJson as { ok?: boolean }).ok === false)
       ) {
-        return res.status(response.ok ? 500 : response.status).json(workerJson);
+        const bodyStatus =
+          workerJson &&
+          typeof workerJson === "object" &&
+          "status" in workerJson &&
+          typeof (workerJson as { status?: unknown }).status === "number"
+            ? (workerJson as { status: number }).status
+            : undefined;
+
+        return res
+          .status(bodyStatus ?? response.status ?? 502)
+          .json(workerJson);
       }
 
-      return res.status(200).json(workerJson);
+      if (includeMeta) {
+        return res.status(200).json(workerJson);
+      }
+
+      const payload =
+        workerJson && typeof workerJson === "object" && "data" in workerJson
+          ? (workerJson as { data: unknown }).data
+          : workerJson;
+
+      return res.status(200).json(payload);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error";
       console.error("Error calling GAS inventory route:", error);
-      return res.status(500).json({ ok: false, error: message });
+
+      return res.status(500).json({
+        ok: false,
+        error: "INTERNAL_SERVER_ERROR",
+        message: "The server failed while processing the inventory request.",
+        details: message,
+        status: 500,
+      });
     }
   },
 );
@@ -378,15 +501,16 @@ app.get("/api/test", async (req: Request, res: Response) => {
       console.log("Running in non-staging environment");
     }
     const sheets = google.sheets({ version: "v4", auth: serviceAuth });
-    res.json({ success: true, message: "Sheets API connected!" });
+    res.json({ ok: true, message: "Sheets API connected!" });
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    res.json({ success: false, error: errorMessage });
+    res.json({ ok: false, error: errorMessage });
   }
 });
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "unknown"}`);
+  console.log(`Target environment: ${TARGET_ENV || "unknown"}`);
 });

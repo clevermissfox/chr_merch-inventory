@@ -129,6 +129,40 @@
   /* dont forget to add position relative to parent! */
 }
 
+/* SURFACE COLORS */
+.surface-primary {
+  --_clr-bg: var(--clr-surface-primary);
+  background-color: var(--_clr-bg);
+}
+
+.surface-secondary {
+  --_clr-bg: var(--clr-surface-secondary);
+  background-color: var(--_clr-bg);
+}
+
+.surface-tertiary {
+  --_clr-bg: var(--clr-surface-tertiary);
+  background-color: var(--_clr-bg);
+}
+
+.surface-transp {
+  --_clr-bg: transparent;
+  background-color: var(--_clr-bg);
+}
+
+.surface-accent-primary {
+  --_clr-bg: var(--clr-accent);
+  background-color: var(--_clr-bg);
+}
+
+.surface-accent-secondary {
+  --_clr-bg: var(
+    --clr-accent-secondary,
+    color-mix(in oklch, var(--clr-accent), var(--clr-neutral-0) 20%)
+  );
+  background-color: var(--_clr-bg);
+}
+
 /* SPACING UTILITIES */
 
 /* 3em */

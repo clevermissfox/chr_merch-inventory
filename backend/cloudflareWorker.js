@@ -280,8 +280,9 @@ function getTargetGasUrl(request, body = null) {
       : staging_url
     : url;
 }
+
 /* This worker is available at https://chr-merch-node.dev-7a0.workers.dev/ */
 // NEED THE -i flag or it returns 'curl: (6) Could not resolve host: chr-merch-node.dev-7a0'
 // curl -i -X POST "https://chr-merch-node.dev-7a0.workers.dev/" \
 //   -H "Content-Type: application/json" \
-//   -d '{"action":"test"}'
+//   -d '{"action":"inventory_sync_stock", "environment": "staging","secret":"harmredux", "changes":[{"sku":"CHR-MER-0002-BLK-6X2", "stock_qty": "44"}]}'

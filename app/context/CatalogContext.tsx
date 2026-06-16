@@ -82,6 +82,7 @@ interface CatalogContextValue {
   ) => void;
   clearDirty: () => void;
   saveCatalogChanges: () => Promise<void>;
+  resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
 }
 
@@ -191,7 +192,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       if (state.catalog) {
         window.sessionStorage.setItem(
           CATALOG_SESSION_STORAGE_KEY,
-          JSON.stringify({ catalog: state.catalog }),
+          JSON.stringify({
+            catalog: state.catalog,
+            cachedAt: Date.now(),
+          }),
         );
       } else {
         window.sessionStorage.removeItem(CATALOG_SESSION_STORAGE_KEY);
@@ -261,37 +265,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SAVE_START" });
 
     try {
-      const response = await fetch("/api/catalog/inventory/sync_stock", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ changes }),
+      await postStockSync({
+        changes,
+        mode: "standard_sync",
       });
-
-      const data = await response.json();
-
-      const topLevelOk =
-        typeof data === "object" && data !== null && "ok" in data
-          ? data.ok !== false
-          : true;
-
-      const resultOk =
-        typeof data === "object" &&
-        data !== null &&
-        "result" in data &&
-        data.result &&
-        typeof data.result === "object" &&
-        "ok" in data.result
-          ? data.result.ok !== false
-          : true;
-
-      if (!response.ok || !topLevelOk || !resultOk) {
-        const errorMessage =
-          data?.result?.error || data?.error || "Failed to sync stock";
-        throw new Error(errorMessage);
-      }
 
       clearDirty();
       await loadCatalog(true);
@@ -304,9 +281,85 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     }
   }, [state.dirtyBySku, clearDirty, loadCatalog]);
 
+  const resolveCatalogConflicts = useCallback(async () => {
+    if (!state.catalog) {
+      return;
+    }
+
+    const changes: Array<{ sku: string; stockQty: number | "" }> =
+      state.catalog.groups.flatMap((group) =>
+        group.rows
+          .filter((row) => row.stockQty !== row.wooStock)
+          .map((row) => ({
+            sku: row.sku,
+            stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
+          })),
+      );
+
+    if (!changes.length) {
+      return;
+    }
+
+    dispatch({ type: "SAVE_START" });
+
+    try {
+      await postStockSync({
+        changes,
+        mode: "resolve_conflicts",
+      });
+
+      await loadCatalog(true);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to resolve conflicts";
+      dispatch({ type: "LOAD_ERROR", payload: message });
+    } finally {
+      dispatch({ type: "SAVE_END" });
+    }
+  }, [state.catalog, loadCatalog]);
+
   const resetError = useCallback(() => {
     dispatch({ type: "RESET_ERROR" });
   }, []);
+
+  async function postStockSync({
+    changes,
+    mode,
+  }: {
+    changes: Array<{ sku: string; stockQty: number | "" }>;
+    mode?: "standard_sync" | "resolve_conflicts";
+  }) {
+    const response = await fetch("/api/catalog/inventory/sync_stock", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...(mode ? { mode } : {}),
+        changes,
+      }),
+    });
+
+    const data = await response.json();
+
+    const topLevelOk =
+      typeof data === "object" && data !== null && "ok" in data
+        ? data.ok !== false
+        : true;
+
+    if (!response.ok || !topLevelOk) {
+      const errorMessage =
+        (typeof data === "object" && data !== null && "error" in data
+          ? String(data.error)
+          : null) || "Failed to sync stock";
+
+      throw new Error(errorMessage);
+    }
+
+    return data;
+  }
+
   return (
     <CatalogContext.Provider
       value={{
@@ -315,6 +368,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         setStockQty,
         clearDirty,
         saveCatalogChanges,
+        resolveCatalogConflicts,
         resetError,
       }}
     >

@@ -11,14 +11,15 @@
 
 .wrapper {
   width: min(
-    100% - (var(--default-padding, 2em) * 2),
-    var(--default-max-inline-size, 100ch) - (var(--default-padding, 2em) * 2)
+    100% - (var(--default-padding, 1.5em) * 2),
+    var(--default-max-inline-size, 100ch) - (var(--default-padding, 1.5em) * 2)
   );
   margin-inline: auto;
 }
 
 .card {
-  background-color: var(--clr-surface-primary);
+  --_clr-card-bg: var(--clr-surface-primary);
+  background-color: var(--_clr-card-bg);
   padding: var(--default-padding);
   border-radius: var(--default-br);
   border: var(--default-border);
@@ -128,31 +129,31 @@
 }
 
 .gap-3 {
-  gap: 3em;
+  gap: var(--spacing-300, 3em);
 }
 
 .gap-2 {
-  gap: var(--spacing-700, 2em);
-}
-
-.gap-1 {
-  gap: var(--spacing-400, 1em);
+  gap: var(--spacing-200, 2em);
 }
 
 .gap-1half {
-  gap: var(--spacing-600, 1.5em);
+  gap: var(--spacing-150, 1.5em);
+}
+
+.gap-1 {
+  gap: var(--spacing-100, 1em);
 }
 
 .gap-half {
-  gap: var(--spacing-200, 0.5em);
+  gap: var(--spacing-050, 0.5em);
 }
 
 .gap-three-forths {
-  gap: var(--spacing-300, 0.75em);
+  gap: var(--spacing-075, 0.75em);
 }
 
 .gap-quarter {
-  gap: var(--spacing-100, 0.5em);
+  gap: var(--spacing-025, 0.25em);
 }
 
 .w-full {
@@ -161,4 +162,12 @@
 
 .max-h-200 {
   max-height: 200px;
+}
+
+.display-block {
+  display: block;
+}
+
+.display-inline-block {
+  display: inline-block;
 }

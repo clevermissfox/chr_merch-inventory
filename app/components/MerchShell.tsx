@@ -39,40 +39,43 @@ export function MerchShell({ children }: MerchShellProps) {
 
   return (
     <div className="merch-page">
-      <header className="merch-topbar">
-        <div className="merch-brand">
-          <div className="merch-brand__meta">
-            <p className="merch-brand__eyebrow">CHR Merch</p>
-            <h1 className="merch-brand__title">Merch Hub</h1>
-          </div>
-        </div>
-
-        <nav className="merch-nav" aria-label="Merch sections">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.label}
-              to={item.to}
-              end={item.to === "/merch"}
-              className={({ isActive }) =>
-                `merch-nav__link${isActive ? " is-active" : ""}`
-              }
+      <header className="merch-topbar surface-primary ">
+        <div className="wrapper grid gap-1 padding-i-default padding-b-2">
+          <div className="row jc-sb gap-1">
+            <div className="merch-brand">
+              <div className="merch-brand__meta">
+                <p className="merch-brand__eyebrow">CHR Merch</p>
+                <h1 className="merch-brand__title">Merch Hub</h1>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-logout btn-icon margin-is-auto"
+              onClick={handleLogout}
+              aria-label="Logout"
+              title="Logout"
             >
-              {item.label}
-            </NavLink>
-          ))}
-          <button
-            type="button"
-            className="btn-logout btn-icon"
-            onClick={handleLogout}
-            aria-label="Logout"
-            title="Logout"
-          >
-            <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
-          </button>
-        </nav>
+              <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          <nav className="merch-nav" aria-label="Merch sections">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.label}
+                to={item.to}
+                end={item.to === "/merch"}
+                className={({ isActive }) =>
+                  `merch-nav__link${isActive ? " is-active" : ""}`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
       </header>
 
-      <main className="merch-stage">
+      <main className="merch-stage wrapper grid gap-1 margin-bs-1">
         <section className="merch-hero card">
           {routeEyebrow && (
             <p className="merch-hero__eyebrow">{routeEyebrow}</p>

@@ -34,7 +34,13 @@ export const handle = {
 export default function InventoryPage() {
   const { user, isLoading } = useAuth();
   const canEdit = user?.canEdit === true;
-  const { state, loadCatalog, setStockQty, saveCatalogChanges } = useCatalog();
+  const {
+    state,
+    loadCatalog,
+    setStockQty,
+    saveCatalogChanges,
+    resolveCatalogConflicts,
+  } = useCatalog();
   const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
 
@@ -88,16 +94,19 @@ export default function InventoryPage() {
       value: catalog.summary.conflictGroups.length,
       renderExtra: () =>
         catalog.summary.conflictGroups.length > 0 && (
-          <ul
-            className="conflict-list xsmall row gap-half margin-bs-1"
-            role="list"
-          >
-            {catalog.summary.conflictGroups.map((c) => (
-              <li key={c.productId} className="conflict-chip">
-                {c.displayName} ({c.count})
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul
+              className="conflict-list xsmall margin-bs-1 row fw-wrap gap-half  "
+              role="list"
+            >
+              {catalog.summary.conflictGroups.map((c) => (
+                <li key={c.productId} className="conflict-chip">
+                  {c.displayName} ({c.count})
+                </li>
+              ))}
+            </ul>
+            <button onClick={resolveCatalogConflicts}>Resolve Conflicts</button>
+          </>
         ),
     },
   ];
@@ -248,7 +257,9 @@ export default function InventoryPage() {
                               }}
                             />
                           ) : (
-                            <span className="ta-cen">{row.stockQty ?? ""}</span>
+                            <span className="ta-cen display-block">
+                              {row.stockQty ?? ""}
+                            </span>
                           )}
                         </td>
                         <td data-mismatch={mismatch} className="ta-cen">
