@@ -5,6 +5,16 @@ import * as dotenv from "dotenv";
 import path from "path";
 import session from "express-session";
 import cors from "cors";
+import type {
+  CatalogPayload,
+  ProductSheetRow,
+  VariantSheetRow,
+} from "~/types/catalog";
+import { rowsToObjects, shapeToCatalogPayload } from "./catalogManager";
+import {
+  applyWooStockMapToCatalogGroups,
+  refreshWooStockForCatalog,
+} from "./inventoryManager";
 
 // dotenv.config();
 dotenv.config({ path: "./backend/.env" });
@@ -295,55 +305,80 @@ app.get(
 
 // Get all products
 app.get(
-  "/api/catalog/inventory/get_products",
+  "/api/catalog/test_get_products_and_refresh_inventory_index",
   async (req: Request, res: Response) => {
     try {
-      if (!req.session.user) {
-        return res.status(401).json({ ok: false, error: "not_authenticated" });
-      }
-
-      const includeMeta =
-        req.query.includeMeta === "1" || req.query.includeMeta === "true";
-
-      const action = "inventory_get_products";
-      const url = new URL(process.env.WORKER_PROXY_URL!);
-      url.searchParams.set("action", action);
-
-      if (TARGET_ENV !== "production") {
-        url.searchParams.set("environment", TARGET_ENV!);
-      }
-
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
+      const sheets = google.sheets({
+        version: "v4",
+        auth: serviceAuth,
       });
 
-      const workerJson: unknown = await response.json();
-
-      if (!response.ok) {
-        return res.status(response.status).json(workerJson);
+      const spreadsheetId = getSpreadsheetId();
+      if (!spreadsheetId) {
+        return res.status(500).json({
+          ok: false,
+          error: "Missing GOOGLE_SHEETS_SPREADSHEET_ID",
+        });
       }
 
-      if (includeMeta) {
-        return res.status(200).json(workerJson);
-      }
+      const response = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: ["products_values", "variants_values"],
+      });
 
-      const payload =
-        workerJson && typeof workerJson === "object" && "data" in workerJson
-          ? (workerJson as { data: unknown }).data
-          : workerJson;
+      const valueRanges = response.data.valueRanges ?? [];
 
-      return res.status(200).json(payload);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error calling GAS inventory route:", error);
-      return res.status(500).json({ ok: false, error: message });
+      const productRows = rowsToObjects<ProductSheetRow>(
+        valueRanges[0]?.values ?? [],
+      );
+
+      const variantRows = rowsToObjects<VariantSheetRow>(
+        valueRanges[1]?.values ?? [],
+      );
+
+      let payload: CatalogPayload = shapeToCatalogPayload(
+        productRows,
+        variantRows,
+      );
+
+      const refreshResult = await refreshWooStockForCatalog(
+        sheets,
+        spreadsheetId,
+        payload.groups,
+      );
+
+      payload = {
+        ...payload,
+        generatedAt: new Date().toISOString(),
+        groups: applyWooStockMapToCatalogGroups(
+          payload.groups,
+          refreshResult.wooQtyBySku,
+        ),
+      };
+
+      return res.status(200).json({
+        ok: true,
+        refresh: {
+          updated: refreshResult.updated,
+          simpleCount: refreshResult.simpleCount,
+          variationCount: refreshResult.variationCount,
+          skuCount: refreshResult.wooQtyBySku.size,
+        },
+        payload,
+      });
+    } catch (error: any) {
+      console.error(
+        "GET /api/catalog/test_get_products_and_refresh_inventory_index failed:",
+        error,
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to refresh catalog inventory",
+      });
     }
   },
 );
-
 // push stock changes or resolve conflicts
 app.post(
   "/api/catalog/inventory/sync_stock",

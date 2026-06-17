@@ -244,6 +244,7 @@ export default function InventoryPage() {
                               name={`stock-${row.sku}`}
                               aria-label={`Stock quantity for ${row.label} (SKU: ${row.sku})`}
                               className="stock-input ta-cen"
+                              min={0}
                               value={displayStockQty ?? ""}
                               onChange={(event) => {
                                 const nextValue = event.target.value
