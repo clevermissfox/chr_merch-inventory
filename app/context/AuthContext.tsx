@@ -29,13 +29,6 @@ interface AuthContextValue {
   setUser: (user: AuthUser | null) => void;
 }
 
-const CATALOG_SESSION_STORAGE_KEY =
-  import.meta.env.VITE_CATALOG_SESSION_STORAGE_KEY || "chr-merch-catalog";
-function clearCatalogSessionCache() {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(CATALOG_SESSION_STORAGE_KEY);
-}
-
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -55,7 +48,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        clearCatalogSessionCache();
         setUser(null);
         return;
       }
@@ -65,11 +57,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (json.success && json.user) {
         setUser(json.user);
       } else {
-        clearCatalogSessionCache();
         setUser(null);
       }
     } catch {
-      clearCatalogSessionCache();
       setUser(null);
     } finally {
       setIsLoading(false);

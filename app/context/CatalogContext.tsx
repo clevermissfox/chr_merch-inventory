@@ -3,7 +3,6 @@ import {
   useCallback,
   useContext,
   useReducer,
-  useEffect,
   type ReactNode,
 } from "react";
 
@@ -13,10 +12,6 @@ import type {
   DirtyStockChange,
 } from "../types/catalog";
 
-const CATALOG_SESSION_STORAGE_KEY =
-  import.meta.env.VITE_CATALOG_SESSION_STORAGE_KEY || "chr-merch-catalog";
-const CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
-
 const initialState: CatalogState = {
   catalog: null,
   dirtyBySku: {},
@@ -25,43 +20,6 @@ const initialState: CatalogState = {
   error: null,
 };
 
-function initializeCatalogState(): CatalogState {
-  if (typeof window === "undefined") {
-    return initialState;
-  }
-
-  try {
-    const stored = window.sessionStorage.getItem(CATALOG_SESSION_STORAGE_KEY);
-
-    if (!stored) {
-      return initialState;
-    }
-
-    const parsed = JSON.parse(stored) as {
-      catalog?: CatalogPayload | null;
-      cachedAt?: number;
-    };
-
-    const cachedAt = typeof parsed.cachedAt === "number" ? parsed.cachedAt : 0;
-
-    if (!parsed.catalog || !cachedAt) {
-      window.sessionStorage.removeItem(CATALOG_SESSION_STORAGE_KEY);
-      return initialState;
-    }
-
-    if (Date.now() - cachedAt > CATALOG_CACHE_TTL_MS) {
-      window.sessionStorage.removeItem(CATALOG_SESSION_STORAGE_KEY);
-      return initialState;
-    }
-
-    return {
-      ...initialState,
-      catalog: parsed.catalog,
-    };
-  } catch {
-    return initialState;
-  }
-}
 type CatalogAction =
   | { type: "LOAD_START" }
   | { type: "LOAD_SUCCESS"; payload: CatalogPayload }
@@ -74,14 +32,16 @@ type CatalogAction =
 
 interface CatalogContextValue {
   state: CatalogState;
-  loadCatalog: (force?: boolean) => Promise<void>;
+  loadCatalog: () => Promise<void>;
   setStockQty: (
     sku: string,
     stockQty: number | "",
     originalStockQty?: number | null,
   ) => void;
   clearDirty: () => void;
-  saveCatalogChanges: () => Promise<void>;
+  syncCatalogStock: (
+    mode?: "standard_sync" | "resolve_conflicts" | "sync_all",
+  ) => Promise<void>;
   resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
 }
@@ -177,65 +137,32 @@ const CatalogContext = createContext<CatalogContextValue | undefined>(
 );
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(
-    catalogReducer,
-    initialState,
-    initializeCatalogState,
-  );
+  const [state, dispatch] = useReducer(catalogReducer, initialState);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
+  const loadCatalog = useCallback(async () => {
+    dispatch({ type: "LOAD_START" });
 
     try {
-      if (state.catalog) {
-        window.sessionStorage.setItem(
-          CATALOG_SESSION_STORAGE_KEY,
-          JSON.stringify({
-            catalog: state.catalog,
-            cachedAt: Date.now(),
-          }),
-        );
-      } else {
-        window.sessionStorage.removeItem(CATALOG_SESSION_STORAGE_KEY);
+      const response = await fetch("/api/catalog/inventory/get_stock", {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load catalog");
       }
-    } catch {
-      // ignore storage write errors
+
+      dispatch({ type: "LOAD_SUCCESS", payload: data as CatalogPayload });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load catalog";
+      dispatch({ type: "LOAD_ERROR", payload: message });
     }
-  }, [state.catalog]);
-
-  const loadCatalog = useCallback(
-    async (force = false) => {
-      if (!force && state.catalog) {
-        return;
-      }
-
-      dispatch({ type: "LOAD_START" });
-
-      try {
-        const response = await fetch("/api/catalog/inventory/get_stock", {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-          },
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data?.error || "Failed to load catalog");
-        }
-
-        dispatch({ type: "LOAD_SUCCESS", payload: data as CatalogPayload });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to load catalog";
-        dispatch({ type: "LOAD_ERROR", payload: message });
-      }
-    },
-    [state.catalog],
-  );
+  }, []);
 
   const setStockQty = useCallback(
     (
@@ -255,31 +182,72 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "CLEAR_DIRTY" });
   }, []);
 
-  const saveCatalogChanges = useCallback(async () => {
-    const changes = Object.values(state.dirtyBySku);
+  /*
+    LEGACY: Used to sync via worker + GAS- removed from interface + values too
+  */
+  // const saveCatalogChanges = useCallback(async () => {
+  //   const changes = Object.values(state.dirtyBySku);
 
-    if (!changes.length) {
-      return;
-    }
+  //   if (!changes.length) {
+  //     return;
+  //   }
 
-    dispatch({ type: "SAVE_START" });
+  //   dispatch({ type: "SAVE_START" });
 
-    try {
-      await postStockSync({
-        changes,
-        mode: "standard_sync",
-      });
+  //   try {
+  //     await postCatalogChanges({
+  //       changes,
+  //       mode: "standard_sync",
+  //     });
 
-      clearDirty();
-      await loadCatalog(true);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to sync stock";
-      dispatch({ type: "LOAD_ERROR", payload: message });
-    } finally {
-      dispatch({ type: "SAVE_END" });
-    }
-  }, [state.dirtyBySku, clearDirty, loadCatalog]);
+  //     clearDirty();
+  //     await loadCatalog();
+  //   } catch (error) {
+  //     const message =
+  //       error instanceof Error ? error.message : "Failed to sync stock";
+  //     dispatch({ type: "LOAD_ERROR", payload: message });
+  //   } finally {
+  //     dispatch({ type: "SAVE_END" });
+  //   }
+  // }, [state.dirtyBySku, clearDirty, loadCatalog]);
+
+  /**
+   * Sends the current catalog snapshot to the backend stock sync route.
+   * Includes current dirty rows so the backend can support delta-style syncs if needed.
+   * Reloads the catalog after a successful sync so the UI reflects confirmed Woo values.
+   */
+  const syncCatalogStock = useCallback(
+    async (
+      mode:
+        | "standard_sync"
+        | "resolve_conflicts"
+        | "sync_all" = "standard_sync",
+    ) => {
+      if (!state.catalog) {
+        return;
+      }
+
+      dispatch({ type: "SAVE_START" });
+
+      try {
+        await postCatalogStockSync({
+          catalog: state.catalog,
+          dirtyBySku: state.dirtyBySku,
+          mode,
+        });
+
+        clearDirty();
+        await loadCatalog();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to sync stock";
+        dispatch({ type: "LOAD_ERROR", payload: message });
+      } finally {
+        dispatch({ type: "SAVE_END" });
+      }
+    },
+    [state.catalog, state.dirtyBySku, clearDirty, loadCatalog],
+  );
 
   const resolveCatalogConflicts = useCallback(async () => {
     if (!state.catalog) {
@@ -303,12 +271,12 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SAVE_START" });
 
     try {
-      await postStockSync({
+      await postCatalogChanges({
         changes,
         mode: "resolve_conflicts",
       });
 
-      await loadCatalog(true);
+      await loadCatalog();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to resolve conflicts";
@@ -322,7 +290,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "RESET_ERROR" });
   }, []);
 
-  async function postStockSync({
+  async function postCatalogChanges({
     changes,
     mode,
   }: {
@@ -360,6 +328,51 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return data;
   }
 
+  /**
+   * Posts the current catalog snapshot and sync metadata to the backend stock sync route.
+   * Throws when the route returns a non-OK HTTP status or an error payload.
+   */
+  async function postCatalogStockSync({
+    catalog,
+    dirtyBySku,
+    mode,
+  }: {
+    catalog: CatalogPayload;
+    dirtyBySku: CatalogState["dirtyBySku"];
+    mode?: "standard_sync" | "resolve_conflicts" | "sync_all";
+  }) {
+    const response = await fetch("/api/catalog/inventory/sync_stock", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        catalog,
+        dirtyBySku,
+        ...(mode ? { mode } : {}),
+      }),
+    });
+
+    const data = await response.json();
+
+    const topLevelOk =
+      typeof data === "object" && data !== null && "ok" in data
+        ? data.ok !== false
+        : true;
+
+    if (!response.ok || !topLevelOk) {
+      const errorMessage =
+        (typeof data === "object" && data !== null && "error" in data
+          ? String(data.error)
+          : null) || "Failed to sync stock";
+
+      throw new Error(errorMessage);
+    }
+
+    return data;
+  }
+
   return (
     <CatalogContext.Provider
       value={{
@@ -367,7 +380,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         loadCatalog,
         setStockQty,
         clearDirty,
-        saveCatalogChanges,
+        syncCatalogStock,
         resolveCatalogConflicts,
         resetError,
       }}

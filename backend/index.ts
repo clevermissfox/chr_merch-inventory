@@ -6,6 +6,7 @@ import path from "path";
 import session from "express-session";
 import cors from "cors";
 import type {
+  CatalogGroup,
   CatalogPayload,
   ProductSheetRow,
   VariantSheetRow,
@@ -13,7 +14,10 @@ import type {
 import { rowsToObjects, shapeToCatalogPayload } from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
+  buildStockSyncChangesFromCatalog,
+  buildStockSyncPlan,
   refreshWooStockForCatalog,
+  syncStockSyncPlanToWoo,
 } from "./inventoryManager";
 
 // dotenv.config();
@@ -252,60 +256,60 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
   });
 });
 
-// Get stock_qty and woo_stock
+// LEGACY: WORKER + GAS  Get stock_qty and woo_stock
+// app.get(
+//   "/api/catalog/inventory/legacy_get_stock",
+//   async (req: Request, res: Response) => {
+//     try {
+//       if (!req.session.user) {
+//         return res.status(401).json({ ok: false, error: "not_authenticated" });
+//       }
+
+//       const includeMeta =
+//         req.query.includeMeta === "1" || req.query.includeMeta === "true";
+
+//       const action = "inventory_rebuild_index_and_refresh_woo_stock";
+//       const url = new URL(process.env.WORKER_PROXY_URL!);
+//       url.searchParams.set("action", action);
+
+//       if (TARGET_ENV !== "production") {
+//         url.searchParams.set("environment", TARGET_ENV!);
+//       }
+
+//       const response = await fetch(url.toString(), {
+//         method: "GET",
+//         headers: {
+//           Accept: "application/json",
+//         },
+//       });
+
+//       const workerJson: unknown = await response.json();
+
+//       if (!response.ok) {
+//         return res.status(response.status).json(workerJson);
+//       }
+
+//       if (includeMeta) {
+//         return res.status(200).json(workerJson);
+//       }
+
+//       const payload =
+//         workerJson && typeof workerJson === "object" && "data" in workerJson
+//           ? (workerJson as { data: unknown }).data
+//           : workerJson;
+
+//       return res.status(200).json(payload);
+//     } catch (error: unknown) {
+//       const message = error instanceof Error ? error.message : "Unknown error";
+//       console.error("Error calling GAS inventory route:", error);
+//       return res.status(500).json({ ok: false, error: message });
+//     }
+//   },
+// );
+
+// Get all products/variants, shape to catalog, call woo for current website stock values, write those to inventory_index, patch update catalogs woo_stock
 app.get(
   "/api/catalog/inventory/get_stock",
-  async (req: Request, res: Response) => {
-    try {
-      if (!req.session.user) {
-        return res.status(401).json({ ok: false, error: "not_authenticated" });
-      }
-
-      const includeMeta =
-        req.query.includeMeta === "1" || req.query.includeMeta === "true";
-
-      const action = "inventory_rebuild_index_and_refresh_woo_stock";
-      const url = new URL(process.env.WORKER_PROXY_URL!);
-      url.searchParams.set("action", action);
-
-      if (TARGET_ENV !== "production") {
-        url.searchParams.set("environment", TARGET_ENV!);
-      }
-
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      const workerJson: unknown = await response.json();
-
-      if (!response.ok) {
-        return res.status(response.status).json(workerJson);
-      }
-
-      if (includeMeta) {
-        return res.status(200).json(workerJson);
-      }
-
-      const payload =
-        workerJson && typeof workerJson === "object" && "data" in workerJson
-          ? (workerJson as { data: unknown }).data
-          : workerJson;
-
-      return res.status(200).json(payload);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error calling GAS inventory route:", error);
-      return res.status(500).json({ ok: false, error: message });
-    }
-  },
-);
-
-// Get all products
-app.get(
-  "/api/catalog/test_get_products_and_refresh_inventory_index",
   async (req: Request, res: Response) => {
     try {
       const sheets = google.sheets({
@@ -356,21 +360,9 @@ app.get(
         ),
       };
 
-      return res.status(200).json({
-        ok: true,
-        refresh: {
-          updated: refreshResult.updated,
-          simpleCount: refreshResult.simpleCount,
-          variationCount: refreshResult.variationCount,
-          skuCount: refreshResult.wooQtyBySku.size,
-        },
-        payload,
-      });
+      return res.status(200).json(payload);
     } catch (error: any) {
-      console.error(
-        "GET /api/catalog/test_get_products_and_refresh_inventory_index failed:",
-        error,
-      );
+      console.error("GET /api/catalog/inventory/get_stock failed:", error);
 
       return res.status(500).json({
         ok: false,
@@ -379,152 +371,240 @@ app.get(
     }
   },
 );
-// push stock changes or resolve conflicts
+
+// // LEGACY: USED FOR WORKER + GAS push stock changes or resolve conflicts
+// app.post(
+//   "/api/catalog/inventory/legacy_sync_stock",
+//   async (req: Request, res: Response) => {
+//     try {
+//       if (!req.session.user) {
+//         return res.status(401).json({
+//           ok: false,
+//           error: "NOT_AUTHENTICATED",
+//           message: "You must sign in to sync inventory.",
+//           status: 401,
+//         });
+//       }
+
+//       if (!req.session.user.canEdit) {
+//         return res.status(403).json({
+//           ok: false,
+//           error: "FORBIDDEN",
+//           message: "You do not have permission to sync inventory.",
+//           status: 403,
+//         });
+//       }
+
+//       const includeMeta =
+//         req.query.includeMeta === "1" || req.query.includeMeta === "true";
+
+//       const mode =
+//         req.body?.mode === "resolve_conflicts"
+//           ? "resolve_conflicts"
+//           : "standard_sync";
+
+//       const rawChanges = Array.isArray(req.body?.changes)
+//         ? req.body.changes
+//         : [];
+
+//       if (!rawChanges.length) {
+//         return res.status(400).json({
+//           ok: false,
+//           error: "NO_CHANGES",
+//           message: "No inventory changes were provided.",
+//           status: 400,
+//         });
+//       }
+
+//       const changes: Array<{ sku: string; stock_qty: number | "" }> = [];
+
+//       for (const item of rawChanges as Array<{
+//         sku?: unknown;
+//         stockQty?: unknown;
+//       }>) {
+//         const sku = String(item?.sku || "").trim();
+//         const stockQty = item?.stockQty;
+
+//         if (!sku) {
+//           return res.status(400).json({
+//             ok: false,
+//             error: "INVALID_SKU",
+//             message: "One or more changes is missing a SKU.",
+//             status: 400,
+//           });
+//         }
+
+//         if (stockQty === "" || stockQty == null) {
+//           changes.push({ sku, stock_qty: "" });
+//           continue;
+//         }
+
+//         const parsedQty = Number(stockQty);
+
+//         if (!Number.isFinite(parsedQty) || parsedQty < 0) {
+//           return res.status(400).json({
+//             ok: false,
+//             error: "INVALID_STOCK_QTY",
+//             message: `Invalid stock quantity for ${sku}.`,
+//             status: 400,
+//           });
+//         }
+
+//         changes.push({
+//           sku,
+//           stock_qty: Math.round(parsedQty),
+//         });
+//       }
+
+//       const response = await fetch(process.env.WORKER_PROXY_URL!, {
+//         method: "POST",
+//         headers: {
+//           Accept: "application/json",
+//           "Content-Type": "application/json",
+//         },
+//         body: JSON.stringify({
+//           action: "inventory_sync_stock",
+//           secret: process.env.GAS_SECRET || "harmredux",
+//           mode,
+//           changes,
+//           ...(TARGET_ENV !== "production" ? { environment: TARGET_ENV } : {}),
+//         }),
+//       });
+
+//       const workerJson: unknown = await response.json();
+
+//       if (
+//         !response.ok ||
+//         (workerJson &&
+//           typeof workerJson === "object" &&
+//           "ok" in workerJson &&
+//           (workerJson as { ok?: boolean }).ok === false)
+//       ) {
+//         const bodyStatus =
+//           workerJson &&
+//           typeof workerJson === "object" &&
+//           "status" in workerJson &&
+//           typeof (workerJson as { status?: unknown }).status === "number"
+//             ? (workerJson as { status: number }).status
+//             : undefined;
+
+//         return res
+//           .status(bodyStatus ?? response.status ?? 502)
+//           .json(workerJson);
+//       }
+
+//       if (includeMeta) {
+//         return res.status(200).json(workerJson);
+//       }
+
+//       const payload =
+//         workerJson && typeof workerJson === "object" && "data" in workerJson
+//           ? (workerJson as { data: unknown }).data
+//           : workerJson;
+
+//       return res.status(200).json(payload);
+//     } catch (error: unknown) {
+//       const message = error instanceof Error ? error.message : "Unknown error";
+//       console.error("Error calling GAS inventory route:", error);
+
+//       return res.status(500).json({
+//         ok: false,
+//         error: "INTERNAL_SERVER_ERROR",
+//         message: "The server failed while processing the inventory request.",
+//         details: message,
+//         status: 500,
+//       });
+//     }
+//   },
+// );
+
+/**
+ * Syncs stock to WooCommerce using the client-provided catalog snapshot.
+ * Confirms current Woo stock for touched SKUs, writes inventory_index updates,
+ * and returns sync details for testing the new stock workflow.
+ */
 app.post(
   "/api/catalog/inventory/sync_stock",
   async (req: Request, res: Response) => {
     try {
-      if (!req.session.user) {
-        return res.status(401).json({
-          ok: false,
-          error: "NOT_AUTHENTICATED",
-          message: "You must sign in to sync inventory.",
-          status: 401,
-        });
-      }
-
-      if (!req.session.user.canEdit) {
-        return res.status(403).json({
-          ok: false,
-          error: "FORBIDDEN",
-          message: "You do not have permission to sync inventory.",
-          status: 403,
-        });
-      }
-
-      const includeMeta =
-        req.query.includeMeta === "1" || req.query.includeMeta === "true";
-
-      const mode =
-        req.body?.mode === "resolve_conflicts"
-          ? "resolve_conflicts"
-          : "standard_sync";
-
-      const rawChanges = Array.isArray(req.body?.changes)
-        ? req.body.changes
-        : [];
-
-      if (!rawChanges.length) {
-        return res.status(400).json({
-          ok: false,
-          error: "NO_CHANGES",
-          message: "No inventory changes were provided.",
-          status: 400,
-        });
-      }
-
-      const changes: Array<{ sku: string; stock_qty: number | "" }> = [];
-
-      for (const item of rawChanges as Array<{
-        sku?: unknown;
-        stockQty?: unknown;
-      }>) {
-        const sku = String(item?.sku || "").trim();
-        const stockQty = item?.stockQty;
-
-        if (!sku) {
-          return res.status(400).json({
-            ok: false,
-            error: "INVALID_SKU",
-            message: "One or more changes is missing a SKU.",
-            status: 400,
-          });
-        }
-
-        if (stockQty === "" || stockQty == null) {
-          changes.push({ sku, stock_qty: "" });
-          continue;
-        }
-
-        const parsedQty = Number(stockQty);
-
-        if (!Number.isFinite(parsedQty) || parsedQty < 0) {
-          return res.status(400).json({
-            ok: false,
-            error: "INVALID_STOCK_QTY",
-            message: `Invalid stock quantity for ${sku}.`,
-            status: 400,
-          });
-        }
-
-        changes.push({
-          sku,
-          stock_qty: Math.round(parsedQty),
-        });
-      }
-
-      const response = await fetch(process.env.WORKER_PROXY_URL!, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "inventory_sync_stock",
-          secret: process.env.GAS_SECRET || "harmredux",
-          mode,
-          changes,
-          ...(TARGET_ENV !== "production" ? { environment: TARGET_ENV } : {}),
-        }),
+      const sheets = google.sheets({
+        version: "v4",
+        auth: serviceAuth,
       });
 
-      const workerJson: unknown = await response.json();
-
-      if (
-        !response.ok ||
-        (workerJson &&
-          typeof workerJson === "object" &&
-          "ok" in workerJson &&
-          (workerJson as { ok?: boolean }).ok === false)
-      ) {
-        const bodyStatus =
-          workerJson &&
-          typeof workerJson === "object" &&
-          "status" in workerJson &&
-          typeof (workerJson as { status?: unknown }).status === "number"
-            ? (workerJson as { status: number }).status
-            : undefined;
-
-        return res
-          .status(bodyStatus ?? response.status ?? 502)
-          .json(workerJson);
+      const spreadsheetId = getSpreadsheetId();
+      if (!spreadsheetId) {
+        return res.status(500).json({
+          ok: false,
+          error: "Missing spreadsheetId",
+        });
       }
 
-      if (includeMeta) {
-        return res.status(200).json(workerJson);
+      const catalog = req.body?.catalog as CatalogPayload | undefined;
+      const mode = String(req.body?.mode || "standard_sync") as
+        | "standard_sync"
+        | "resolve_conflicts"
+        | "sync_all";
+      const dirtyBySku = (req.body?.dirtyBySku || {}) as Record<
+        string,
+        { sku: string; stockQty: number | ""; originalStockQty?: number | null }
+      >;
+
+      if (!catalog || !Array.isArray(catalog.groups)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Missing catalog.groups in request body",
+        });
       }
 
-      const payload =
-        workerJson && typeof workerJson === "object" && "data" in workerJson
-          ? (workerJson as { data: unknown }).data
-          : workerJson;
+      const changes = buildStockSyncChangesFromCatalog(
+        catalog,
+        dirtyBySku,
+        mode,
+      );
 
-      return res.status(200).json(payload);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error calling GAS inventory route:", error);
+      if (!changes.length) {
+        return res.status(200).json({
+          ok: true,
+          updatedProducts: 0,
+          updatedSkus: [],
+          skipped: [],
+          inventoryIndexUpdated: 0,
+        });
+      }
+
+      const plan = buildStockSyncPlan(catalog.groups, changes);
+      const wooResult = await syncStockSyncPlanToWoo(plan);
+
+      const refreshResult = await refreshWooStockForCatalog(
+        sheets,
+        spreadsheetId,
+        catalog.groups,
+        {
+          touchedSkus: new Set(wooResult.updatedSkus),
+          stockQtyBySku: plan.changeMap,
+        },
+      );
+
+      return res.status(200).json({
+        ok: true,
+        updatedProducts: wooResult.updatedProducts,
+        updatedSkus: wooResult.updatedSkus,
+        skipped: wooResult.skipped,
+        inventoryIndexUpdated: refreshResult.updated,
+        simpleCount: refreshResult.simpleCount,
+        variationCount: refreshResult.variationCount,
+      });
+    } catch (error: any) {
+      console.error("POST /api/catalog/inventory/sync_stock failed:", error);
 
       return res.status(500).json({
         ok: false,
-        error: "INTERNAL_SERVER_ERROR",
-        message: "The server failed while processing the inventory request.",
-        details: message,
-        status: 500,
+        error: error?.message || "Failed to sync stock",
       });
     }
   },
 );
-
 // Test endpoint
 app.get("/api/test", async (req: Request, res: Response) => {
   try {

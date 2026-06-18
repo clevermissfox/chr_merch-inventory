@@ -1,4 +1,6 @@
-import type { CatalogGroup, CatalogRow } from "~/types/catalog";
+import { createHash } from "node:crypto";
+
+import type { CatalogGroup, CatalogPayload, CatalogRow } from "~/types/catalog";
 import type {
   StockSyncChange,
   SyncQty,
@@ -7,10 +9,15 @@ import type {
   StockSyncVariationTarget,
   StockSyncSimpleTarget,
   WooSyncResult,
-  InventoryIndexSheetRow,
+  InventoryIndexState,
+  InventoryIndexUpdate,
+  InventoryIndexCellValue,
+  RefreshWooStockResult,
+  InventoryIndexWriteResult,
+  InventoryIndexHashRow,
 } from "~/types/inventory";
-import { rowsToObjects } from "./catalogManager";
 
+/* MARK: LOCAL TYPES */
 interface WooConfig {
   storeUrl: string;
   consumerKey: string;
@@ -18,16 +25,24 @@ interface WooConfig {
 }
 
 type WooSheetQty = number | "";
-type WooCatalogQty = number | null;
 
-interface RefreshWooStockResult {
-  ok: true;
-  updated: number;
-  simpleCount: number;
-  variationCount: number;
-  wooQtyBySku: Map<string, WooSheetQty>;
+interface RefreshWooStockOptions {
+  touchedSkus?: Set<string>;
+  stockQtyBySku?: Map<string, SyncQty>;
 }
 
+type StockSyncMode = "standard_sync" | "resolve_conflicts" | "sync_all";
+
+interface StockSyncRequestChange {
+  sku: string;
+  stockQty: number | "";
+}
+
+/**
+ * Resolves the active WooCommerce configuration from environment variables.
+ * Uses staging credentials unless TARGET_ENV is set to "production".
+ * Throws when any required WooCommerce setting is missing.
+ */
 function getWooConfig(): WooConfig {
   const isStaging = process.env.TARGET_ENV !== "production";
   const storeUrl = isStaging
@@ -51,10 +66,18 @@ function getWooConfig(): WooConfig {
   };
 }
 
+/**
+ * Converts a sheet-style Woo stock value into the catalog stock format.
+ * Empty string and undefined/null are treated as no stock value and returned as null.
+ */
 function toCatalogWooStock(value: WooSheetQty | undefined): number | null {
   return value === "" || value == null ? null : value;
 }
 
+/**
+ * Returns the Woo stock value for a SKU if it exists in the lookup map.
+ * Falls back to the current catalog value when the SKU is not present in the map.
+ */
 function getCatalogWooStock(
   sku: string,
   currentValue: number | null,
@@ -64,6 +87,10 @@ function getCatalogWooStock(
   return toCatalogWooStock(wooQtyBySku.get(sku));
 }
 
+/**
+ * Builds a WooCommerce REST API URL with authentication query parameters.
+ * Normalizes the path and optionally appends additional query string values.
+ */
 function buildWooUrl(
   woo: WooConfig,
   path: string,
@@ -86,6 +113,11 @@ function buildWooUrl(
   return url.toString();
 }
 
+/**
+ * Looks up a WooCommerce product by SKU and returns its product ID.
+ * Returns null when no matching product is found.
+ * Throws if the WooCommerce API request fails.
+ */
 async function findWooProductIdBySku(
   woo: WooConfig,
   sku: string,
@@ -109,6 +141,11 @@ async function findWooProductIdBySku(
   return typeof id === "number" ? id : null;
 }
 
+/**
+ * Fetches all variations for a WooCommerce variable product and maps variation SKU to variation ID.
+ * Only variations with both a valid SKU and numeric ID are included.
+ * Throws if the WooCommerce API request fails.
+ */
 async function fetchWooVariationIdMap(
   woo: WooConfig,
   productId: number,
@@ -146,6 +183,10 @@ async function fetchWooVariationIdMap(
   return map;
 }
 
+/**
+ * Builds the standard WooCommerce stock update payload for a stock-managed item.
+ * Sets stock status to instock when quantity is greater than zero, otherwise outofstock.
+ */
 function buildWooStockPayload(qty: number) {
   return {
     manage_stock: true,
@@ -155,6 +196,11 @@ function buildWooStockPayload(qty: number) {
   };
 }
 
+/**
+ * Updates stock for a WooCommerce product or variation at the provided API path.
+ * Sends a PUT request using the normalized stock payload.
+ * Throws with response details when the update fails.
+ */
 async function putWooStock(
   woo: WooConfig,
   path: string,
@@ -180,6 +226,11 @@ async function putWooStock(
   }
 }
 
+/**
+ * Syncs a simple product stock target to WooCommerce.
+ * Resolves the Woo product ID from the plan, target, or parent SKU lookup when needed.
+ * Returns a skip reason string when the target cannot be synced; otherwise returns null.
+ */
 async function syncSimpleTargetToWoo(
   woo: WooConfig,
   plan: StockSyncProductPlan,
@@ -203,6 +254,11 @@ async function syncSimpleTargetToWoo(
   return null;
 }
 
+/**
+ * Syncs variation stock targets for a variable product to WooCommerce.
+ * Updates the parent variable product stock status based on whether any targeted variation is in stock.
+ * Returns a list of skipped variation SKUs with reasons for any targets that could not be updated.
+ */
 async function syncVariationTargetsToWoo(
   woo: WooConfig,
   plan: StockSyncProductPlan,
@@ -274,6 +330,11 @@ async function syncVariationTargetsToWoo(
   return skipped;
 }
 
+/**
+ * Executes a stock sync plan against WooCommerce.
+ * Attempts to update all simple and variation targets, tracks updated SKUs, and records skipped items.
+ * Returns an aggregate sync result describing what was updated and what was skipped.
+ */
 export async function syncStockSyncPlanToWoo(
   plan: StockSyncPlan,
 ): Promise<WooSyncResult> {
@@ -341,15 +402,10 @@ export async function syncStockSyncPlanToWoo(
   };
 }
 
-function normalizeSyncQty(value: unknown): SyncQty | null {
-  if (value === "" || value == null) return null;
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-
-  return Math.round(parsed);
-}
-
+/**
+ * Builds a SKU-to-quantity map from raw stock sync changes.
+ * Ignores entries with blank SKUs and normalizes each stock quantity before storing it.
+ */
 function buildInventoryStockChangeMap(
   changes: StockSyncChange[],
 ): Map<string, SyncQty> {
@@ -366,6 +422,142 @@ function buildInventoryStockChangeMap(
   return map;
 }
 
+/**
+ * Builds inventory_index updates from Woo stock values and optional stock quantity values.
+ * Can build updates for the full Woo stock map or only a specified set of touched SKUs.
+ * Always writes last_sync_at and includes stock_qty when a stock quantity map is provided.
+ */
+export function buildInventoryIndexUpdates(
+  wooQtyBySku: Map<string, WooSheetQty>,
+  now: string,
+  options: RefreshWooStockOptions = {},
+): InventoryIndexUpdate[] {
+  const updates: InventoryIndexUpdate[] = [];
+  const { touchedSkus, stockQtyBySku } = options;
+
+  for (const [sku, wooStock] of wooQtyBySku.entries()) {
+    if (touchedSkus && !touchedSkus.has(sku)) continue;
+
+    const fields: InventoryIndexUpdate["fields"] = {
+      woo_stock: wooStock,
+      last_sync_at: now,
+    };
+
+    if (stockQtyBySku && stockQtyBySku.has(sku)) {
+      const stockQty = stockQtyBySku.get(sku);
+      fields.stock_qty = stockQty == null ? "" : stockQty;
+    }
+
+    updates.push({
+      sku,
+      fields,
+    });
+  }
+
+  return updates;
+}
+
+/**
+ * Refreshes WooCommerce stock values for catalog groups and writes them into the inventory index sheet.
+ * Can operate on the full catalog or only a specified set of touched SKUs.
+ * Optionally writes stock_qty alongside confirmed woo_stock values when provided.
+ */
+export async function refreshWooStockForCatalog(
+  sheets: any,
+  spreadsheetId: string,
+  groups: CatalogGroup[],
+  options: RefreshWooStockOptions = {},
+): Promise<RefreshWooStockResult> {
+  const woo = getWooConfig();
+  const wooQtyBySku = new Map<string, WooSheetQty>();
+  const { touchedSkus } = options;
+
+  let simpleCount = 0;
+  let variationCount = 0;
+
+  for (const group of groups) {
+    if (group.rows.length > 0) {
+      const parentSku = String(group.sku || "").trim();
+      if (!parentSku) continue;
+
+      const matchingRows = touchedSkus
+        ? group.rows.filter((row) =>
+            touchedSkus.has(String(row.sku || "").trim()),
+          )
+        : group.rows;
+
+      if (!matchingRows.length) continue;
+
+      let productId = Number(group.wooId || 0);
+
+      if (!productId) {
+        const product = await fetchWooProductBySku(woo, parentSku);
+        productId = product?.id || 0;
+      }
+
+      if (!productId) continue;
+
+      const variationStockMap = await fetchAllWooVariationStockQtyBySku(
+        woo,
+        productId,
+      );
+
+      for (const row of matchingRows) {
+        variationCount += 1;
+        wooQtyBySku.set(row.sku, variationStockMap.get(row.sku) ?? "");
+      }
+
+      continue;
+    }
+
+    const sku = String(group.sku || "").trim();
+    if (!sku) continue;
+    if (touchedSkus && !touchedSkus.has(sku)) continue;
+
+    const product = await fetchWooProductBySku(woo, sku);
+    simpleCount += 1;
+    wooQtyBySku.set(sku, toWooSheetValue(product?.stock_quantity));
+  }
+
+  let inventoryIndexState = await loadInventoryIndexState(
+    sheets,
+    spreadsheetId,
+  );
+  const now = new Date().toISOString();
+
+  const updates = buildInventoryIndexUpdates(wooQtyBySku, now, options);
+  console.log("inventory updates sample", updates[0]);
+  const catalogNameBySku = buildCatalogNameBySku(groups);
+
+  inventoryIndexState = await ensureInventoryIndexRowsExist(
+    sheets,
+    spreadsheetId,
+    inventoryIndexState,
+    updates,
+    catalogNameBySku,
+  );
+
+  const writeResult = await writeInventoryIndexUpdates(
+    sheets,
+    spreadsheetId,
+    inventoryIndexState,
+    updates,
+  );
+
+  return {
+    ok: true,
+    updated: writeResult.updatedCount,
+    simpleCount,
+    variationCount,
+    wooQtyBySku,
+  };
+}
+
+/**
+ * Builds a stock sync plan by matching incoming stock changes to catalog groups and rows.
+ * Separates simple product targets from variation targets and records unmatched or non-editable SKUs as skipped.
+ * Returns the normalized change map, planned product updates, and skipped items.
+ */
 export function buildStockSyncPlan(
   groups: CatalogGroup[],
   changes: StockSyncChange[],
@@ -478,6 +670,10 @@ export function buildStockSyncPlan(
   };
 }
 
+/**
+ * Builds the stock payload used for a WooCommerce variable parent product.
+ * Parent products do not manage stock directly, so only stock status is updated.
+ */
 function buildWooParentVariableStockPayload(anyInStock: boolean) {
   return {
     manage_stock: false,
@@ -486,6 +682,11 @@ function buildWooParentVariableStockPayload(anyInStock: boolean) {
   };
 }
 
+/**
+ * Updates the stock status of a WooCommerce variable parent product.
+ * Marks the parent as instock when any child variation is in stock, otherwise outofstock.
+ * Throws with response details when the update fails.
+ */
 async function putWooParentVariableStockStatus(
   woo: WooConfig,
   productId: number,
@@ -511,10 +712,19 @@ async function putWooParentVariableStockStatus(
   }
 }
 
+/**
+ * Converts a catalog-style stock value into the value format written back to the sheet.
+ * Null and undefined are represented as an empty string.
+ */
 function toWooSheetValue(value: number | null | undefined): WooSheetQty {
   return value == null ? "" : value;
 }
 
+/**
+ * Fetches a WooCommerce product by SKU and returns its ID and stock quantity.
+ * Returns null when no matching product is found.
+ * Throws with response details when the lookup fails.
+ */
 async function fetchWooProductBySku(
   woo: WooConfig,
   sku: string,
@@ -551,6 +761,11 @@ async function fetchWooProductBySku(
   };
 }
 
+/**
+ * Fetches all variation stock quantities for a WooCommerce variable product.
+ * Paginates through variation results and returns a map of variation SKU to sheet-formatted stock quantity.
+ * Throws with response details when any page request fails.
+ */
 async function fetchAllWooVariationStockQtyBySku(
   woo: WooConfig,
   productId: number,
@@ -598,79 +813,10 @@ async function fetchAllWooVariationStockQtyBySku(
   return result;
 }
 
-export async function refreshWooStockForCatalog(
-  sheets: any,
-  spreadsheetId: string,
-  groups: CatalogGroup[],
-): Promise<RefreshWooStockResult> {
-  const woo = getWooConfig();
-  const wooQtyBySku = new Map<string, WooSheetQty>();
-
-  let simpleCount = 0;
-  let variationCount = 0;
-
-  for (const group of groups) {
-    if (group.rows.length > 0) {
-      const parentSku = String(group.sku || "").trim();
-      if (!parentSku) continue;
-
-      let productId = Number(group.wooId || 0);
-
-      if (!productId) {
-        const product = await fetchWooProductBySku(woo, parentSku);
-        productId = product?.id || 0;
-      }
-
-      if (!productId) continue;
-
-      const variationStockMap = await fetchAllWooVariationStockQtyBySku(
-        woo,
-        productId,
-      );
-
-      for (const row of group.rows) {
-        variationCount += 1;
-        wooQtyBySku.set(row.sku, variationStockMap.get(row.sku) ?? "");
-      }
-
-      continue;
-    }
-
-    const sku = String(group.sku || "").trim();
-    if (!sku) continue;
-
-    const product = await fetchWooProductBySku(woo, sku);
-    simpleCount += 1;
-    wooQtyBySku.set(sku, toWooSheetValue(product?.stock_quantity));
-  }
-
-  const inventoryResponse = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId,
-    ranges: ["inventory_index_values"],
-  });
-
-  const inventoryRanges = inventoryResponse.data.valueRanges ?? [];
-
-  const inventoryRows = rowsToObjects<InventoryIndexSheetRow>(
-    inventoryRanges[0]?.values ?? [],
-  );
-
-  const updated = await writeWooStockToNamedRangesBySku(
-    sheets,
-    spreadsheetId,
-    inventoryRows,
-    wooQtyBySku,
-  );
-
-  return {
-    ok: true,
-    updated,
-    simpleCount,
-    variationCount,
-    wooQtyBySku,
-  };
-}
-
+/**
+ * Applies WooCommerce stock values from a SKU lookup map onto catalog groups.
+ * Updates both simple products and variant rows while preserving existing values for SKUs not present in the map.
+ */
 export function applyWooStockMapToCatalogGroups(
   groups: CatalogGroup[],
   wooQtyBySku: Map<string, WooSheetQty>,
@@ -696,62 +842,371 @@ export function applyWooStockMapToCatalogGroups(
     };
   });
 }
-function buildInventoryIndexSkuPositionMap(
-  inventoryRows: InventoryIndexSheetRow[],
-): Map<string, number> {
-  const skuToPosition = new Map<string, number>();
 
-  inventoryRows.forEach((row, index) => {
-    const sku = String(row.sku || "").trim();
-    if (!sku) return;
-
-    skuToPosition.set(sku, index + 1);
-  });
-
-  return skuToPosition;
-}
-
-async function writeWooStockToNamedRangesBySku(
+/**
+ * Loads the inventory_index sheet state needed for targeted cell updates.
+ * Parses headers, builds a header index, and maps SKU values to their sheet row numbers.
+ * Throws when the sheet is empty or the required sku header is missing.
+ */
+export async function loadInventoryIndexState(
   sheets: any,
   spreadsheetId: string,
-  inventoryRows: InventoryIndexSheetRow[],
-  wooQtyBySku: Map<string, WooSheetQty>,
-): Promise<number> {
-  const skuToPosition = buildInventoryIndexSkuPositionMap(inventoryRows);
-  const now = new Date().toISOString();
+): Promise<InventoryIndexState> {
+  const sheetName = "inventory_index";
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: sheetName,
+  });
 
+  const rawValues = (response.data.values ?? []) as string[][];
+  if (!rawValues.length) {
+    throw new Error(`${sheetName} is empty`);
+  }
+
+  const headers = rawValues[0].map((value) => String(value || "").trim());
+  const headerIndex: Record<string, number> = {};
+
+  headers.forEach((header, index) => {
+    if (header) headerIndex[header] = index;
+  });
+
+  if (headerIndex.sku == null) {
+    throw new Error(`${sheetName} is missing header: sku`);
+  }
+
+  const skuToRowNumber = new Map<string, number>();
+
+  for (let i = 1; i < rawValues.length; i += 1) {
+    const row = rawValues[i];
+    const sku = String(row[headerIndex.sku] || "").trim();
+    if (!sku) continue;
+
+    skuToRowNumber.set(sku, i + 1);
+  }
+
+  return {
+    sheetName,
+    rawValues,
+    headers,
+    headerIndex,
+    skuToRowNumber,
+  };
+}
+
+/**
+ * Builds Google Sheets batch update payload entries for inventory index cell writes.
+ * Converts each update field into a single-cell A1 range write based on the loaded sheet state.
+ * Throws when a required target column header is missing.
+ */
+function buildInventoryIndexWriteData(
+  state: InventoryIndexState,
+  updates: InventoryIndexUpdate[],
+): Array<{
+  range: string;
+  majorDimension: "ROWS";
+  values: InventoryIndexCellValue[][];
+}> {
   const data: Array<{
     range: string;
     majorDimension: "ROWS";
-    values: (string | number)[][];
+    values: InventoryIndexCellValue[][];
   }> = [];
 
-  for (const [sku, wooStock] of wooQtyBySku.entries()) {
-    const position = skuToPosition.get(sku);
-    if (!position) continue;
+  for (const update of updates) {
+    const sku = String(update.sku || "").trim();
+    if (!sku) continue;
 
-    data.push({
-      range: `inventory_index_values_woo_stock!A${position}`,
-      majorDimension: "ROWS",
-      values: [[wooStock]],
-    });
+    const rowNumber = state.skuToRowNumber.get(sku);
+    if (!rowNumber) continue;
 
-    data.push({
-      range: `inventory_index_values_last_sync!A${position}`,
-      majorDimension: "ROWS",
-      values: [[now]],
+    for (const [fieldName, fieldValue] of Object.entries(update.fields)) {
+      const columnIndex = state.headerIndex[fieldName];
+      if (columnIndex == null) {
+        throw new Error(`inventory_index is missing header: ${fieldName}`);
+      }
+
+      data.push({
+        range: toA1Cell(state.sheetName, rowNumber, columnIndex + 1),
+        majorDimension: "ROWS",
+        values: [[fieldValue]],
+      });
+    }
+  }
+
+  return data;
+}
+
+/**
+ * Writes inventory index updates for SKUs that already exist in the index sheet.
+ * Skips missing SKUs, performs a batch cell update for writeable entries, and returns write statistics.
+ */
+export async function writeInventoryIndexUpdates(
+  sheets: any,
+  spreadsheetId: string,
+  state: InventoryIndexState,
+  updates: InventoryIndexUpdate[],
+): Promise<InventoryIndexWriteResult> {
+  const missingSkus: string[] = [];
+  const writeableUpdates: InventoryIndexUpdate[] = [];
+
+  for (const update of updates) {
+    const sku = String(update.sku || "").trim();
+    if (!sku) continue;
+
+    if (!state.skuToRowNumber.has(sku)) {
+      missingSkus.push(sku);
+      continue;
+    }
+
+    writeableUpdates.push(update);
+  }
+
+  const data = buildInventoryIndexWriteData(state, writeableUpdates);
+
+  if (data.length) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        valueInputOption: "RAW",
+        data,
+      },
     });
   }
 
-  if (!data.length) return 0;
+  return {
+    updatedCount: writeableUpdates.length,
+    missingSkus,
+  };
+}
 
-  await sheets.spreadsheets.values.batchUpdate({
+/**
+ * Appends new rows to the inventory index sheet using the current header order.
+ * Populates the sku column directly and fills remaining columns from each update's fields object.
+ * Returns the number of rows appended.
+ */
+async function appendInventoryIndexRows(
+  sheets: any,
+  spreadsheetId: string,
+  state: InventoryIndexState,
+  rows: InventoryIndexUpdate[],
+): Promise<number> {
+  if (!rows.length) return 0;
+
+  const orderedHeaders = state.headers;
+  const values = rows.map((row) =>
+    orderedHeaders.map((header) => {
+      if (header === "sku") return row.sku;
+      return row.fields[header] ?? "";
+    }),
+  );
+
+  await sheets.spreadsheets.values.append({
     spreadsheetId,
+    range: state.sheetName,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
     requestBody: {
-      valueInputOption: "RAW",
-      data,
+      values,
     },
   });
 
-  return data.length / 2;
+  return rows.length;
+}
+
+/**
+ * Ensures every SKU referenced by the pending updates exists in the inventory index sheet.
+ * Appends missing rows with a best-available product name and then reloads sheet state.
+ * Returns the original state when no rows need to be added.
+ */
+export async function ensureInventoryIndexRowsExist(
+  sheets: any,
+  spreadsheetId: string,
+  state: InventoryIndexState,
+  updates: InventoryIndexUpdate[],
+  catalogNameBySku: Map<string, string>,
+): Promise<InventoryIndexState> {
+  const missingBySku = new Map<string, InventoryIndexUpdate>();
+
+  for (const update of updates) {
+    const sku = String(update.sku || "").trim();
+    if (!sku) continue;
+    if (state.skuToRowNumber.has(sku)) continue;
+    if (missingBySku.has(sku)) continue;
+
+    missingBySku.set(sku, {
+      sku,
+      fields: {
+        product_name: catalogNameBySku.get(sku) ?? "",
+        ...update.fields,
+      },
+    });
+  }
+
+  const missingRows = Array.from(missingBySku.values());
+  if (!missingRows.length) return state;
+
+  await appendInventoryIndexRows(sheets, spreadsheetId, state, missingRows);
+  return loadInventoryIndexState(sheets, spreadsheetId);
+}
+
+/**
+ * Chooses the preferred catalog display name from a readable name and fallback product name.
+ * Returns the first non-empty trimmed value.
+ */
+function getPreferredCatalogName(
+  readableName: string | null | undefined,
+  productName: string | null | undefined,
+): string {
+  return String(readableName || "").trim() || String(productName || "").trim();
+}
+
+/**
+ * Builds a SKU-to-name lookup map from catalog groups and their variant rows.
+ * Prefers readable names and falls back to product names for both parent products and variants.
+ */
+export function buildCatalogNameBySku(
+  groups: CatalogGroup[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+
+  for (const group of groups) {
+    const parentSku = String(group.sku || "").trim();
+
+    if (parentSku) {
+      const parentName = getPreferredCatalogName(
+        group.readableName,
+        group.productName,
+      );
+      if (parentName) {
+        map.set(parentSku, parentName);
+      }
+    }
+
+    for (const row of group.rows) {
+      const sku = String(row.sku || "").trim();
+      if (!sku) continue;
+
+      const variantName = getPreferredCatalogName(
+        row.readableName,
+        row.productName,
+      );
+      if (variantName) {
+        map.set(sku, variantName);
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Builds stock sync changes from the client-provided catalog snapshot.
+ * Uses dirty rows for standard sync, conflicting rows for conflict resolution,
+ * and every current catalog stock value for full sync.
+ */
+export function buildStockSyncChangesFromCatalog(
+  catalog: CatalogPayload,
+  dirtyBySku: Record<
+    string,
+    { sku: string; stockQty: number | ""; originalStockQty?: number | null }
+  >,
+  mode: StockSyncMode = "standard_sync",
+): StockSyncRequestChange[] {
+  if (mode === "resolve_conflicts") {
+    return catalog.groups.flatMap((group) =>
+      group.rows
+        .filter((row) => row.stockQty !== row.wooStock)
+        .map((row) => ({
+          sku: row.sku,
+          stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
+        })),
+    );
+  }
+
+  if (mode === "sync_all") {
+    return catalog.groups.flatMap((group) => {
+      if (group.rows.length > 0) {
+        return group.rows.map((row) => ({
+          sku: row.sku,
+          stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
+        }));
+      }
+
+      return group.sku
+        ? [
+            {
+              sku: group.sku,
+              stockQty:
+                typeof group.stockQty === "number" ? group.stockQty : "",
+            },
+          ]
+        : [];
+    });
+  }
+
+  return Object.values(dirtyBySku).map((item) => ({
+    sku: item.sku,
+    stockQty: item.stockQty,
+  }));
+}
+
+/* MARK: UTILITIES */
+
+/**
+ * Normalizes an incoming stock quantity into a valid sync quantity.
+ * Blank, null, non-numeric, and negative values are treated as null.
+ * Numeric values are rounded to the nearest integer.
+ */
+function normalizeSyncQty(value: unknown): SyncQty | null {
+  if (value === "" || value == null) return null;
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+
+  return Math.round(parsed);
+}
+
+/**
+ * Converts a 1-based sheet column number into A1-style column letters.
+ * For example, 1 becomes A and 27 becomes AA.
+ */
+function columnNumberToLetters(columnNumber: number): string {
+  let temp = columnNumber;
+  let letters = "";
+
+  while (temp > 0) {
+    const remainder = (temp - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    temp = Math.floor((temp - 1) / 26);
+  }
+
+  return letters;
+}
+
+/**
+ * Builds an A1 notation cell reference for a specific sheet, row, and column.
+ * Returns a fully qualified reference such as 'inventory_index'!B2.
+ */
+function toA1Cell(
+  sheetName: string,
+  rowNumber: number,
+  columnNumber: number,
+): string {
+  return `'${sheetName}'!${columnNumberToLetters(columnNumber)}${rowNumber}`;
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function buildInventoryIndexHashInput(row: InventoryIndexHashRow) {
+  return {
+    sku: String(row.sku || "").trim(),
+    stock_qty: normalizeSyncQty(row.stock_qty),
+    woo_stock: normalizeSyncQty(row.woo_stock),
+  };
+}
+
+function computeInventoryIndexLastHash(row: InventoryIndexHashRow): string {
+  return sha256Hex(JSON.stringify(buildInventoryIndexHashInput(row)));
 }

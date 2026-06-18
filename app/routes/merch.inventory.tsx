@@ -34,13 +34,7 @@ export const handle = {
 export default function InventoryPage() {
   const { user, isLoading } = useAuth();
   const canEdit = user?.canEdit === true;
-  const {
-    state,
-    loadCatalog,
-    setStockQty,
-    saveCatalogChanges,
-    resolveCatalogConflicts,
-  } = useCatalog();
+  const { state, loadCatalog, setStockQty, syncCatalogStock } = useCatalog();
   const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
 
@@ -105,7 +99,6 @@ export default function InventoryPage() {
                 </li>
               ))}
             </ul>
-            <button onClick={resolveCatalogConflicts}>Resolve Conflicts</button>
           </>
         ),
     },
@@ -141,7 +134,7 @@ export default function InventoryPage() {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void loadCatalog(true)}
+              onClick={() => void loadCatalog()}
               disabled={state.loading || state.saving}
             >
               {state.loading ? "Refreshing..." : "Refresh Website Stock"}
@@ -152,7 +145,7 @@ export default function InventoryPage() {
               disabled={
                 !hasDirtyChanges || !canEdit || state.loading || state.saving
               }
-              onClick={() => void saveCatalogChanges()}
+              onClick={() => void syncCatalogStock()}
             >
               {state.saving ? "Syncing Stock..." : "Push Warehouse Stock Live"}
             </button>

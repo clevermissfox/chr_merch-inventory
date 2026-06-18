@@ -66,9 +66,36 @@ export interface WooSyncResult {
   }>;
 }
 
-export interface InventoryIndexSheetRow {
+export interface InventoryIndexState {
+  sheetName: string;
+  rawValues: string[][];
+  headers: string[];
+  headerIndex: Record<string, number>;
+  skuToRowNumber: Map<string, number>;
+}
+
+export interface InventoryIndexUpdate {
   sku: string;
-  stock_qty: string;
-  woo_stock: string;
-  last_sync_at: string;
+  fields: Record<string, InventoryIndexCellValue>;
+}
+
+export type InventoryIndexCellValue = string | number;
+
+export interface InventoryIndexWriteResult {
+  updatedCount: number;
+  missingSkus: string[];
+}
+
+export type InventoryIndexHashRow = {
+  sku: string;
+  stock_qty?: InventoryIndexCellValue;
+  woo_stock?: InventoryIndexCellValue;
+};
+
+export interface RefreshWooStockResult {
+  ok: true;
+  updated: number;
+  simpleCount: number;
+  variationCount: number;
+  wooQtyBySku: Map<string, number | "">;
 }
