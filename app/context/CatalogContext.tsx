@@ -235,8 +235,6 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           dirtyBySku: state.dirtyBySku,
           mode,
         });
-
-        clearDirty();
         await loadCatalog();
       } catch (error) {
         const message =

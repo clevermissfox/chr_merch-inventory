@@ -526,7 +526,6 @@ export async function refreshWooStockForCatalog(
   const now = new Date().toISOString();
 
   const updates = buildInventoryIndexUpdates(wooQtyBySku, now, options);
-  console.log("inventory updates sample", updates[0]);
   const catalogNameBySku = buildCatalogNameBySku(groups);
 
   inventoryIndexState = await ensureInventoryIndexRowsExist(
