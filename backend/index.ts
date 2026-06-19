@@ -38,6 +38,7 @@ declare module "express-session" {
 }
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const API_URL = process.env.VITE_API_URL || `http://localhost:${PORT}`;
@@ -222,11 +223,16 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
       role: access.role,
     };
 
-    res.redirect(
-      TARGET_ENV === "production"
-        ? `${process.env.PRODUCTION_APP_URL}${redirectUrl}`
-        : `${FRONTEND_URL}${redirectUrl}`,
-    );
+    req.session.save((err) => {
+      if (err) {
+        return res.json({ success: false, error: "SESSION_SAVE_FAILED" });
+      }
+      res.redirect(
+        TARGET_ENV === "production"
+          ? `${process.env.PRODUCTION_APP_URL}${redirectUrl}`
+          : `${FRONTEND_URL}${redirectUrl}`,
+      );
+    });
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
