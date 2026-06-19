@@ -6,7 +6,7 @@
     "build": "react-router build",
     "dev:frontend": "react-router dev",
     "dev": "concurrently \"npm run backend\" \"npm run dev:frontend\"",
-    "start": "NODE_ENV=production node ./build/server/index.js",
+    "start": "NODE_ENV=production tsx backend/index.ts",
     "typecheck": "react-router typegen && tsc",
     "backend": "npx tsx backend/index.ts"
   },
@@ -24,7 +24,8 @@
     "isbot": "^5.1.36",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router": "^7.18.0"
+    "react-router": "^7.18.0",
+    "tsx": "^4.7.0"
   },
   "devDependencies": {
     "@react-router/dev": "^7.18.0",
@@ -36,7 +37,6 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "concurrently": "^7.0.0",
-    "tsx": "^4.7.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.3"
   }

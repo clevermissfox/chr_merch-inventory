@@ -160,7 +160,7 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
-      TARGET_ENV === "production"
+      process.env.NODE_ENV === "production"
         ? `${process.env.PRODUCTION_APP_URL}/api/auth/google/callback`
         : `${API_URL}/api/auth/google/callback`,
     );
@@ -193,7 +193,7 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
-      TARGET_ENV === "production"
+      process.env.NODE_ENV === "production"
         ? `${process.env.PRODUCTION_APP_URL}/api/auth/google/callback`
         : `${API_URL}/api/auth/google/callback`,
     );
@@ -634,7 +634,8 @@ if (process.env.NODE_ENV === "production") {
   );
   app.use(
     createRequestHandler({
-        build: () => import("virtual:react-router/server-build"),
+      // @ts-ignore - build/server/index.js exists only after npm run build
+      build: () => import("../build/server/index.js"),
     }),
   );
 }
