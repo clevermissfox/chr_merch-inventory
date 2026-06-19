@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { NavLink, useMatches } from "react-router";
 
 const navItems = [
-  { to: "/merch", label: "Dashboard" },
-  { to: "/merch/products", label: "Products" },
-  { to: "/merch/inventory", label: "Inventory" },
+  { to: "/", label: "Dashboard" },
+  { to: "/products", label: "Products" },
+  { to: "/inventory", label: "Inventory" },
 ];
 
 type MerchShellProps = {
@@ -28,7 +28,7 @@ export function MerchShell({ children }: MerchShellProps) {
     try {
       const res = await fetch("/api/auth/logout", { method: "POST" });
       if (res.ok) {
-        window.location.href = "/merch";
+        window.location.href = "/";
       } else {
         console.error("Logout failed");
       }
@@ -63,7 +63,7 @@ export function MerchShell({ children }: MerchShellProps) {
               <NavLink
                 key={item.label}
                 to={item.to}
-                end={item.to === "/merch"}
+                end={item.to === "/"}
                 className={({ isActive }) =>
                   `merch-nav__link${isActive ? " is-active" : ""}`
                 }

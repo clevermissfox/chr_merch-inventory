@@ -1,7 +1,7 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ isSsrBuild }) => ({
   plugins: [reactRouter()],
   resolve: {
     tsconfigPaths: true,
@@ -14,4 +14,11 @@ export default defineConfig({
       },
     },
   },
-});
+  build: {
+    rollupOptions: isSsrBuild
+      ? {
+          input: "./backend/index.ts",
+        }
+      : undefined,
+  },
+}));

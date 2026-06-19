@@ -68,13 +68,11 @@ app.use(
 );
 
 // Helper to get spreadsheet ID
+// staging uses staging sheet; production and development both use production sheet
 function getSpreadsheetId(): string {
-  const isProduction = TARGET_ENV === "production";
-  return isProduction
-    ? process.env.PRODUCTION_SPREADSHEET_ID || ""
-    : TARGET_ENV === "development"
-      ? process.env.PRODUCTION_SPREADSHEET_ID || ""
-      : process.env.STAGING_SPREADSHEET_ID || "";
+  return TARGET_ENV === "staging"
+    ? process.env.STAGING_SPREADSHEET_ID || ""
+    : process.env.PRODUCTION_SPREADSHEET_ID || "";
 }
 
 // Check spreadsheet access
@@ -153,7 +151,7 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
       return res.json({ success: false, error: "SESSION_NOT_AVAILABLE" });
     }
 
-    const redirectUrl = (req.query.redirect as string) || "/merch";
+    const redirectUrl = (req.query.redirect as string) || "/";
 
     if (req.session.redirect) {
       delete req.session.redirect;
@@ -163,10 +161,8 @@ app.get("/api/auth/google", async (req: Request, res: Response) => {
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
       TARGET_ENV === "production"
-        ? `https://cochiseharmreduction.org/merch/auth/google/callback`
-        : TARGET_ENV === "development"
-          ? `${API_URL}/api/auth/google/callback`
-          : `${API_URL}/api/auth/google/callback`,
+        ? `${process.env.PRODUCTION_APP_URL}/api/auth/google/callback`
+        : `${API_URL}/api/auth/google/callback`,
     );
 
     const authUrl = oauth2Client.generateAuthUrl({
@@ -192,14 +188,14 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
       return res.json({ success: false, error: "SESSION_NOT_AVAILABLE" });
     }
 
-    const redirectUrl = req.query.state || "/merch";
+    const redirectUrl = req.query.state || "/";
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.OAUTH_CLIENT_ID,
       process.env.OAUTH_CLIENT_SECRET,
       TARGET_ENV === "production"
-        ? `https://cochiseharmreduction.org/merch/auth/google/callback`
-        : `http://localhost:3001/api/auth/google/callback`,
+        ? `${process.env.PRODUCTION_APP_URL}/api/auth/google/callback`
+        : `${API_URL}/api/auth/google/callback`,
     );
 
     const { tokens } = await oauth2Client.getToken(req.query.code as string);
@@ -228,8 +224,8 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
 
     res.redirect(
       TARGET_ENV === "production"
-        ? `https://cochiseharmreduction.org${redirectUrl}`
-        : `http://localhost:5173${redirectUrl}`,
+        ? `${process.env.PRODUCTION_APP_URL}${redirectUrl}`
+        : `${FRONTEND_URL}${redirectUrl}`,
     );
   } catch (error: unknown) {
     const errorMessage =
@@ -624,8 +620,27 @@ app.get("/api/test", async (req: Request, res: Response) => {
   }
 });
 
+if (process.env.NODE_ENV === "production") {
+  const { createRequestHandler } = await import("@react-router/express");
+  const compression = (await import("compression")).default;
+  const pathModule = await import("path");
+
+  app.use(compression());
+  app.use(
+    express.static(pathModule.join(process.cwd(), "build/client"), {
+      immutable: true,
+      maxAge: "1y",
+    }),
+  );
+  app.use(
+    createRequestHandler({
+        build: () => import("virtual:react-router/server-build"),
+    }),
+  );
+}
+
 app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "unknown"}`);
   console.log(`Target environment: ${TARGET_ENV || "unknown"}`);
 });

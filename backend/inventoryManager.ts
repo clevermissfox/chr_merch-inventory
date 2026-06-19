@@ -46,8 +46,8 @@ interface StockSyncRequestChange {
 function getWooConfig(): WooConfig {
   const isStaging = process.env.TARGET_ENV !== "production";
   const storeUrl = isStaging
-    ? process.env.STAGING_SITE_URL
-    : process.env.PRODUCTION_SITE_URL;
+    ? process.env.WOO_STAGING_URL
+    : process.env.WOO_PRODUCTION_URL;
   const consumerKey = isStaging
     ? process.env.WOO_STAGING_CONSUMER_KEY
     : process.env.WOO_PROD_CONSUMER_KEY;

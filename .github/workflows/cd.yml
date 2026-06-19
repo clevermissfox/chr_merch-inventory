@@ -1,0 +1,36 @@
+name: Continuous Deployment to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            cd /home/admin/projects/chr-merch
+            git fetch --all
+            git reset --hard origin/main
+
+            npm install
+            npm run build
+
+            # Restart or start the app process via PM2
+            pm2 restart chr-merch --update-env \
+              || pm2 start build/server/index.js \
+                   --name chr-merch \
+                   --cwd /home/admin/projects/chr-merch
+
+            echo "Deployment completed"

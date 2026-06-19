@@ -5,12 +5,9 @@ export default function BtnGoogleLogin() {
 
   const handleLogin = async () => {
     try {
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
-      const redirectUrl = encodeURIComponent(window.location.pathname); // Store current path
+      const redirectUrl = encodeURIComponent(window.location.pathname);
 
-      const res = await fetch(
-        `${API_URL}/api/auth/google?redirect=${redirectUrl}`,
-      );
+      const res = await fetch(`/api/auth/google?redirect=${redirectUrl}`);
       const data = await res.json();
 
       if (data.success && data.authUrl) {

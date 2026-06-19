@@ -6,13 +6,15 @@
     "build": "react-router build",
     "dev:frontend": "react-router dev",
     "dev": "concurrently \"npm run backend\" \"npm run dev:frontend\"",
-    "start": "react-router-serve ./build/server/index.js",
+    "start": "NODE_ENV=production node ./build/server/index.js",
     "typecheck": "react-router typegen && tsc",
     "backend": "npx tsx backend/index.ts"
   },
   "dependencies": {
-    "@react-router/node": "7.16.0",
-    "@react-router/serve": "7.16.0",
+    "@react-router/express": "^7.18.0",
+    "@react-router/node": "^7.18.0",
+    "@react-router/serve": "^7.18.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -22,10 +24,11 @@
     "isbot": "^5.1.36",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router": "7.16.0"
+    "react-router": "^7.18.0"
   },
   "devDependencies": {
-    "@react-router/dev": "7.16.0",
+    "@react-router/dev": "^7.18.0",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/express-session": "^1.17.10",
