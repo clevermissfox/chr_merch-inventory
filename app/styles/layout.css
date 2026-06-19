@@ -156,6 +156,7 @@
   gap: var(--spacing-025, 0.25em);
 }
 
+.w-100,
 .w-full {
   width: 100%;
 }

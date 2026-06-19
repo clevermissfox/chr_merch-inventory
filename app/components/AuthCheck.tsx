@@ -52,9 +52,9 @@ export default function AuthCheck({
     return (
       <section className="card">
         <div
-          className="auth-page wrapper ta-cen grid gap-half"
+          className="auth-page wrapper ta-cen grid gap-1 ac-cen"
           style={
-            { "--default-max-inline-size": "600px" } as React.CSSProperties
+            { "--default-max-inline-size": "400px" } as React.CSSProperties
           }
         >
           <div>

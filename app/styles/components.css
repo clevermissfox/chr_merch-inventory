@@ -596,7 +596,7 @@
     box-shadow 0.218s;
   vertical-align: middle;
   white-space: nowrap;
-  width: auto;
+  width: 100%;
   max-width: 400px;
   min-width: min-content;
   text-transform: initial;

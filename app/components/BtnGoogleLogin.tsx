@@ -26,7 +26,7 @@ export default function BtnGoogleLogin() {
       {error && <div className="auth-error">{error}</div>}
 
       <button
-        className="google-login-btn gsi-material-button"
+        className="google-login-btn gsi-material-button margin-inline-auto"
         onClick={handleLogin}
       >
         <div className="gsi-material-button-content-wrapper">
