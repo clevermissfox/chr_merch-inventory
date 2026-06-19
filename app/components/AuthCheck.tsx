@@ -52,7 +52,8 @@ export default function AuthCheck({
     return (
       <section className="card">
         <div className="auth-page wrapper">
-          <h1>Please sign in</h1>
+          <h1>CHR Merch Solution</h1>
+          <p>Sign in to access the merch dashboard.</p>
           <BtnGoogleLogin />
         </div>
       </section>
