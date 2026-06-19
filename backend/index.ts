@@ -11,7 +11,7 @@ import type {
   ProductSheetRow,
   VariantSheetRow,
 } from "~/types/catalog";
-import { rowsToObjects, shapeToCatalogPayload } from "./catalogManager";
+import { buildConflictGroups, rowsToObjects, shapeToCatalogPayload } from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
@@ -353,13 +353,25 @@ app.get(
         payload.groups,
       );
 
+      const updatedGroups = applyWooStockMapToCatalogGroups(
+        payload.groups,
+        refreshResult.wooQtyBySku,
+      );
+
       payload = {
         ...payload,
         generatedAt: new Date().toISOString(),
-        groups: applyWooStockMapToCatalogGroups(
-          payload.groups,
-          refreshResult.wooQtyBySku,
-        ),
+        groups: updatedGroups,
+        summary: {
+          ...payload.summary,
+          conflictGroups: buildConflictGroups(updatedGroups),
+          unsyncedCount: updatedGroups.reduce(
+            (total, group) =>
+              total +
+              group.rows.filter((row) => row.stockQty !== row.wooStock).length,
+            0,
+          ),
+        },
       };
 
       return res.status(200).json(payload);

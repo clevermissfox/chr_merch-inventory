@@ -113,7 +113,7 @@ function buildCatalogGroup(product: ProductSheetRow): CatalogGroup {
   };
 }
 
-function buildConflictGroups(groups: CatalogGroup[]): CatalogConflictGroup[] {
+export function buildConflictGroups(groups: CatalogGroup[]): CatalogConflictGroup[] {
   return groups
     .map((group) => {
       const count = group.rows.filter(
