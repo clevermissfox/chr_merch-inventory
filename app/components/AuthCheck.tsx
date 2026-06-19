@@ -51,10 +51,24 @@ export default function AuthCheck({
   if (requireAuth && !user) {
     return (
       <section className="card">
-        <div className="auth-page wrapper">
-          <h1>CHR Merch Solution</h1>
-          <p>Sign in to access the merch dashboard.</p>
+        <div
+          className="auth-page wrapper ta-cen grid gap-half"
+          style={
+            { "--default-max-inline-size": "600px" } as React.CSSProperties
+          }
+        >
+          <div>
+            <h1>CHR Merch Hub</h1>
+            <p>
+              Sign in to access the merch dashboard to manage CHR merch and
+              inventory.
+            </p>
+          </div>
           <BtnGoogleLogin />
+          <small className="xsmall text-muted lh-1">
+            If you're unable to access or edit, contact your CHR admin and
+            request to be added to the CHR Merch Products Spreadsheet.
+          </small>
         </div>
       </section>
     );

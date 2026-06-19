@@ -692,7 +692,7 @@
 
 .auth-page p {
   color: var(--clr-text-muted);
-  margin-bottom: var(--spacing-150);
+  margin-block: var(--spacing-050);
 }
 
 /* Auth error message */

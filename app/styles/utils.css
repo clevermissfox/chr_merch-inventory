@@ -78,6 +78,10 @@
   text-align: center;
 }
 
+.ta-end {
+  text-align: end;
+}
+
 .text-info {
   color: var(--clr-info, #3b82f6);
 }
@@ -113,8 +117,8 @@
   letter-spacing: 0.1em;
 }
 
-.ta-end {
-  text-align: end;
+.lh-1 {
+  line-height: var(--lh-1);
 }
 
 .cursor-pointer {
