@@ -72,6 +72,7 @@ export interface CatalogSummary {
   rowCount: number;
   unsyncedCount: number;
   conflictGroups: CatalogConflictGroup[];
+  wooSiteUrl?: string;
 }
 
 export interface CatalogPayload {
@@ -96,6 +97,11 @@ export interface DirtyStockChange {
   sku: string;
   originalStockQty: number | null;
   stockQty: number | "";
+}
+
+export interface SyncResult {
+  updatedCount: number;
+  skippedCount: number;
 }
 
 export interface ProductSheetRow {

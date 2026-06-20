@@ -7,26 +7,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { AuthUser, AuthContextValue } from "~/types/user";
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  canEdit: boolean;
-  role: string;
-}
+export type { AuthUser } from "~/types/user";
 
 interface AuthStatusResponse {
   success: boolean;
   user?: AuthUser;
   error?: string;
-}
-
-interface AuthContextValue {
-  user: AuthUser | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  refreshAuth: () => Promise<void>;
-  setUser: (user: AuthUser | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);

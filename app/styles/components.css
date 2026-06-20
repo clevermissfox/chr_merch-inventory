@@ -1,35 +1,35 @@
-.badge,
-.merch-nav__link,
-.merch-nav__disabled,
-.merch-chip,
-.summary-count,
-.toggle-label,
-.status-line {
+:is(
+  .badge,
+  .merch-nav__link,
+  .merch-nav__disabled,
+  .merch-chip,
+  .summary-count,
+  .toggle-label,
+  .status-line
+) {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.merch-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-100, 1rem);
-}
-
-.merch-brand__meta {
-  display: grid;
-  gap: var(--spacing-025, 0.25rem);
-}
-
-.merch-brand__eyebrow,
-.merch-hero__eyebrow,
-.merch-sidebar__callout-eyebrow,
-.merch-note-box__eyebrow,
-.badge,
-.toggle-label,
-.status-line,
-.merch-nav__link,
-.merch-nav__disabled {
+:is(
+  .merch-brand__eyebrow,
+  .merch-hero__eyebrow,
+  .merch-sidebar__callout-eyebrow,
+  .merch-note-box__eyebrow,
+  .badge,
+  .toggle-label,
+  .status-line,
+  .merch-nav__link,
+  .merch-nav__disabled
+) {
   font-size: var(--fs-300);
+}
+
+button.btn-user-avatar {
+  aspect-ratio: 1;
+  width: 4ch;
+  border-radius: 50%;
+  overflow: hidden;
 }
 
 .merch-brand__eyebrow {
@@ -105,7 +105,6 @@
 }
 
 .merch-hero__title {
-  font-size: clamp(2rem, 4vw + 0.25rem, 3.35rem);
   line-height: var(--lh-1);
 }
 
@@ -421,6 +420,8 @@
   display: flex;
   align-items: baseline;
   gap: var(--spacing-075, 0.75rem);
+  row-gap: var(--spacing-025, 0.25em);
+  flex-wrap: wrap;
 }
 
 .inventory-group:has(tr:is([data-dirty="true"]), td:is([data-mismatch="true"]))
@@ -511,7 +512,7 @@
 
 .inventory-table
   tr:is([data-dirty="true"], :has(td[data-mismatch="true"]))
-  > :nth-child(1 of td) {
+  .sku-cell {
   position: relative;
 
   &::before {
@@ -596,7 +597,6 @@
     box-shadow 0.218s;
   vertical-align: middle;
   white-space: nowrap;
-  width: 100%;
   max-width: 400px;
   min-width: min-content;
   text-transform: initial;
@@ -685,14 +685,62 @@
   margin-right: var(--spacing-075, 0.75rem);
 }
 
-/* Auth page layout */
-.auth-page h1 {
-  margin-bottom: var(--spacing-075);
+/* Public landing page */
+
+.public-page.grid {
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
+  grid-template-rows: auto 1fr auto;
 }
 
-.auth-page p {
-  color: var(--clr-text-muted);
-  margin-block: var(--spacing-050);
+.public-header {
+  padding-block: var(--spacing-100, 1rem);
+  border-bottom: var(--default-border);
+}
+
+.public-feature {
+  display: grid;
+  gap: var(--spacing-050, 0.5em);
+  flex: 1;
+  min-inline-size: 30ch;
+}
+
+.public-feature__title {
+  font-size: var(--fs-400);
+}
+
+@container (width < 80ch) {
+  .public-signin {
+    flex-direction: column;
+  }
+
+  .public-signin__action {
+    width: 100%;
+  }
+}
+
+@container (width < 400px) {
+  .google-login-btn {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
+.public-signin__content {
+  flex: 1;
+}
+
+.public-signin__title {
+  font-size: var(--fs-500);
+}
+
+.public-signin__action {
+  flex-shrink: 0;
+}
+
+.public-footer {
+  border: none;
+  border-block-start: var(--default-border);
 }
 
 /* Auth error message */
@@ -730,4 +778,76 @@
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* Select mode */
+label.item-selection input[type="checkbox"] {
+  accent-color: var(--clr-accent);
+}
+
+.select-cell {
+  text-align: center;
+  padding-inline: var(--spacing-075, 0.75rem);
+}
+
+.group-checkbox {
+  flex-shrink: 0;
+}
+
+/* Confirm sync dialog */
+
+.confirm-dialog {
+  border: none;
+  background: transparent;
+  margin: auto;
+  padding: var(--spacing-050, 0.5em);
+  max-inline-size: min(90vw, 36rem);
+  width: 100%;
+}
+
+.confirm-dialog::backdrop {
+  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.confirm-dialog-inner {
+  overflow-y: auto;
+}
+
+.confirm-dialog-title {
+  font-size: var(--fs-500);
+  margin: 0;
+}
+
+.confirm-dialog-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--spacing-050, 0.5rem);
+  max-block-size: 40vh;
+  overflow-y: auto;
+}
+
+.confirm-dialog-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--spacing-100, 1rem);
+  padding: var(--spacing-050, 0.5rem) var(--spacing-075, 0.75rem);
+  background: var(--clr-surface-secondary);
+  border-radius: calc(var(--default-br) * 0.5);
+}
+
+.confirm-dialog-count {
+  color: var(--clr-text-muted);
+  font-size: var(--fs-200);
+  white-space: nowrap;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-075, 0.75rem);
+  flex-wrap: wrap;
 }

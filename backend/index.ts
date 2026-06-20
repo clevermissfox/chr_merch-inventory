@@ -11,7 +11,12 @@ import type {
   ProductSheetRow,
   VariantSheetRow,
 } from "~/types/catalog";
-import { buildConflictGroups, rowsToObjects, shapeToCatalogPayload } from "./catalogManager";
+import type { AuthUser } from "~/types/user";
+import {
+  buildConflictGroups,
+  rowsToObjects,
+  shapeToCatalogPayload,
+} from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
@@ -26,13 +31,7 @@ dotenv.config({ path: "./app/.env" });
 
 declare module "express-session" {
   interface SessionData {
-    user: {
-      id: string;
-      email: string;
-      name?: string;
-      role?: string;
-      canEdit?: boolean;
-    };
+    user: AuthUser;
     redirect?: string | null;
   }
 }
@@ -209,7 +208,6 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     if (!email) {
       return res.json({ success: false, error: "EMAIL_NOT_FOUND" });
     }
-
     const access = await checkSpreadsheetAccess(email);
 
     if (!req.session) {
@@ -218,6 +216,10 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
 
     req.session.user = {
       id: userInfo.data.id || "",
+      name: userInfo.data.name || "Guest",
+      givenName: userInfo.data.given_name || "Guest",
+      familyName: userInfo.data.family_name || "",
+      picture: userInfo.data.picture ?? undefined,
       email: email,
       canEdit: access.canEdit,
       role: access.role,
@@ -257,57 +259,6 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
     user: req.session.user,
   });
 });
-
-// LEGACY: WORKER + GAS  Get stock_qty and woo_stock
-// app.get(
-//   "/api/catalog/inventory/legacy_get_stock",
-//   async (req: Request, res: Response) => {
-//     try {
-//       if (!req.session.user) {
-//         return res.status(401).json({ ok: false, error: "not_authenticated" });
-//       }
-
-//       const includeMeta =
-//         req.query.includeMeta === "1" || req.query.includeMeta === "true";
-
-//       const action = "inventory_rebuild_index_and_refresh_woo_stock";
-//       const url = new URL(process.env.WORKER_PROXY_URL!);
-//       url.searchParams.set("action", action);
-
-//       if (TARGET_ENV !== "production") {
-//         url.searchParams.set("environment", TARGET_ENV!);
-//       }
-
-//       const response = await fetch(url.toString(), {
-//         method: "GET",
-//         headers: {
-//           Accept: "application/json",
-//         },
-//       });
-
-//       const workerJson: unknown = await response.json();
-
-//       if (!response.ok) {
-//         return res.status(response.status).json(workerJson);
-//       }
-
-//       if (includeMeta) {
-//         return res.status(200).json(workerJson);
-//       }
-
-//       const payload =
-//         workerJson && typeof workerJson === "object" && "data" in workerJson
-//           ? (workerJson as { data: unknown }).data
-//           : workerJson;
-
-//       return res.status(200).json(payload);
-//     } catch (error: unknown) {
-//       const message = error instanceof Error ? error.message : "Unknown error";
-//       console.error("Error calling GAS inventory route:", error);
-//       return res.status(500).json({ ok: false, error: message });
-//     }
-//   },
-// );
 
 // Get all products/variants, shape to catalog, call woo for current website stock values, write those to inventory_index, patch update catalogs woo_stock
 app.get(
@@ -358,6 +309,11 @@ app.get(
         refreshResult.wooQtyBySku,
       );
 
+      const wooSiteUrl =
+        TARGET_ENV === "production"
+          ? process.env.WOO_PRODUCTION_URL
+          : process.env.WOO_STAGING_URL;
+
       payload = {
         ...payload,
         generatedAt: new Date().toISOString(),
@@ -365,6 +321,7 @@ app.get(
         summary: {
           ...payload.summary,
           conflictGroups: buildConflictGroups(updatedGroups),
+          wooSiteUrl: wooSiteUrl ?? undefined,
           unsyncedCount: updatedGroups.reduce(
             (total, group) =>
               total +
@@ -385,152 +342,6 @@ app.get(
     }
   },
 );
-
-// // LEGACY: USED FOR WORKER + GAS push stock changes or resolve conflicts
-// app.post(
-//   "/api/catalog/inventory/legacy_sync_stock",
-//   async (req: Request, res: Response) => {
-//     try {
-//       if (!req.session.user) {
-//         return res.status(401).json({
-//           ok: false,
-//           error: "NOT_AUTHENTICATED",
-//           message: "You must sign in to sync inventory.",
-//           status: 401,
-//         });
-//       }
-
-//       if (!req.session.user.canEdit) {
-//         return res.status(403).json({
-//           ok: false,
-//           error: "FORBIDDEN",
-//           message: "You do not have permission to sync inventory.",
-//           status: 403,
-//         });
-//       }
-
-//       const includeMeta =
-//         req.query.includeMeta === "1" || req.query.includeMeta === "true";
-
-//       const mode =
-//         req.body?.mode === "resolve_conflicts"
-//           ? "resolve_conflicts"
-//           : "standard_sync";
-
-//       const rawChanges = Array.isArray(req.body?.changes)
-//         ? req.body.changes
-//         : [];
-
-//       if (!rawChanges.length) {
-//         return res.status(400).json({
-//           ok: false,
-//           error: "NO_CHANGES",
-//           message: "No inventory changes were provided.",
-//           status: 400,
-//         });
-//       }
-
-//       const changes: Array<{ sku: string; stock_qty: number | "" }> = [];
-
-//       for (const item of rawChanges as Array<{
-//         sku?: unknown;
-//         stockQty?: unknown;
-//       }>) {
-//         const sku = String(item?.sku || "").trim();
-//         const stockQty = item?.stockQty;
-
-//         if (!sku) {
-//           return res.status(400).json({
-//             ok: false,
-//             error: "INVALID_SKU",
-//             message: "One or more changes is missing a SKU.",
-//             status: 400,
-//           });
-//         }
-
-//         if (stockQty === "" || stockQty == null) {
-//           changes.push({ sku, stock_qty: "" });
-//           continue;
-//         }
-
-//         const parsedQty = Number(stockQty);
-
-//         if (!Number.isFinite(parsedQty) || parsedQty < 0) {
-//           return res.status(400).json({
-//             ok: false,
-//             error: "INVALID_STOCK_QTY",
-//             message: `Invalid stock quantity for ${sku}.`,
-//             status: 400,
-//           });
-//         }
-
-//         changes.push({
-//           sku,
-//           stock_qty: Math.round(parsedQty),
-//         });
-//       }
-
-//       const response = await fetch(process.env.WORKER_PROXY_URL!, {
-//         method: "POST",
-//         headers: {
-//           Accept: "application/json",
-//           "Content-Type": "application/json",
-//         },
-//         body: JSON.stringify({
-//           action: "inventory_sync_stock",
-//           secret: process.env.GAS_SECRET || "harmredux",
-//           mode,
-//           changes,
-//           ...(TARGET_ENV !== "production" ? { environment: TARGET_ENV } : {}),
-//         }),
-//       });
-
-//       const workerJson: unknown = await response.json();
-
-//       if (
-//         !response.ok ||
-//         (workerJson &&
-//           typeof workerJson === "object" &&
-//           "ok" in workerJson &&
-//           (workerJson as { ok?: boolean }).ok === false)
-//       ) {
-//         const bodyStatus =
-//           workerJson &&
-//           typeof workerJson === "object" &&
-//           "status" in workerJson &&
-//           typeof (workerJson as { status?: unknown }).status === "number"
-//             ? (workerJson as { status: number }).status
-//             : undefined;
-
-//         return res
-//           .status(bodyStatus ?? response.status ?? 502)
-//           .json(workerJson);
-//       }
-
-//       if (includeMeta) {
-//         return res.status(200).json(workerJson);
-//       }
-
-//       const payload =
-//         workerJson && typeof workerJson === "object" && "data" in workerJson
-//           ? (workerJson as { data: unknown }).data
-//           : workerJson;
-
-//       return res.status(200).json(payload);
-//     } catch (error: unknown) {
-//       const message = error instanceof Error ? error.message : "Unknown error";
-//       console.error("Error calling GAS inventory route:", error);
-
-//       return res.status(500).json({
-//         ok: false,
-//         error: "INTERNAL_SERVER_ERROR",
-//         message: "The server failed while processing the inventory request.",
-//         details: message,
-//         status: 500,
-//       });
-//     }
-//   },
-// );
 
 /**
  * Syncs stock to WooCommerce using the client-provided catalog snapshot.

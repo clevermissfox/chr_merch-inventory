@@ -10,6 +10,7 @@ import type {
   CatalogPayload,
   CatalogState,
   DirtyStockChange,
+  SyncResult,
 } from "../types/catalog";
 
 const initialState: CatalogState = {
@@ -42,6 +43,7 @@ interface CatalogContextValue {
   syncCatalogStock: (
     mode?: "standard_sync" | "resolve_conflicts" | "sync_all",
   ) => Promise<void>;
+  syncSelectedSkus: (skus: string[]) => Promise<SyncResult>;
   resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
 }
@@ -247,6 +249,62 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     [state.catalog, state.dirtyBySku, clearDirty, loadCatalog],
   );
 
+  const syncSelectedSkus = useCallback(
+    async (skus: string[]): Promise<SyncResult> => {
+      if (!state.catalog || skus.length === 0) {
+        return { updatedCount: 0, skippedCount: 0 };
+      }
+
+      const rowBySku = new Map(
+        state.catalog.groups.flatMap((g) => g.rows.map((r) => [r.sku, r])),
+      );
+
+      const syntheticDirty: CatalogState["dirtyBySku"] = {};
+      for (const sku of skus) {
+        if (state.dirtyBySku[sku]) {
+          syntheticDirty[sku] = state.dirtyBySku[sku];
+        } else {
+          const row = rowBySku.get(sku);
+          if (!row) continue;
+          syntheticDirty[sku] = {
+            sku,
+            stockQty: row.stockQty ?? 0,
+            originalStockQty: row.wooStock,
+          };
+        }
+      }
+
+      dispatch({ type: "SAVE_START" });
+
+      try {
+        const data = await postCatalogStockSync({
+          catalog: state.catalog,
+          dirtyBySku: syntheticDirty,
+          mode: "standard_sync",
+        });
+
+        await loadCatalog();
+
+        const updatedSkus: unknown[] = Array.isArray(data?.updatedSkus)
+          ? data.updatedSkus
+          : [];
+        const skipped: unknown[] = Array.isArray(data?.skipped)
+          ? data.skipped
+          : [];
+
+        return { updatedCount: updatedSkus.length, skippedCount: skipped.length };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to sync stock";
+        dispatch({ type: "LOAD_ERROR", payload: message });
+        throw error;
+      } finally {
+        dispatch({ type: "SAVE_END" });
+      }
+    },
+    [state.catalog, state.dirtyBySku, loadCatalog],
+  );
+
   const resolveCatalogConflicts = useCallback(async () => {
     if (!state.catalog) {
       return;
@@ -379,6 +437,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         setStockQty,
         clearDirty,
         syncCatalogStock,
+        syncSelectedSkus,
         resolveCatalogConflicts,
         resetError,
       }}

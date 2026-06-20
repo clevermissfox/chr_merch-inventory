@@ -48,6 +48,10 @@
   place-items: center;
 }
 
+.as-cen {
+  align-self: center;
+}
+
 .ac-st {
   align-content: start;
 }
@@ -156,8 +160,7 @@
   gap: var(--spacing-025, 0.25em);
 }
 
-.w-100,
-.w-full {
+:is(.w-100, .w-full) {
   width: 100%;
 }
 
