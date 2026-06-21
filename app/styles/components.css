@@ -25,11 +25,102 @@
   font-size: var(--fs-300);
 }
 
-button.btn-user-avatar {
+:is(button.btn-user-avatar, .profile-dialog-avatar) {
+  --_grade-stop: color-mix(
+    in oklch,
+    var(--clr-accent),
+    var(--clr-neutral-0) 60%
+  );
   aspect-ratio: 1;
-  width: 4ch;
-  border-radius: 50%;
+  width: 5ch;
   overflow: hidden;
+  background-clip: padding-box;
+  flex-shrink: 0;
+
+  & > img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+button.btn-user-avatar {
+  --_btn-br: 50%;
+  --_clr-btn-border: var(--clr-border-soft);
+  --_grade-stop: color-mix(
+    in oklch,
+    var(--clr-accent),
+    var(--clr-neutral-0) 30%
+  );
+  --_clr-btn-bg: linear-gradient(
+    var(--clr-accent),
+    var(--_grade-stop, var(--clr-neutral-0))
+  );
+  align-self: center;
+}
+
+.popover-user-menu:popover-open {
+  border: var(--default-border);
+  background-color: var(--clr-surface-primary);
+  border-radius: var(--default-br);
+  width: min(100%, 20ch);
+  inset: auto;
+  scrollbar-width: 0px;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+menu.user-menu {
+  list-style: none;
+
+  & > li {
+    transition: color var(--default-trans-dur);
+  }
+
+  & > li:not(:nth-child(1 of li)) {
+    border-block-start: var(--default-border);
+    border-color: var(--clr-border-soft);
+  }
+  & > li:not(:has(> button)) {
+    padding: var(--spacing-050, 0.5em);
+  }
+
+  & > li > button {
+    --_btn-padding: var(--spacing-050, 0.5em);
+    width: 100%;
+  }
+
+  & > li:is(:hover) {
+    color: var(--clr-accent);
+  }
+
+  & > li:is(:focus-within) {
+    color: var(--clr-neutral-900);
+    background-color: var(--clr-accent);
+  }
+}
+
+@supports not (position-anchor: --anchor) {
+  .popover-user-menu:popover-open {
+    top: var(--_popover-top);
+    right: var(--_popover-right);
+    left: unset;
+  }
+}
+
+@supports (position-anchor: --anchor) {
+  button.btn-user-avatar {
+    anchor-name: --anchor-user-menu;
+  }
+
+  .popover-user-menu:popover-open {
+    position-anchor: --anchor-user-menu;
+    inset: auto;
+    top: calc(anchor(bottom) + var(--spacing-050, 0.5em));
+    right: anchor(right);
+  }
 }
 
 .merch-brand__eyebrow {
@@ -355,6 +446,16 @@ button.btn-user-avatar {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-075, 0.75rem);
+  align-items: start;
+}
+
+.select-mode-form {
+  display: contents;
+}
+
+:is(.select-mode option:checked, .select-mode option:focus) {
+  background: linear-gradient(var(--clr-accent, 0));
+  color: var(--clr-neutral-900);
 }
 
 .badge {
@@ -693,11 +794,6 @@ button.btn-user-avatar {
   grid-template-rows: auto 1fr auto;
 }
 
-.public-header {
-  padding-block: var(--spacing-100, 1rem);
-  border-bottom: var(--default-border);
-}
-
 .public-feature {
   display: grid;
   gap: var(--spacing-050, 0.5em);
@@ -792,6 +888,62 @@ label.item-selection input[type="checkbox"] {
 
 .group-checkbox {
   flex-shrink: 0;
+}
+
+/* Confirm sync dialog */
+
+/* User profile dialog */
+
+.profile-dialog {
+  border: none;
+  background: transparent;
+  margin: auto;
+  padding: var(--spacing-050, 0.5em);
+  max-inline-size: min(90vw, 28rem);
+  width: 100%;
+}
+
+.profile-dialog::backdrop {
+  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.profile-dialog-inner {
+  position: relative;
+}
+
+.profile-dialog-avatar {
+  background: linear-gradient(var(--clr-accent), var(--_grade-stop));
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
+  border-radius: 50%;
+
+  &:has(> span):not(:has(> img)) {
+    display: grid;
+    place-items: center;
+  }
+}
+
+.profile-email {
+  border: none;
+}
+
+.profile-dialog-shop-link {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-050, 0.5rem);
+  border: 0.1em solid var(--clr-border-soft);
+  border-radius: var(--default-br);
+  padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem);
+  font-weight: var(--fw-500);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: var(--fs-300);
+  transition: opacity var(--default-trans-dur) var(--default-timing);
+
+  &:hover {
+    opacity: 0.85;
+  }
 }
 
 /* Confirm sync dialog */

@@ -2,7 +2,7 @@ import type { Route } from "./+types/merch.products";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "CHR Merch | Products" },
+    { title: "CHR Merch Hub | Products" },
     {
       name: "description",
       content:

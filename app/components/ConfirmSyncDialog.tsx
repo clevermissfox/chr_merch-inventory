@@ -28,7 +28,7 @@ export default function ConfirmSyncDialog({
     <dialog ref={ref} className="confirm-dialog" onCancel={onCancel}>
       <div className="confirm-dialog-inner card grid gap-1">
         <h2 className="confirm-dialog-title">Push stock to website</h2>
-        <p className="small text-muted">
+        <p className="small clr-muted">
           These products will be updated on{" "}
           {`${targetSite ? targetSite : "CHR website"}`}:
         </p>

@@ -53,12 +53,12 @@
   text-decoration: underline;
 }
 
-.muted {
+:is(.clr-muted, .muted) {
   color: var(--clr-text-muted);
 }
 
-.text-muted {
-  color: var(--clr-text-muted);
+.clr-inverse {
+  color: var(--clr-text-inverse);
 }
 
 .text-small {
@@ -82,20 +82,28 @@
   text-align: end;
 }
 
-.text-info {
+.clr-info {
   color: var(--clr-info, #3b82f6);
 }
 
-.text-success {
+.clr-success {
   color: var(--clr-success, #10b981);
 }
 
-.text-error {
+.clr-error {
   color: var(--clr-error, #ef4444);
 }
 
-.border-bottom {
-  border-bottom: 1px solid var(--clr-border);
+:is(.default-border) {
+  border: var(--default-border);
+}
+
+:is(.border-block-start) {
+  border-block-start: var(--default-border);
+}
+
+:is(.border-block-end) {
+  border-block-end: var(--default-border);
 }
 
 .hover-bg {

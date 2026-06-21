@@ -2,7 +2,7 @@ import type { Route } from "./+types/merch._index";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "CHR Merch | Dashboard" },
+    { title: "CHR Merch Hub | Dashboard" },
     {
       name: "description",
       content: "Merch and shop operations dashboard.",

@@ -12,9 +12,9 @@ function LandingPage() {
   return (
     <>
       <div className="public-page grid">
-        <header className="public-header surface-primary">
+        <header className="public-header surface-primary padding-b-1 padding-i-default border-block-end">
           <div
-            className="wrapper row gap-1 fw-wrap jc-sb ai-cen padding-i-default padding-b-1"
+            className="wrapper row gap-1 fw-wrap jc-sb ai-cen"
             style={
               { "--default-max-inline-size": "140ch" } as React.CSSProperties
             }
@@ -36,16 +36,16 @@ function LandingPage() {
               Merchandise Inventory Management
             </h2>
             <p className="merch-hero__kicker">
-              An internal tool for CHR staff and volunteers to track, manage,
-              and sync merchandise stock between our warehouse inventory and the
-              CHR online store.
+              A tool for CHR staff, board, and volunteers to track, manage, and
+              sync merchandise stock between our warehouse inventory and the CHR
+              online store.
             </p>
           </section>
 
           <div className="row fw-wrap gap-1 margin-b-1">
             <div className="card public-feature">
               <h3 className="public-feature__title">Live Inventory Tracking</h3>
-              <p className="public-feature__body text-muted">
+              <p className="public-feature__body clr-muted">
                 View current stock levels for all CHR merchandise products and
                 variants in one place, sourced directly from our inventory
                 spreadsheet.
@@ -71,13 +71,13 @@ function LandingPage() {
           <section className="card public-signin row fw-wrap gap-1half ai-cen jc-sb">
             <div className="public-signin__content grid gap-half">
               <h2 className="public-signin__title">Staff Access</h2>
-              <p className="public-signin__body text-muted">
+              <p className="public-signin__body clr-muted">
                 This tool is restricted to authorized CHR staff and volunteers.
                 Sign in with your Google account to access the dashboard. Access
                 is granted based on your permissions on the CHR Merch Products
                 Spreadsheet.
               </p>
-              <p className="xsmall text-muted">
+              <p className="xsmall clr-muted">
                 Need access? Contact your CHR admin to be added to the CHR Merch
                 Products Spreadsheet.
               </p>
@@ -89,15 +89,15 @@ function LandingPage() {
         </main>
         <footer className="public-footer card">
           <p
-            className="text-muted wrapper row ai-cen gap-half"
+            className="clr-muted wrapper row ai-cen gap-half"
             style={
               { "--default-max-inline-size": "140ch" } as React.CSSProperties
             }
           >
             |
             <span className="xsmall">
-              &copy;{new Date().getFullYear()} Cochise Harm Reduction. Internal
-              use only.
+              &copy;{new Date().getFullYear()} Cochise Harm Reduction.
+              Authorized use only.
             </span>
           </p>
         </footer>
@@ -150,8 +150,13 @@ export default function AuthCheck({
   if (user && user.role === "none") {
     return (
       <div className="public-page">
-        <header className="public-header surface-primary">
-          <div className="wrapper padding-i-default padding-b-1">
+        <header className="public-header surface-primary padding-b-1 padding-i-default border-block-end">
+          <div
+            className="wrapper row gap-1 fw-wrap jc-sb ai-cen"
+            style={
+              { "--default-max-inline-size": "140ch" } as React.CSSProperties
+            }
+          >
             <div className="merch-brand">
               <div className="merch-brand__meta">
                 <p className="merch-brand__eyebrow">CHR Merch</p>

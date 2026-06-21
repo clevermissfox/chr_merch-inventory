@@ -34,6 +34,7 @@
   --clr-text: var(--clr-neutral-0);
   --clr-text-primary: var(--clr-text);
   --clr-text-muted: color-mix(in oklch, var(--clr-text) 80%, transparent);
+  --clr-text-inverse: var(--clr-neutral-900);
 
   --clr-surface-primary: var(--clr-neutral-900);
   --clr-surface-secondary: oklch(
@@ -290,8 +291,9 @@ a {
 }
 
 button {
-  border: 0.1em solid var(--_clr-btn-border);
-  border-radius: var(--default-br);
+  border: var(--default-border);
+  border-color: var(--_clr-btn-border, transparent);
+  border-radius: var(--_btn-br, var(--default-br));
   background: var(--_clr-btn-bg);
   color: var(--_clr-btn-txt);
   padding: var(--_btn-padding);

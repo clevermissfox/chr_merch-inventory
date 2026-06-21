@@ -7,7 +7,7 @@ import type { CatalogGroup } from "~/types/catalog";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "CHR Merch | Inventory" },
+    { title: "CHR Merch Hub | Inventory" },
     {
       name: "description",
       content:
@@ -66,18 +66,13 @@ function GroupCheckbox({
 export default function InventoryPage() {
   const { user } = useAuth();
   const canEdit = user?.canEdit === true;
-  const {
-    state,
-    loadCatalog,
-    setStockQty,
-    syncCatalogStock,
-    syncSelectedSkus,
-  } = useCatalog();
+  const { state, loadCatalog, setStockQty, syncSelectedSkus } = useCatalog();
 
   const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
 
   const [selectMode, setSelectMode] = useState(false);
+  const [selectedMode, setSelectedMode] = useState("");
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -108,10 +103,38 @@ export default function InventoryPage() {
 
   const { catalog } = state;
 
-  const enterSelectMode = () => {
-    setSelectedSkus(new Set(Object.keys(state.dirtyBySku)));
-    setSelectMode(true);
+  const handleSelectMode = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const mode = e.target.value;
+    setSelectedMode(mode);
     setSyncFeedback(null);
+
+    let skus: Set<string>;
+    if (mode === "sync_all") {
+      skus = new Set(catalog.groups.flatMap((g) => g.rows.map((r) => r.sku)));
+    } else if (mode === "resolve_conflicts") {
+      skus = new Set(
+        catalog.groups.flatMap((g) =>
+          g.rows
+            .filter((r) => {
+              const dirty = state.dirtyBySku[r.sku];
+              const displayQty =
+                dirty?.stockQty !== undefined ? dirty.stockQty : r.stockQty;
+              const ws =
+                displayQty === "" || displayQty == null
+                  ? null
+                  : Number(displayQty);
+              const woo = r.wooStock == null ? null : Number(r.wooStock);
+              return ws !== woo;
+            })
+            .map((r) => r.sku),
+        ),
+      );
+    } else {
+      skus = new Set(Object.keys(state.dirtyBySku));
+    }
+    setSelectedSkus(skus);
+
+    setSelectMode(mode === "custom_selection");
   };
 
   const exitSelectMode = () => {
@@ -231,62 +254,53 @@ export default function InventoryPage() {
           </div>
 
           <div className="toolbar-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => void loadCatalog()}
-              disabled={state.loading || state.saving}
-            >
-              {state.loading ? "Refreshing..." : "Refresh Website Stock"}
-            </button>
-
-            {selectMode ? (
-              <>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={exitSelectMode}
-                  disabled={state.saving}
+            {canEdit && (
+              <form className="select-mode-form">
+                <select
+                  className="select-mode"
+                  size={4}
+                  value={selectedMode}
+                  onChange={handleSelectMode}
+                  disabled={state.loading || state.saving}
                 >
-                  Cancel Selection
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={selectedSkus.size === 0 || !canEdit || state.saving}
-                  onClick={() => setShowConfirm(true)}
-                >
-                  Push Selected ({selectedSkus.size})
-                </button>
-              </>
-            ) : (
-              <>
-                {canEdit && (
+                  <option value="sync_all">Sync All</option>
+                  <option value="standard_sync" disabled={!hasDirtyChanges}>
+                    Sync Changes
+                  </option>
+                  <option
+                    value="resolve_conflicts"
+                    disabled={catalog.summary.conflictGroups.length === 0}
+                  >
+                    Resolve Conflicts
+                  </option>
+                  <option value="custom_selection">Custom Selection</option>
+                </select>
+                <div className="row gap-1 w-100">
                   <button
                     type="button"
-                    className="btn-secondary"
-                    onClick={enterSelectMode}
+                    className="btn-secondary row gap-half"
+                    onClick={() => void loadCatalog()}
                     disabled={state.loading || state.saving}
                   >
-                    Select to Push
+                    <i className="bi bi-arrow-clockwise" aria-hidden="true" />
+                    {state.loading
+                      ? "Refreshing..."
+                      : "Refresh Current Website Stock"}
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={
-                    !hasDirtyChanges ||
-                    !canEdit ||
-                    state.loading ||
-                    state.saving
-                  }
-                  onClick={() => void syncCatalogStock()}
-                >
-                  {state.saving
-                    ? "Syncing Stock..."
-                    : "Push Warehouse Stock Live"}
-                </button>
-              </>
+
+                  <button
+                    type="submit"
+                    className="btn-primary flex-1"
+                    disabled={selectedSkus.size === 0 || state.saving}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setShowConfirm(true);
+                    }}
+                  >
+                    Push Stock({selectedSkus.size})
+                  </button>
+                </div>
+              </form>
             )}
           </div>
         </div>
@@ -394,14 +408,17 @@ export default function InventoryPage() {
                         >
                           {selectMode && (
                             <td className="select-cell">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                aria-label={`Select ${row.label} (SKU: ${row.sku})`}
-                                onChange={(e) =>
-                                  toggleSku(row.sku, e.target.checked)
-                                }
-                              />
+                              <label className="item-selection">
+                                <input
+                                  type="checkbox"
+                                  className="row-checkbox"
+                                  checked={isSelected}
+                                  aria-label={`Select ${row.label} (SKU: ${row.sku})`}
+                                  onChange={(e) =>
+                                    toggleSku(row.sku, e.target.checked)
+                                  }
+                                />
+                              </label>
                             </td>
                           )}
                           <td className="sku-cell">{row.sku}</td>
@@ -424,6 +441,7 @@ export default function InventoryPage() {
                                     nextValue === "" ? "" : Number(nextValue),
                                     row.stockQty ?? null,
                                   );
+                                  if (selectMode) toggleSku(row.sku, true);
                                 }}
                               />
                             ) : (
