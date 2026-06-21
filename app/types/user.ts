@@ -1,3 +1,8 @@
+export interface AuthStatus {
+  success: boolean;
+  user: AuthUser | null;
+}
+
 export interface AuthUser {
   id: string;
   email: string;

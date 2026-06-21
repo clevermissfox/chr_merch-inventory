@@ -8,14 +8,24 @@ import cors from "cors";
 import type {
   CatalogGroup,
   CatalogPayload,
+  NewProductFields,
   ProductSheetRow,
   VariantSheetRow,
 } from "~/types/catalog";
 import type { AuthUser } from "~/types/user";
 import {
   buildConflictGroups,
+  computeProductSyncHash,
+  createProductRow,
+  deleteProduct,
+  ensureDescriptionsRow,
+  pollForProductSku,
+  readRefData,
   rowsToObjects,
   shapeToCatalogPayload,
+  writeProductSyncHash,
+  writeProductSyncHashes,
+  writeSheetLog,
 } from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
@@ -73,6 +83,13 @@ function getSpreadsheetId(): string {
   return TARGET_ENV === "staging"
     ? process.env.STAGING_SPREADSHEET_ID || ""
     : process.env.PRODUCTION_SPREADSHEET_ID || "";
+}
+
+function getSheets() {
+  const sheets = google.sheets({ version: "v4", auth: serviceAuth });
+  const spreadsheetId = getSpreadsheetId();
+  if (!spreadsheetId) throw new Error("Missing spreadsheet ID env var");
+  return { sheets, spreadsheetId };
 }
 
 // Check spreadsheet access
@@ -229,6 +246,18 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
       if (err) {
         return res.json({ success: false, error: "SESSION_SAVE_FAILED" });
       }
+
+      const { sheets, spreadsheetId } = getSheets();
+      const user = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "sessions", [
+        new Date().toISOString(),
+        user.email,
+        user.name ?? "",
+        user.role ?? "",
+        "login",
+        TARGET_ENV,
+      ]).catch((e) => console.error("session log failed:", e));
+
       res.redirect(
         TARGET_ENV === "production"
           ? `${process.env.PRODUCTION_APP_URL}${redirectUrl}`
@@ -244,7 +273,19 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
 
 // Logout
 app.post("/api/auth/logout", (req: Request, res: Response) => {
+  const user = req.session?.user;
   req.session.destroy(() => {
+    if (user) {
+      const { sheets, spreadsheetId } = getSheets();
+      writeSheetLog(sheets, spreadsheetId, "sessions", [
+        new Date().toISOString(),
+        user.email,
+        user.name ?? "",
+        user.role ?? "",
+        "logout",
+        TARGET_ENV,
+      ]).catch((e) => console.error("session log failed:", e));
+    }
     res.json({ success: true });
   });
 });
@@ -265,18 +306,7 @@ app.get(
   "/api/catalog/inventory/get_stock",
   async (req: Request, res: Response) => {
     try {
-      const sheets = google.sheets({
-        version: "v4",
-        auth: serviceAuth,
-      });
-
-      const spreadsheetId = getSpreadsheetId();
-      if (!spreadsheetId) {
-        return res.status(500).json({
-          ok: false,
-          error: "Missing GOOGLE_SHEETS_SPREADSHEET_ID",
-        });
-      }
+      const { sheets, spreadsheetId } = getSheets();
 
       const response = await sheets.spreadsheets.values.batchGet({
         spreadsheetId,
@@ -331,6 +361,15 @@ app.get(
         },
       };
 
+      const actor = req.session?.user;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor?.email ?? "",
+        "inventory_get_stock",
+        `groups=${payload.groups.length} skus=${payload.summary.rowCount} unsynced=${payload.summary.unsyncedCount}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
       return res.status(200).json(payload);
     } catch (error: any) {
       console.error("GET /api/catalog/inventory/get_stock failed:", error);
@@ -352,18 +391,7 @@ app.post(
   "/api/catalog/inventory/sync_stock",
   async (req: Request, res: Response) => {
     try {
-      const sheets = google.sheets({
-        version: "v4",
-        auth: serviceAuth,
-      });
-
-      const spreadsheetId = getSpreadsheetId();
-      if (!spreadsheetId) {
-        return res.status(500).json({
-          ok: false,
-          error: "Missing spreadsheetId",
-        });
-      }
+      const { sheets, spreadsheetId } = getSheets();
 
       const catalog = req.body?.catalog as CatalogPayload | undefined;
       const mode = String(req.body?.mode || "standard_sync") as
@@ -411,6 +439,30 @@ app.post(
         },
       );
 
+      // Write last_hash + last_synced_at for every product that had SKUs pushed
+      const pushedSkuSet = new Set(wooResult.updatedSkus);
+      const hashEntries = catalog.groups
+        .filter((g) =>
+          (g.sku && pushedSkuSet.has(g.sku)) ||
+          g.rows.some((r) => pushedSkuSet.has(r.sku)),
+        )
+        .map((g) => ({ sku: g.sku, hash: computeProductSyncHash(g) }));
+
+      if (hashEntries.length) {
+        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch((e) =>
+          console.error("hash write failed:", e),
+        );
+      }
+
+      const actor = req.session?.user;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor?.email ?? "",
+        `inventory_sync_stock_${mode}`,
+        `pushed=${wooResult.updatedProducts} skus=${wooResult.updatedSkus.join(",")} skipped=${wooResult.skipped.length} index_updated=${refreshResult.updated}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
       return res.status(200).json({
         ok: true,
         updatedProducts: wooResult.updatedProducts,
@@ -430,17 +482,99 @@ app.post(
     }
   },
 );
+app.get("/api/catalog/get_meta", async (req: Request, res: Response) => {
+  try {
+    const { sheets, spreadsheetId } = getSheets();
+    const refData = await readRefData(sheets, spreadsheetId);
+    return res.status(200).json({ ok: true, ...refData });
+  } catch (error: any) {
+    console.error("GET /api/catalog/get_meta failed:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load reference data" });
+  }
+});
+
+app.post(
+  "/api/catalog/create_product",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const body = req.body as Partial<NewProductFields>;
+      const { category, subcategory, basePriceDollars, weightOz } = body;
+
+      if (!category || !subcategory || !basePriceDollars || !weightOz) {
+        return res.status(400).json({
+          ok: false,
+          error: "Missing required fields: category, subcategory, basePriceDollars, weightOz",
+        });
+      }
+
+      const fields: NewProductFields = {
+        category,
+        subcategory,
+        basePriceDollars,
+        weightOz,
+        displayName: body.displayName,
+        design: body.design,
+        styleModifier: body.styleModifier,
+        dimensionsWidth: body.dimensionsWidth,
+        dimensionsHeight: body.dimensionsHeight,
+        dimensionsDepth: body.dimensionsDepth,
+      };
+
+      const { sheets, spreadsheetId } = getSheets();
+      const { sheetRow, rowId } = await createProductRow(sheets, spreadsheetId, fields);
+      const { productId, sku } = await pollForProductSku(sheets, spreadsheetId, sheetRow);
+      await ensureDescriptionsRow(sheets, spreadsheetId, sku);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "create_product",
+        `sku=${sku} product_id=${productId} row_id=${rowId}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("action log failed:", e));
+
+      return res.status(200).json({ ok: true, productId, sku, rowId, sheetRow });
+    } catch (error: any) {
+      console.error("POST /api/catalog/create_product failed:", error);
+      return res.status(500).json({ ok: false, error: error?.message || "Failed to create product" });
+    }
+  },
+);
+
+app.delete(
+  "/api/catalog/product/:sku",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku) return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const result = await deleteProduct(sheets, spreadsheetId, sku);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "delete_product",
+        `sku=${sku} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(200).json({ ok: true, sku, ...result });
+    } catch (error: any) {
+      console.error("DELETE /api/catalog/product/:sku failed:", error);
+      return res.status(500).json({ ok: false, error: error?.message || "Failed to delete product" });
+    }
+  },
+);
+
 // Test endpoint
 app.get("/api/test", async (req: Request, res: Response) => {
   try {
-    if (process.env.NODE_ENV === "staging") {
-      console.log("Running in staging environment");
-    } else if (process.env.NODE_ENV === "development") {
-      console.log("Running in development environment");
-    } else {
-      console.log("Running in non-staging environment");
-    }
-    const sheets = google.sheets({ version: "v4", auth: serviceAuth });
+    getSheets();
     res.json({ ok: true, message: "Sheets API connected!" });
   } catch (error: unknown) {
     const errorMessage =

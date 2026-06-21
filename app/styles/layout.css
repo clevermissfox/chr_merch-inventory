@@ -152,7 +152,7 @@
   gap: var(--spacing-050, 0.5em);
 }
 
-.gap-three-forths {
+.gap-three-fourths {
   gap: var(--spacing-075, 0.75em);
 }
 

@@ -17,6 +17,16 @@ import type {
   InventoryIndexHashRow,
 } from "~/types/inventory";
 
+function colLetter(idx: number): string {
+  let s = "";
+  let n = idx;
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
+}
+
 /* MARK: LOCAL TYPES */
 interface WooConfig {
   storeUrl: string;
@@ -1044,7 +1054,23 @@ export async function ensureInventoryIndexRowsExist(
   const missingRows = Array.from(missingBySku.values());
   if (!missingRows.length) return state;
 
-  await appendInventoryIndexRows(sheets, spreadsheetId, state, missingRows);
+  // Re-read just the SKU column immediately before appending to guard against
+  // concurrent requests that loaded state before either had written.
+  const skuCol = colLetter(state.headerIndex.sku);
+  const freshResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${state.sheetName}!${skuCol}:${skuCol}`,
+  });
+  const freshSkus = new Set(
+    ((freshResponse.data.values ?? []) as string[][])
+      .slice(1)
+      .map((r) => String(r[0] ?? "").trim())
+      .filter(Boolean),
+  );
+  const dedupedRows = missingRows.filter((r) => !freshSkus.has(r.sku));
+  if (!dedupedRows.length) return loadInventoryIndexState(sheets, spreadsheetId);
+
+  await appendInventoryIndexRows(sheets, spreadsheetId, state, dedupedRows);
   return loadInventoryIndexState(sheets, spreadsheetId);
 }
 

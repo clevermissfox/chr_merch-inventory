@@ -90,6 +90,10 @@
   color: var(--clr-success, #10b981);
 }
 
+.clr-warning {
+  color: var(--clr-warning);
+}
+
 .clr-error {
   color: var(--clr-error, #ef4444);
 }

@@ -241,8 +241,8 @@ export default function InventoryPage() {
         </div>
       </section>
 
-      <section className="toolbar card">
-        <div className="toolbar-row">
+      <section className="toolbar grid gap-1 card">
+        <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
           <div>
             <div className="badge">
               {canEdit ? "Editor Access" : "View Access"}
@@ -253,32 +253,38 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="toolbar-actions">
+          <div className="toolbar-actions row fw-wrap gap-1 ai-st">
             {canEdit && (
               <form className="select-mode-form">
-                <select
-                  className="select-mode"
-                  size={4}
-                  value={selectedMode}
-                  onChange={handleSelectMode}
-                  disabled={state.loading || state.saving}
-                >
-                  <option value="sync_all">Sync All</option>
-                  <option value="standard_sync" disabled={!hasDirtyChanges}>
-                    Sync Changes
-                  </option>
-                  <option
-                    value="resolve_conflicts"
-                    disabled={catalog.summary.conflictGroups.length === 0}
+                <div className="form-group">
+                  <label className="bold ls-1" htmlFor="select-mode">
+                    Select edit mode:
+                  </label>
+                  <select
+                    className="select-mode"
+                    id="select-mode"
+                    size={4}
+                    value={selectedMode}
+                    onChange={handleSelectMode}
+                    disabled={state.loading || state.saving}
                   >
-                    Resolve Conflicts
-                  </option>
-                  <option value="custom_selection">Custom Selection</option>
-                </select>
-                <div className="row gap-1 w-100">
+                    <option value="sync_all">Sync All</option>
+                    <option value="standard_sync" disabled={!hasDirtyChanges}>
+                      Sync Changes
+                    </option>
+                    <option
+                      value="resolve_conflicts"
+                      disabled={catalog.summary.conflictGroups.length === 0}
+                    >
+                      Resolve Conflicts
+                    </option>
+                    <option value="custom_selection">Custom Selection</option>
+                  </select>
+                </div>
+                <div className="form-group row gap-1 fw-wrap  w-100">
                   <button
                     type="button"
-                    className="btn-secondary row gap-half"
+                    className="btn-secondary row gap-half jc-cen"
                     onClick={() => void loadCatalog()}
                     disabled={state.loading || state.saving}
                   >
@@ -290,13 +296,14 @@ export default function InventoryPage() {
 
                   <button
                     type="submit"
-                    className="btn-primary flex-1"
+                    className="btn-primary flex-1 row gap-half jc-cen"
                     disabled={selectedSkus.size === 0 || state.saving}
                     onClick={(e) => {
                       e.preventDefault();
                       setShowConfirm(true);
                     }}
                   >
+                    <i className="bi bi-arrow-down-up" aria-hidden="true" />
                     Push Stock({selectedSkus.size})
                   </button>
                 </div>
@@ -305,7 +312,7 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        <div className="toolbar-row">
+        <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
           <div
             className="status-line"
             role={statusTone === "error" ? "alert" : "status"}
@@ -334,21 +341,23 @@ export default function InventoryPage() {
               open={i === 0}
             >
               <summary>
-                {selectMode && (
-                  <GroupCheckbox
-                    group={group}
-                    checked={allSelected}
-                    indeterminate={someSelected}
-                    onChange={(willBeChecked) =>
-                      toggleGroup(group, willBeChecked)
-                    }
-                  />
-                )}
-                <div className="summary-title">
-                  <strong>{group.displayName}</strong>
-                  <span className="summary-count">
-                    {group.rowCount} SKU{group.rowCount === 1 ? "" : "s"}
-                  </span>
+                <div className="row gap-half">
+                  {selectMode && (
+                    <GroupCheckbox
+                      group={group}
+                      checked={allSelected}
+                      indeterminate={someSelected}
+                      onChange={(willBeChecked) =>
+                        toggleGroup(group, willBeChecked)
+                      }
+                    />
+                  )}
+                  <div className="summary-title">
+                    <strong>{group.displayName}</strong>
+                    <span className="summary-count">
+                      {group.rowCount} SKU{group.rowCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
                 </div>
                 <span className="toggle-label">Toggle</span>
               </summary>

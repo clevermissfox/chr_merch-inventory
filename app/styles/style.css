@@ -9,6 +9,8 @@
   --fw-500: 500;
   --fw-600: 600;
   --fw-700: 700;
+  --fw-body: var(--fw-400);
+  --fw-bold: var(--fw-700);
 
   --fs-base: clamp(0.875rem, 0.7rem + 0.4vw, 1rem);
   --fs-700: 2.4rem;
@@ -334,6 +336,21 @@ button:disabled {
 .btn-icon {
   --_clr-btn-border: var(--clr-border-soft);
   --_btn-padding: var(--spacing-025, 0.25rem);
+  aspect-ratio: 1;
+  inline-size: 3ch;
+  font-size: var(--fs-200);
+}
+
+.btn-help {
+  --_clr-btn-border: var(--clr-border-soft);
+  --_btn-br: var(--br-round);
+  --_clr-btn-txt: var(--clr-text-muted);
+}
+
+.btn-danger {
+  --_clr-btn-bg: var(--clr-danger);
+  --_clr-btn-txt: var(--clr-neutral-900);
+  --_btn-padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
 }
 
 .btn-logout {

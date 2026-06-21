@@ -20,6 +20,7 @@ export function MerchShell({ children }: MerchShellProps) {
   const userInitials = `${user?.givenName?.slice(0, 1) || "G"}${user?.familyName?.slice(0, 1) || ""}`;
 
   const [showProfile, setShowProfile] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   const popoverRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -87,8 +88,8 @@ export function MerchShell({ children }: MerchShellProps) {
               className="btn-user-avatar"
               popoverTarget="popover-user-menu"
             >
-              {user?.picture ? (
-                <img src={user.picture} alt={""} />
+              {user?.picture && !imgError ? (
+                <img src={user.picture} alt="" onError={() => setImgError(true)} />
               ) : (
                 <span className="bold clr-inverse">{userInitials}</span>
               )}
@@ -158,7 +159,7 @@ export function MerchShell({ children }: MerchShellProps) {
       </main>
 
       {showProfile && user && (
-        <UserProfileDialog user={user} onClose={() => setShowProfile(false)} />
+        <UserProfileDialog onClose={() => setShowProfile(false)} />
       )}
     </div>
   );

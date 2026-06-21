@@ -1,12 +1,6 @@
 import { useState, useEffect } from "react";
 import BtnGoogleLogin from "./BtnGoogleLogin";
-import type { AuthUser } from "~/types/user";
-
-interface AuthStatus {
-  success: boolean;
-  user: AuthUser | null;
-  canEdit: boolean;
-}
+import type { AuthStatus, AuthUser } from "~/types/user";
 
 function LandingPage() {
   return (

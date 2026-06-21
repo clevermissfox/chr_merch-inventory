@@ -1,9 +1,8 @@
-import { useEffect, useRef } from "react";
-import type { AuthUser } from "~/types/user";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "~/context/AuthContext";
 import { useCatalog } from "~/context/CatalogContext";
 
 interface UserProfileDialogProps {
-  user: AuthUser;
   onClose: () => void;
 }
 
@@ -13,26 +12,27 @@ const roleLabel: Record<string, string> = {
   none: "No Access",
 };
 
-export default function UserProfileDialog({
-  user,
-  onClose,
-}: UserProfileDialogProps) {
+export default function UserProfileDialog({ onClose }: UserProfileDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const { user } = useAuth();
   const { state } = useCatalog();
   const wooSiteUrl = state.catalog?.summary.wooSiteUrl;
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
   }, []);
 
-  const initials =
+  if (!user) return null;
+
+  const userInitials =
     `${user.givenName?.slice(0, 1) ?? ""}${user.familyName?.slice(0, 1) ?? ""}` ||
     user.name?.slice(0, 1) ||
     "?";
 
   return (
-    <dialog ref={ref} className="profile-dialog" onCancel={onClose}>
-      <div className="card grid gap-1half profile-dialog-inner">
+    <dialog ref={ref} className="dialog dialog-profile" onCancel={onClose}>
+      <div className="card grid gap-1half dialog-profile-inner">
         <div className="row jc-sb ai-cen">
           <h2>Profile</h2>
           <button
@@ -46,11 +46,11 @@ export default function UserProfileDialog({
         </div>
 
         <div className="row ai-cen gap-1">
-          <div className="profile-dialog-avatar">
-            {!user.picture ? (
-              <img src={user.picture} alt={""} />
+          <div className="dialog-profile-avatar">
+            {user.picture && !imgError ? (
+              <img src={user.picture} alt="" onError={() => setImgError(true)} />
             ) : (
-              <span className="bold clr-inverse">{initials}</span>
+              <span className="bold clr-inverse">{userInitials}</span>
             )}
           </div>
           <div className="grid gap-quarter">
@@ -78,7 +78,7 @@ export default function UserProfileDialog({
             href={`${wooSiteUrl}/shop`}
             target="_blank"
             rel="noopener noreferrer"
-            className="profile-dialog-shop-link"
+            className="dialog-profile-shop-link"
           >
             <i className="bi bi-bag" aria-hidden="true" />
             <span>Visit Shop</span>

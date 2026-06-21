@@ -25,24 +25,24 @@ export default function ConfirmSyncDialog({
   }, []);
 
   return (
-    <dialog ref={ref} className="confirm-dialog" onCancel={onCancel}>
-      <div className="confirm-dialog-inner card grid gap-1">
-        <h2 className="confirm-dialog-title">Push stock to website</h2>
+    <dialog ref={ref} className="dialog dialog-confirm" onCancel={onCancel}>
+      <div className="dialog-confirm-inner card grid gap-1">
+        <h2 className="dialog-confirm-title">Push stock to website</h2>
         <p className="small clr-muted">
           These products will be updated on{" "}
           {`${targetSite ? targetSite : "CHR website"}`}:
         </p>
-        <ul className="confirm-dialog-list" role="list">
+        <ul className="dialog-confirm-list" role="list">
           {groups.map((g) => (
-            <li key={g.displayName} className="confirm-dialog-item">
+            <li key={g.displayName} className="dialog-confirm-item">
               <span>{g.displayName}</span>
-              <span className="confirm-dialog-count">
+              <span className="dialog-confirm-count">
                 {g.skuCount} SKU{g.skuCount !== 1 ? "s" : ""}
               </span>
             </li>
           ))}
         </ul>
-        <div className="confirm-dialog-actions">
+        <div className="dialog-confirm-actions">
           <button
             type="button"
             className="btn-secondary"

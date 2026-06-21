@@ -104,6 +104,38 @@ export interface SyncResult {
   skippedCount: number;
 }
 
+export interface RefData {
+  categories: Array<{ value: string; code: string; wooId: number | null }>;
+  subcategories: Array<{ value: string; code: string; label: string; wooId: number | null }>;
+  graphics: string[];
+  graphicsVariants: Array<{ value: string; code: string }>;
+  styles: string[];
+  colors: Array<{ value: string; code: string }>;
+  sizes: Array<{ value: string; code: string }>;
+  dimensions: Array<{ value: string; code: string }>;
+}
+
+export interface NewProductFields {
+  category: string;
+  subcategory: string;
+  basePriceDollars: string;
+  weightOz: string;
+  displayName?: string;
+  design?: string;
+  styleModifier?: string;
+  dimensionsWidth?: string;
+  dimensionsHeight?: string;
+  dimensionsDepth?: string;
+}
+
+export interface CreateProductResult {
+  ok: true;
+  productId: string;
+  sku: string;
+  rowId: string;
+  sheetRow: number;
+}
+
 export interface ProductSheetRow {
   product_id: string;
   woo_id: string;

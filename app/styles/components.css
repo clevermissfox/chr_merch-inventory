@@ -25,7 +25,7 @@
   font-size: var(--fs-300);
 }
 
-:is(button.btn-user-avatar, .profile-dialog-avatar) {
+:is(button.btn-user-avatar, .dialog-profile-avatar) {
   --_grade-stop: color-mix(
     in oklch,
     var(--clr-accent),
@@ -429,26 +429,6 @@ menu.user-menu {
   border-radius: calc(var(--spacing-125, 1.25em) * 0.25);
 }
 
-.toolbar {
-  display: grid;
-  gap: var(--spacing-100, 1rem);
-}
-
-.toolbar-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-100, 1rem);
-  align-items: center;
-  justify-content: space-between;
-}
-
-.toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-075, 0.75rem);
-  align-items: start;
-}
-
 .select-mode-form {
   display: contents;
 }
@@ -470,7 +450,7 @@ menu.user-menu {
   inline-size: 2ch;
   block-size: 2ch;
   aspect-ratio: 1;
-  border: 0.2em solid var(--clr-neutral-0);
+  border: 0.2em solid currentColor;
   border-bottom-color: transparent;
   border-radius: 50%;
   display: inline-block;
@@ -670,14 +650,14 @@ menu.user-menu {
   -webkit-appearance: none;
   appearance: none;
   user-select: none;
-  background-color: WHITE;
+  background-color: #131314;
   background-image: none;
   border: 1px solid #747775;
   -webkit-border-radius: 4px;
   border-radius: 4px;
   -webkit-box-sizing: border-box;
   box-sizing: border-box;
-  color: #1f1f1f;
+  color: #e3e3e3;
   cursor: pointer;
   font-family: "Roboto", arial, sans-serif;
   font-size: 14px;
@@ -744,39 +724,24 @@ menu.user-menu {
   right: 0;
   top: 0;
 }
+.gsi-material-button:hover {
+  background-color: #202124; /* Lighter gray on hover */
+}
+
+.gsi-material-button:focus {
+  background-color: #131314;
+}
+
+.gsi-material-button:active {
+  background-color: #303134;
+}
 
 .gsi-material-button:disabled {
+  background-color: #131314;
+  border-color: #8e918f;
+  color: #e3e3e3;
+  opacity: 0.38;
   cursor: default;
-  background-color: #ffffff61;
-  border-color: #1f1f1f1f;
-}
-
-.gsi-material-button:disabled .gsi-material-button-contents {
-  opacity: 38%;
-}
-
-.gsi-material-button:disabled .gsi-material-button-icon {
-  opacity: 38%;
-}
-
-.gsi-material-button:not(:disabled):active .gsi-material-button-state,
-.gsi-material-button:not(:disabled):focus .gsi-material-button-state {
-  background-color: #303030;
-  opacity: 12%;
-}
-
-.gsi-material-button:not(:disabled):hover {
-  -webkit-box-shadow:
-    0 1px 2px 0 rgba(60, 64, 67, 0.3),
-    0 1px 3px 1px rgba(60, 64, 67, 0.15);
-  box-shadow:
-    0 1px 2px 0 rgba(60, 64, 67, 0.3),
-    0 1px 3px 1px rgba(60, 64, 67, 0.15);
-}
-
-.gsi-material-button:not(:disabled):hover .gsi-material-button-state {
-  background-color: #303030;
-  opacity: 8%;
 }
 
 .google-login-btn img {
@@ -848,6 +813,140 @@ menu.user-menu {
   border-radius: var(--default-br);
 }
 
+/* Select mode */
+label.item-selection input[type="checkbox"] {
+  accent-color: var(--clr-accent);
+}
+
+.select-cell {
+  text-align: center;
+  padding-inline: var(--spacing-075, 0.75rem);
+}
+
+.group-checkbox {
+  flex-shrink: 0;
+}
+
+/* Dialogs — shared base */
+
+.dialog[open] {
+  border: none;
+  background: transparent;
+  margin: auto;
+  padding: var(--spacing-050, 0.5em);
+  width: 100%;
+}
+
+.dialog::backdrop {
+  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-profile {
+  max-inline-size: min(90vw, 28rem);
+}
+
+.dialog-confirm {
+  max-inline-size: min(90vw, 36rem);
+}
+
+.dialog-product {
+  max-inline-size: min(90vw, 32rem);
+}
+
+/* Profile dialog */
+
+.dialog-profile-inner {
+  position: relative;
+}
+
+.dialog-profile-avatar {
+  background: linear-gradient(var(--clr-accent), var(--_grade-stop));
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
+  border-radius: 50%;
+
+  &:has(> span):not(:has(> img)) {
+    display: grid;
+    place-items: center;
+  }
+}
+
+.profile-email {
+  border: none;
+}
+
+.dialog-profile-shop-link {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-050, 0.5rem);
+  border: 0.1em solid var(--clr-border-soft);
+  border-radius: var(--default-br);
+  padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem);
+  font-weight: var(--fw-500);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: var(--fs-300);
+  transition: opacity var(--default-trans-dur) var(--default-timing);
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+/* Confirm dialog */
+
+.dialog-confirm-inner {
+  overflow-y: auto;
+}
+
+.dialog-confirm-title {
+  font-size: var(--fs-500);
+  margin: 0;
+}
+
+.dialog-confirm-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--spacing-050, 0.5rem);
+  max-block-size: 40vh;
+  overflow-y: auto;
+}
+
+.dialog-confirm-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--spacing-100, 1rem);
+  padding: var(--spacing-050, 0.5rem) var(--spacing-075, 0.75rem);
+  background: var(--clr-surface-secondary);
+  border-radius: calc(var(--default-br) * 0.5);
+}
+
+.dialog-confirm-count {
+  color: var(--clr-text-muted);
+  font-size: var(--fs-200);
+  white-space: nowrap;
+}
+
+.dialog-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-075, 0.75rem);
+  flex-wrap: wrap;
+}
+
+/* product dialog */
+.dialog-product
+  .form-product_create
+  :is(select, input:not([type="checkbox"], [type="radio"])) {
+  border-color: var(--clr-border-soft);
+  padding: var(--spacing-025, 0.25em) var(--spacing-050, 0.5em);
+  margin-block-start: var(--spacing-025, 0.25em);
+}
+
 @keyframes rotation {
   to {
     transform: rotate(360deg);
@@ -874,132 +973,4 @@ menu.user-menu {
   100% {
     transform: rotate(360deg);
   }
-}
-
-/* Select mode */
-label.item-selection input[type="checkbox"] {
-  accent-color: var(--clr-accent);
-}
-
-.select-cell {
-  text-align: center;
-  padding-inline: var(--spacing-075, 0.75rem);
-}
-
-.group-checkbox {
-  flex-shrink: 0;
-}
-
-/* Confirm sync dialog */
-
-/* User profile dialog */
-
-.profile-dialog {
-  border: none;
-  background: transparent;
-  margin: auto;
-  padding: var(--spacing-050, 0.5em);
-  max-inline-size: min(90vw, 28rem);
-  width: 100%;
-}
-
-.profile-dialog::backdrop {
-  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
-  backdrop-filter: blur(2px);
-}
-
-.profile-dialog-inner {
-  position: relative;
-}
-
-.profile-dialog-avatar {
-  background: linear-gradient(var(--clr-accent), var(--_grade-stop));
-  border: var(--default-border);
-  border-color: var(--clr-border-soft);
-  border-radius: 50%;
-
-  &:has(> span):not(:has(> img)) {
-    display: grid;
-    place-items: center;
-  }
-}
-
-.profile-email {
-  border: none;
-}
-
-.profile-dialog-shop-link {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-050, 0.5rem);
-  border: 0.1em solid var(--clr-border-soft);
-  border-radius: var(--default-br);
-  padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem);
-  font-weight: var(--fw-500);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: var(--fs-300);
-  transition: opacity var(--default-trans-dur) var(--default-timing);
-
-  &:hover {
-    opacity: 0.85;
-  }
-}
-
-/* Confirm sync dialog */
-
-.confirm-dialog {
-  border: none;
-  background: transparent;
-  margin: auto;
-  padding: var(--spacing-050, 0.5em);
-  max-inline-size: min(90vw, 36rem);
-  width: 100%;
-}
-
-.confirm-dialog::backdrop {
-  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
-  backdrop-filter: blur(2px);
-}
-
-.confirm-dialog-inner {
-  overflow-y: auto;
-}
-
-.confirm-dialog-title {
-  font-size: var(--fs-500);
-  margin: 0;
-}
-
-.confirm-dialog-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: var(--spacing-050, 0.5rem);
-  max-block-size: 40vh;
-  overflow-y: auto;
-}
-
-.confirm-dialog-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--spacing-100, 1rem);
-  padding: var(--spacing-050, 0.5rem) var(--spacing-075, 0.75rem);
-  background: var(--clr-surface-secondary);
-  border-radius: calc(var(--default-br) * 0.5);
-}
-
-.confirm-dialog-count {
-  color: var(--clr-text-muted);
-  font-size: var(--fs-200);
-  white-space: nowrap;
-}
-
-.confirm-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-075, 0.75rem);
-  flex-wrap: wrap;
 }
