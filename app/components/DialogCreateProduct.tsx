@@ -1,7 +1,9 @@
+import { CircleQuestionMark, X, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NewProductFields, RefData } from "~/types/catalog";
+import AddNewRef from "./AddNewRef";
 
-interface CreateProductDialogProps {
+interface DialogCreateProductProps {
   onClose: () => void;
   onCreated: (sku: string) => void;
 }
@@ -26,10 +28,10 @@ const empty: FormState = {
   styleModifier: "",
 };
 
-export default function CreateProductDialog({
+export default function DialogCreateProduct({
   onClose,
   onCreated,
-}: CreateProductDialogProps) {
+}: DialogCreateProductProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const [refData, setRefData] = useState<RefData | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -103,18 +105,18 @@ export default function CreateProductDialog({
             aria-label="Close"
             disabled={submitting}
           >
-            <i className="bi bi-x-lg" aria-hidden="true" />
+            <X aria-hidden="true" />
           </button>
         </div>
 
         {metaError && (
-          <div className="status-line" data-tone="error">
+          <div role="alert" className="status-line" data-tone="error">
             {metaError}
           </div>
         )}
 
         {!refData && !metaError && (
-          <div className="status-line">
+          <div role="status" className="status-line">
             Loading options… <span className="loader" />
           </div>
         )}
@@ -136,7 +138,7 @@ export default function CreateProductDialog({
                   aria-expanded={showCatHelp}
                   aria-controls="cp-category-help"
                 >
-                  ?
+                  <CircleQuestionMark aria-hidden="true" />
                 </button>
               </div>
               {showCatHelp && (
@@ -232,51 +234,71 @@ export default function CreateProductDialog({
               />
             </div>
 
-            {refData.graphics.length > 0 && (
-              <div className="form-group">
-                <label className="bold" htmlFor="cp-design">
-                  Design <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <select
-                  id="cp-design"
-                  value={form.design}
-                  onChange={set("design")}
-                  disabled={submitting}
-                >
-                  <option value="">— none —</option>
-                  {refData.graphics.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="form-group">
+              <label className="bold" htmlFor="cp-design">
+                Design <span className="clr-muted xsmall">(optional)</span>
+              </label>
+              <select
+                id="cp-design"
+                value={form.design}
+                onChange={set("design")}
+                disabled={submitting}
+              >
+                <option value="">— none —</option>
+                {refData.graphics.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+              <AddNewRef
+                refType="graphic"
+                existingValues={refData.graphics}
+                existingCodes={[]}
+                onAdded={({ value }) => {
+                  setRefData((prev) =>
+                    prev ? { ...prev, graphics: [...prev.graphics, value] } : prev,
+                  );
+                  setForm((f) => ({ ...f, design: value }));
+                }}
+                disabled={submitting}
+              />
+            </div>
 
-            {refData.styles.length > 0 && (
-              <div className="form-group">
-                <label className="bold" htmlFor="cp-style">
-                  Style Modifier{" "}
-                  <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <select
-                  id="cp-style"
-                  value={form.styleModifier}
-                  onChange={set("styleModifier")}
-                  disabled={submitting}
-                >
-                  <option value="">— none —</option>
-                  {refData.styles.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="form-group">
+              <label className="bold" htmlFor="cp-style">
+                Style Modifier{" "}
+                <span className="clr-muted xsmall">(optional)</span>
+              </label>
+              <select
+                id="cp-style"
+                value={form.styleModifier}
+                onChange={set("styleModifier")}
+                disabled={submitting}
+              >
+                <option value="">— none —</option>
+                {refData.styles.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <AddNewRef
+                refType="style"
+                existingValues={refData.styles}
+                existingCodes={[]}
+                onAdded={({ value }) => {
+                  setRefData((prev) =>
+                    prev ? { ...prev, styles: [...prev.styles, value] } : prev,
+                  );
+                  setForm((f) => ({ ...f, styleModifier: value }));
+                }}
+                disabled={submitting}
+              />
+            </div>
 
             {submitError && (
-              <div className="status-line" data-tone="error">
+              <div role="alert" className="status-line" data-tone="error">
                 {submitError}
               </div>
             )}
@@ -301,7 +323,7 @@ export default function CreateProductDialog({
                   </>
                 ) : (
                   <>
-                    <i className="bi bi-plus-lg" aria-hidden="true" />
+                    <Plus aria-hidden="true" />
                     Create Product
                   </>
                 )}

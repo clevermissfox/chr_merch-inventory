@@ -1,4 +1,7 @@
+import { Search } from "lucide-react";
 import type { Route } from "./+types/merch._index";
+import { SearchComponent } from "~/components/SearchComponent";
+import { useCatalog } from "~/context/CatalogContext";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -35,10 +38,28 @@ const roadMap = [
 ];
 
 export default function MerchDashboard() {
+  const { state } = useCatalog();
   return (
     <>
       <section className="card">
         <h2>Coming soon!</h2>
+      </section>
+      <section className="card" data-action="search_inventory">
+        {/* <SearchComponent
+          idSuffix="quick-inventory"
+          data={state.catalog?.groups}
+        /> */}
+        <div className="input-wrapper">
+          <input
+            type="search"
+            minLength={3}
+            placeholder="e.g. black small"
+            enterKeyHint="search"
+          />
+          <button type="submit" aria-label="Search">
+            <Search aria-hidden="true" />
+          </button>
+        </div>
       </section>
     </>
   );

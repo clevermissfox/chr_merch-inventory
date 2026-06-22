@@ -1,4 +1,8 @@
 import { createHash } from "crypto";
+import {
+  ensureInventoryIndexRowsExist,
+  loadInventoryIndexState,
+} from "./inventoryManager";
 import type { sheets_v4 } from "googleapis";
 import type {
   CatalogConflictGroup,
@@ -85,6 +89,87 @@ export async function readRefData(
       code: dimensionsCode[i] ?? "",
     })),
   };
+}
+
+export type RefAddType =
+  | "color"
+  | "size"
+  | "dimension"
+  | "graphicsVariant"
+  | "graphic"
+  | "style";
+
+const REF_RANGE_MAP: Record<RefAddType, { value: string; code?: string }> = {
+  color:          { value: "colorsList",         code: "colorsCode" },
+  size:           { value: "sizesList",           code: "sizesCode" },
+  dimension:      { value: "dimensionsList",      code: "dimensionsCode" },
+  graphicsVariant:{ value: "graphicsVariantList", code: "graphicsVariantCode" },
+  graphic:        { value: "graphicsList" },
+  style:          { value: "styleModList" },
+};
+
+function parseA1(rangeStr: string): { sheet: string; col: string; startRow: number } {
+  const m = rangeStr.match(/^(.+)!([A-Z]+)(\d+)/);
+  if (!m) throw new Error(`Cannot parse range: ${rangeStr}`);
+  return { sheet: m[1], col: m[2], startRow: parseInt(m[3], 10) };
+}
+
+export async function appendRefEntry(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  type: RefAddType,
+  value: string,
+  code?: string,
+): Promise<{ value: string; code: string }> {
+  const config = REF_RANGE_MAP[type];
+  const isCodedType = Boolean(config.code);
+
+  if (isCodedType && !code) throw new Error("Code is required for this ref type");
+
+  const rangesToRead = [config.value, ...(config.code ? [config.code] : [])];
+  const response = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: rangesToRead,
+  });
+
+  const vrs = response.data.valueRanges ?? [];
+  const existingValues = (vrs[0]?.values ?? []).flat().map(String).filter(Boolean);
+  const existingCodes  = config.code
+    ? (vrs[1]?.values ?? []).flat().map(String).filter(Boolean).map((c) => c.toUpperCase())
+    : [];
+
+  if (existingValues.some((v) => v.toLowerCase() === value.toLowerCase())) {
+    throw new Error(`"${value}" already exists`);
+  }
+  const normalizedCode = code?.toUpperCase() ?? "";
+  if (isCodedType && existingCodes.includes(normalizedCode)) {
+    throw new Error(`Code "${normalizedCode}" is already in use`);
+  }
+
+  const valueRangeMeta = parseA1(vrs[0]?.range ?? "");
+  const nextRow = valueRangeMeta.startRow + existingValues.length;
+
+  const data: { range: string; values: string[][] }[] = [
+    {
+      range: `'${valueRangeMeta.sheet}'!${valueRangeMeta.col}${nextRow}`,
+      values: [[value]],
+    },
+  ];
+
+  if (config.code && normalizedCode) {
+    const codeRangeMeta = parseA1(vrs[1]?.range ?? "");
+    data.push({
+      range: `'${codeRangeMeta.sheet}'!${codeRangeMeta.col}${nextRow}`,
+      values: [[normalizedCode]],
+    });
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "RAW", data },
+  });
+
+  return { value, code: normalizedCode };
 }
 
 // Convert 0-based column index to A1 column letter (A, B, ..., Z, AA, AB, ...)
@@ -481,6 +566,134 @@ export async function deleteProduct(
     descriptionsDeleted: descRowIndices.length,
     inventoryIndexDeleted: invRowIndices.length,
   };
+}
+
+
+async function lookupSelectProduct(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  productId: string,
+): Promise<string> {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "productList",
+  });
+  const entries = ((response.data.values ?? []) as string[][])
+    .map((r) => String(r[0] ?? "").trim())
+    .filter(Boolean);
+
+  const match = entries.find((entry) => entry.endsWith(` - ${productId}`));
+  if (!match) throw new Error(`No productList entry found for product_id "${productId}"`);
+  return match;
+}
+
+async function pollForVariantSkus(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  startSheetRow: number,
+  count: number,
+  timeoutMs = 30_000,
+): Promise<string[]> {
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "variants!1:1",
+  });
+  const headers = ((headerResponse.data.values?.[0] ?? []) as string[]).map(
+    (h) => String(h).trim(),
+  );
+  const skuIdx = colByHeader(headers, "sku");
+  const lastCol = colLetter(headers.length - 1);
+  const endRow = startSheetRow + count - 1;
+
+  const deadline = Date.now() + timeoutMs;
+  let delay = 800;
+
+  while (Date.now() < deadline) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `variants!A${startSheetRow}:${lastCol}${endRow}`,
+    });
+    const rows = (res.data.values ?? []) as string[][];
+    if (rows.length === count) {
+      const skus = rows.map((r) => String(r[skuIdx] ?? "").trim());
+      if (skus.every((s) => s)) return skus;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(Math.floor(delay * 1.5), 4000);
+  }
+
+  throw new Error(
+    `Timeout waiting for variant SKU formulas at rows ${startSheetRow}–${endRow}`,
+  );
+}
+
+export async function createVariantRows(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  productId: string,
+  variants: Array<{
+    color?: string;
+    size?: string;
+    designVariant?: string;
+    priceVariant?: string;
+    weightOzVariant?: string;
+    stockQty?: number;
+  }>,
+): Promise<{ skus: string[] }> {
+  if (!variants.length) return { skus: [] };
+
+  const selectProductValue = await lookupSelectProduct(sheets, spreadsheetId, productId);
+
+  const variantsData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "variants_values",
+  });
+  const values = variantsData.data.values ?? [];
+  if (!values.length) throw new Error("variants sheet returned no data");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const colIdx = (name: string) => headers.indexOf(name);
+  const startSheetRow = values.length + 1;
+
+  const spIdx = colIdx("select_product");
+  if (spIdx === -1) throw new Error('variants sheet missing "select_product" column');
+
+  const rowData: string[][] = variants.map(
+    ({ color, size, designVariant, priceVariant, weightOzVariant }) => {
+      const row = new Array(headers.length).fill("");
+      row[spIdx] = selectProductValue;
+      const ci = colIdx("color"); if (ci >= 0 && color) row[ci] = color;
+      const si = colIdx("size"); if (si >= 0 && size) row[si] = size;
+      const di = colIdx("design_variant"); if (di >= 0 && designVariant) row[di] = designVariant;
+      const pi = colIdx("price_variant"); if (pi >= 0 && priceVariant) row[pi] = priceVariant;
+      const wi = colIdx("weight_oz_variant"); if (wi >= 0 && weightOzVariant) row[wi] = weightOzVariant;
+      const ri = colIdx("row_id"); if (ri >= 0) row[ri] = crypto.randomUUID();
+      return row;
+    },
+  );
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: [{ range: `variants!A${startSheetRow}`, values: rowData }],
+    },
+  });
+
+  const skus = await pollForVariantSkus(sheets, spreadsheetId, startSheetRow, variants.length);
+
+  const invState = await loadInventoryIndexState(sheets, spreadsheetId);
+  const invUpdates = skus.map((sku, i) => {
+    const fields: Record<string, number | string> = {};
+    if (variants[i].stockQty !== undefined) fields.stock_qty = variants[i].stockQty as number;
+    return { sku, fields };
+  });
+  await Promise.all([
+    Promise.all(skus.map((sku) => ensureDescriptionsRow(sheets, spreadsheetId, sku))),
+    ensureInventoryIndexRowsExist(sheets, spreadsheetId, invState, invUpdates, new Map()),
+  ]);
+
+  return { skus };
 }
 
 // sessions headers:       timestamp | email | name | role | action | env

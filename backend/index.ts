@@ -14,9 +14,11 @@ import type {
 } from "~/types/catalog";
 import type { AuthUser } from "~/types/user";
 import {
+  appendRefEntry,
   buildConflictGroups,
   computeProductSyncHash,
   createProductRow,
+  createVariantRows,
   deleteProduct,
   ensureDescriptionsRow,
   pollForProductSku,
@@ -27,6 +29,7 @@ import {
   writeProductSyncHashes,
   writeSheetLog,
 } from "./catalogManager";
+import type { RefAddType } from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
@@ -493,6 +496,27 @@ app.get("/api/catalog/get_meta", async (req: Request, res: Response) => {
   }
 });
 
+const VALID_REF_TYPES = new Set<RefAddType>([
+  "color", "size", "dimension", "graphicsVariant", "graphic", "style",
+]);
+
+app.post("/api/catalog/ref/add", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { type, value, code } = req.body as { type?: string; value?: string; code?: string };
+    if (!type || !VALID_REF_TYPES.has(type as RefAddType)) {
+      return res.status(400).json({ ok: false, error: "Invalid ref type" });
+    }
+    if (!value?.trim()) {
+      return res.status(400).json({ ok: false, error: "Value is required" });
+    }
+    const { sheets, spreadsheetId } = getSheets();
+    const entry = await appendRefEntry(sheets, spreadsheetId, type as RefAddType, value.trim(), code?.trim());
+    return res.status(200).json({ ok: true, ...entry });
+  } catch (error: any) {
+    return res.status(400).json({ ok: false, error: error?.message || "Failed to add ref entry" });
+  }
+});
+
 app.post(
   "/api/catalog/create_product",
   requireAuth,
@@ -567,6 +591,67 @@ app.delete(
     } catch (error: any) {
       console.error("DELETE /api/catalog/product/:sku failed:", error);
       return res.status(500).json({ ok: false, error: error?.message || "Failed to delete product" });
+    }
+  },
+);
+
+app.post(
+  "/api/catalog/product/:sku/variants",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const parentSku = req.params.sku?.trim();
+      if (!parentSku) return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const body = req.body as {
+        productId?: string;
+        colors?: string[];
+        sizes?: string[];
+        priceVariant?: string;
+        weightOzVariant?: string;
+        designVariant?: string;
+        stockQty?: number;
+      };
+
+      const productId = body.productId?.trim();
+      if (!productId) return res.status(400).json({ ok: false, error: "Missing productId" });
+
+      const colors = Array.isArray(body.colors) ? body.colors.filter(Boolean) : [];
+      const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
+      if (!colors.length && !sizes.length) {
+        return res.status(400).json({ ok: false, error: "Must provide at least one color or size" });
+      }
+
+      const shared = {
+        priceVariant: body.priceVariant || undefined,
+        weightOzVariant: body.weightOzVariant || undefined,
+        designVariant: body.designVariant || undefined,
+        stockQty: body.stockQty !== undefined ? Number(body.stockQty) : undefined,
+      };
+
+      const variants =
+        colors.length && sizes.length
+          ? colors.flatMap((color) => sizes.map((size) => ({ color, size, ...shared })))
+          : colors.length
+            ? colors.map((color) => ({ color, ...shared }))
+            : sizes.map((size) => ({ size, ...shared }));
+
+      const { sheets, spreadsheetId } = getSheets();
+      const result = await createVariantRows(sheets, spreadsheetId, productId, variants);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "create_variants",
+        `parentSku=${parentSku} count=${result.skus.length} skus=${result.skus.join(",")}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(201).json({ ok: true, skus: result.skus });
+    } catch (error: any) {
+      console.error("POST /api/catalog/product/:sku/variants failed:", error);
+      return res.status(500).json({ ok: false, error: error?.message || "Failed to create variants" });
     }
   },
 );

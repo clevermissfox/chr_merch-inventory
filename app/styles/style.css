@@ -40,10 +40,10 @@
 
   --clr-surface-primary: var(--clr-neutral-900);
   --clr-surface-secondary: oklch(
-    from var(--clr-surface-primary) calc(l + 0.01) c h
+    from var(--clr-surface-primary) calc(l + 0.03) c h
   );
   --clr-surface-tertiary: oklch(
-    from var(--clr-surface-secondary) calc(l + 0.01) c h
+    from var(--clr-surface-secondary) calc(l + 0.02) c h
   );
 
   --clr-bg-body: var(--clr-primary);
@@ -63,6 +63,7 @@
   --spacing-075: 0.75rem;
   --spacing-050: 0.5rem;
   --spacing-025: 0.25rem;
+  --spacing-0125: 0.125rem;
 
   --br-400: 0.25rem;
   --br-700: 0.75rem;
@@ -101,7 +102,7 @@
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
   outline-color: var(--clr-accent);
-  outline-offset: 0.2em;
+  outline-offset: 0.2rem;
 }
 
 ::selection {
@@ -292,6 +293,12 @@ a {
     opacity var(--default-trans-dur) var(--default-timing);
 }
 
+:is(button, a) > svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
 button {
   border: var(--default-border);
   border-color: var(--_clr-btn-border, transparent);
@@ -299,7 +306,8 @@ button {
   background: var(--_clr-btn-bg);
   color: var(--_clr-btn-txt);
   padding: var(--_btn-padding);
-  font-weight: var(--fw-500);
+  font-size: var(--_btn-font-size);
+  font-weight: var(--_btn-font-weight, var(--fw-500));
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -334,7 +342,6 @@ button:disabled {
 }
 
 .btn-icon {
-  --_clr-btn-border: var(--clr-border-soft);
   --_btn-padding: var(--spacing-025, 0.25rem);
   aspect-ratio: 1;
   inline-size: 3ch;
@@ -361,5 +368,48 @@ button:disabled {
 
   &:is(:hover, :focus-visible) {
     --_clr-btn-border: var(--clr-border-soft);
+  }
+}
+
+.btn-ghost {
+  --_clr-btn-bg: transparent;
+  --_clr-btn-border: transparent;
+  --_clr-btn-txt: var(--clr-text-muted);
+  --_btn-padding: var(--spacing-025) var(--spacing-025);
+
+  &:is(:hover, :focus-visible) {
+    --_clr-btn-bg: var(--clr-surface-secondary);
+    --_clr-btn-txt: var(--clr-text-primary);
+  }
+}
+
+.input-wrapper {
+  display: grid;
+  grid-template-columns: [input-start] 1fr [icon-start] auto [icon-end input-end];
+  padding-inline-start: var(--spacing-050);
+  border: var(--default-border);
+  border-color: currentColor;
+  border-radius: var(--default-br);
+  outline-offset: unset;
+
+  & > input {
+    grid-area: input;
+    border: none;
+    outline: none;
+  }
+  & > button[type="submit"] {
+    grid-area: icon;
+    border: none;
+    border-radius: 0;
+    display: grid;
+    place-content: center;
+    padding: var(--spacing-050, 0.5rem);
+    outline-offset: unset;
+    font-size: var(--fs-500, 1.25rem);
+  }
+
+  &:has(:focus-within) {
+    outline-width: 0.1em;
+    outline-style: solid;
   }
 }

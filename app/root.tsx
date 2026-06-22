@@ -24,14 +24,6 @@ export const links: Route.LinksFunction = () => [
     href: "https://api.fonts.coollabs.io/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@400;500;600;700&family=PT+Sans:wght@400;700&family=Roboto:ital,wght@0,100..900;1,100..900&display=swap",
   },
   {
-    rel: "stylesheet",
-    href: "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css",
-  },
-  {
-    rel: "stylesheet",
-    href: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css",
-  },
-  {
     rel: "apple-touch-icon",
     sizes: "180x180",
     href: "/apple-touch-icon.png",

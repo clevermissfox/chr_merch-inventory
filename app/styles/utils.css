@@ -12,6 +12,10 @@
   visibility: hidden;
 }
 
+.rotate {
+  animation: rotation 1s linear infinite;
+}
+
 /* TEXT UTILITIES */
 .xsmall {
   font-size: var(--fs-xsmall, 0.75em);

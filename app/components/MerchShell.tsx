@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useMatches } from "react-router";
 import { useAuth } from "~/context/AuthContext";
-import UserProfileDialog from "./UserProfileDialog";
+import DialogUserProfile from "./DialogUserProfile";
+import { LogOut, User } from "lucide-react";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -75,7 +76,12 @@ export function MerchShell({ children }: MerchShellProps) {
   return (
     <div className="merch-page">
       <header className="merch-topbar surface-primary ">
-        <div className="wrapper grid gap-1 padding-i-default padding-b-2">
+        <div
+          className="wrapper grid gap-1 padding-i-default padding-b-2"
+          style={
+            { "--default-max-inline-size": "140ch" } as React.CSSProperties
+          }
+        >
           <div className="row jc-sb gap-1">
             <div className="merch-brand">
               <div className="merch-brand__meta grid gap-quarter">
@@ -89,7 +95,11 @@ export function MerchShell({ children }: MerchShellProps) {
               popoverTarget="popover-user-menu"
             >
               {user?.picture && !imgError ? (
-                <img src={user.picture} alt="" onError={() => setImgError(true)} />
+                <img
+                  src={user.picture}
+                  alt=""
+                  onError={() => setImgError(true)}
+                />
               ) : (
                 <span className="bold clr-inverse">{userInitials}</span>
               )}
@@ -107,7 +117,7 @@ export function MerchShell({ children }: MerchShellProps) {
                     className="row ai-cen gap-quarter"
                     onClick={openProfile}
                   >
-                    <i className="bi bi-person" aria-hidden="true"></i>
+                    <User aria-hidden="true" />
                     <span>Profile</span>
                   </button>
                 </li>
@@ -119,7 +129,7 @@ export function MerchShell({ children }: MerchShellProps) {
                     aria-label="Logout"
                     title="Logout"
                   >
-                    <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
+                    <LogOut aria-hidden="true" />
                     <span>Logout</span>
                   </button>
                 </li>
@@ -145,21 +155,33 @@ export function MerchShell({ children }: MerchShellProps) {
 
       <main className="merch-stage wrapper grid gap-1 margin-b-1">
         <section className="merch-hero card">
-          <div>
-            {routeEyebrow && (
-              <p className="merch-hero__eyebrow">{routeEyebrow}</p>
+          <div className="col jc-sb gap-1">
+            <div>
+              {routeEyebrow && (
+                <p className="merch-hero__eyebrow">{routeEyebrow}</p>
+              )}
+              <h2 className="merch-hero__title">{routeTitle}</h2>
+              {routeKicker ? (
+                <p className="merch-hero__kicker">{routeKicker}</p>
+              ) : null}
+            </div>
+            {user && (
+              <div className="merch-hero__user">
+                <div className="badge">
+                  {user.canEdit ? "Editor Access" : "View Access"}
+                </div>
+                <p className="small clr-muted">
+                  {user.email ?? "Authorized user"}
+                </p>
+              </div>
             )}
-            <h2 className="merch-hero__title">{routeTitle}</h2>
-            {routeKicker ? (
-              <p className="merch-hero__kicker">{routeKicker}</p>
-            ) : null}
           </div>
         </section>
         {children && <div className="merch-content">{children}</div>}
       </main>
 
       {showProfile && user && (
-        <UserProfileDialog onClose={() => setShowProfile(false)} />
+        <DialogUserProfile onClose={() => setShowProfile(false)} />
       )}
     </div>
   );

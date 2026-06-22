@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import type { Route } from "./+types/merch.products";
 import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
-import CreateProductDialog from "~/components/CreateProductDialog";
-import ConfirmDeleteDialog from "~/components/ConfirmDeleteDialog";
+import DialogCreateProduct from "~/components/DialogCreateProduct";
+import DialogConfirm from "~/components/DialogConfirm";
+import type { DialogConfirmStatus } from "~/components/DialogConfirm";
+import DialogCreateVariant from "~/components/DialogCreateVariant";
 import type { CatalogGroup } from "~/types/catalog";
+import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -22,67 +25,175 @@ export const handle = {
   eyebrow: "Manage products",
 };
 
+function truncate(str: string | null | undefined, len: number): string | null {
+  if (!str) return null;
+  return str.length > len ? str.slice(0, len) + "…" : str;
+}
+
 interface ProductGroupProps {
   group: CatalogGroup;
   canEdit: boolean;
   onDeleteRequest: (group: CatalogGroup) => void;
+  onAddVariantsRequest: (group: CatalogGroup) => void;
 }
 
-function ProductGroup({ group, canEdit, onDeleteRequest }: ProductGroupProps) {
+function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }: ProductGroupProps) {
+  const isSimple = group.rowCount === 0;
+
   return (
-    <details className="inventory-group card" open={false}>
+    <details className="toggle-group card">
       <summary>
         <div className="summary-title">
           <strong>{group.displayName}</strong>
           <span className="summary-count">
-            {group.rowCount} variant{group.rowCount !== 1 ? "s" : ""}
+            {isSimple
+              ? "Simple product"
+              : `${group.rowCount} SKU${group.rowCount !== 1 ? "s" : ""}`}
           </span>
         </div>
         <span className="toggle-label">Toggle</span>
       </summary>
 
-      <div className="table-wrapper">
-        <table className="inventory-table">
-          <thead>
-            <tr>
-              <th>SKU</th>
-              <th>Variant</th>
-              <th>Price</th>
-              <th className="ta-cen">Stock</th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.rows.map((row) => (
-              <tr key={row.sku}>
-                <td className="sku-cell">{row.sku}</td>
-                <td className="variant-cell">{row.label}</td>
-                <td>${row.priceDollars}</td>
-                <td className="ta-cen">{row.stockQty ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="product-body row fw-wrap gap-1">
+        <div className="product-info flex-1 padding-b-three-forths padding-i-1quarter">
+          <dl className="product-meta">
+            <div>
+              <dt>SKU</dt>
+              <dd>{group.sku}</dd>
+            </div>
+            <div>
+              <dt>Category</dt>
+              <dd>
+                {group.category} · {group.subcategory}
+              </dd>
+            </div>
+            <div>
+              <dt>Price</dt>
+              <dd>{group.basePriceDollars || "—"}</dd>
+            </div>
+            {group.weightOz && (
+              <div>
+                <dt>Weight</dt>
+                <dd>{group.weightOz}oz</dd>
+              </div>
+            )}
+            {group.design && (
+              <div>
+                <dt>Design</dt>
+                <dd>{group.design}</dd>
+              </div>
+            )}
+            {isSimple && (
+              <div>
+                <dt>Warehouse Stock</dt>
+                <dd>{group.stockQty ?? "—"}</dd>
+              </div>
+            )}
+          </dl>
+
+          {group.primaryDescription && (
+            <div className="product-desc">
+              <span className="product-desc__label">Description</span>
+              <p>{truncate(group.primaryDescription, 120)}</p>
+            </div>
+          )}
+          {group.shortDescription && (
+            <div className="product-desc">
+              <span className="product-desc__label">Short Description</span>
+              <p>{truncate(group.shortDescription, 120)}</p>
+            </div>
+          )}
+        </div>
+
+        {canEdit && (
+          <div className="product-actions">
+            {isSimple && (
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => onAddVariantsRequest(group)}
+              >
+                <Plus aria-hidden="true" />
+                <span>Add Variants</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-secondary row gap-half ai-cen"
+              disabled
+            >
+              <Pencil aria-hidden="true" />
+              <span>Edit</span>
+            </button>
+            <button
+              type="button"
+              className="btn-danger row gap-half ai-cen"
+              onClick={() => onDeleteRequest(group)}
+            >
+              <Trash2 aria-hidden="true" />
+              <span>Delete</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {canEdit && (
-        <div className="row gap-half jc-end padding-b-half">
-          <button
-            type="button"
-            className="btn-secondary row gap-half"
-            disabled
-          >
-            <i className="bi bi-pencil" aria-hidden="true" />
-            Edit
-          </button>
-          <button
-            type="button"
-            className="btn-danger row gap-half"
-            onClick={() => onDeleteRequest(group)}
-          >
-            <i className="bi bi-trash" aria-hidden="true" />
-            Delete
-          </button>
-        </div>
+      {!isSimple && (
+        <details className="variants-group">
+          <summary className="row ai-cen jc-sb gap-1 padding-b-three-forths padding-i-1quarter">
+            <span className="small">
+              {group.rowCount} variant{group.rowCount !== 1 ? "s" : ""}
+            </span>
+            <span className="toggle-label small">Toggle</span>
+          </summary>
+
+          <div className="table-wrapper">
+            <table className="inventory-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Details</th>
+                  <th>Price</th>
+                  <th>Warehouse Stock</th>
+                  <th>Weight (oz)</th>
+                  <th>Description</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.rows.map((row) => (
+                  <tr key={row.sku}>
+                    <td className="sku-cell">{row.sku}</td>
+                    <td>{row.label}</td>
+                    <td>{row.priceDollars || "—"}</td>
+                    <td className="ta-cen">{row.stockQty ?? "—"}</td>
+                    <td>{row.weightOzVariant ?? row.baseWeightOz ?? "—"}</td>
+                    <td className="clr-muted">
+                      {truncate(row.descriptionVariant, 30) ?? "—"}
+                    </td>
+                    <td className="variant-actions">
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        aria-label="Edit variant"
+                        disabled
+                      >
+                        <Pencil aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        aria-label="Delete variant"
+                        disabled
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
     </details>
   );
@@ -96,9 +207,11 @@ export default function ProductsPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [lastCreated, setLastCreated] = useState<string | null>(null);
+  const [lastDeleted, setLastDeleted] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CatalogGroup | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deleteStatus, setDeleteStatus] = useState<DialogConfirmStatus>("idle");
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [pendingAddVariants, setPendingAddVariants] = useState<CatalogGroup | null>(null);
 
   useEffect(() => {
     if (!catalog && !loading) {
@@ -109,12 +222,13 @@ export default function ProductsPage() {
   const handleCreated = (sku: string) => {
     setShowCreate(false);
     setLastCreated(sku);
+    setLastDeleted(null);
     loadCatalog();
   };
 
   const handleDeleteConfirm = async () => {
     if (!pendingDelete) return;
-    setDeleting(true);
+    setDeleteStatus("confirming");
     setDeleteError(null);
 
     try {
@@ -125,12 +239,15 @@ export default function ProductsPage() {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Delete failed");
 
+      setDeleteStatus("success");
+      setLastDeleted(pendingDelete.sku);
+      setLastCreated(null);
+      await loadCatalog();
       setPendingDelete(null);
-      loadCatalog();
+      setDeleteStatus("idle");
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setDeleting(false);
+      setDeleteStatus("idle");
     }
   };
 
@@ -138,50 +255,20 @@ export default function ProductsPage() {
     ? "Loading catalog…"
     : lastCreated
       ? `Created — new SKU: ${lastCreated}`
-      : deleteError
-        ? deleteError
+      : lastDeleted
+        ? `Deleted — SKU: ${lastDeleted}`
         : error
           ? error
           : catalog
             ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
             : "";
 
-  const statusTone = error || deleteError ? "error" : undefined;
+  const statusTone = error ? "error" : undefined;
 
   return (
     <>
-      <section className="toolbar grid gap-1 card">
-        <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
-          <div>
-            <div className="badge">
-              {canEdit ? "Editor Access" : "View Access"}
-            </div>
-            <div className="small">{user?.email ?? "Authorized user"}</div>
-          </div>
-
-          {canEdit && (
-            <div className="toolbar-actions row gap-1 fw-wrap ai-cen">
-              <button
-                type="button"
-                className="btn-primary row gap-half jc-cen"
-                onClick={() => setShowCreate(true)}
-                disabled={loading}
-              >
-                <i className="bi bi-plus-lg" aria-hidden="true" />
-                New Product
-              </button>
-              <button
-                type="button"
-                className="btn-secondary row gap-half jc-cen"
-              >
-                <i className="bi bi-arrow-clockwise" aria-hidden="true" />
-                Refresh
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
+      <section className="toolbar card">
+        <div className="row gap-1 jc-sb ai-cen fw-wrap">
           <div
             className="status-line"
             role={statusTone === "error" ? "alert" : "status"}
@@ -190,40 +277,94 @@ export default function ProductsPage() {
             <span>{statusMessage}</span>
             {loading && <span className="loader" />}
           </div>
+
+          {canEdit && (
+            <div className="row gap-1 fw-wrap ai-cen">
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => loadCatalog()}
+                disabled={loading}
+              >
+                <RefreshCw aria-hidden="true" />
+                <span>Refresh</span>
+              </button>
+              <button
+                type="button"
+                className="btn-primary row gap-half ai-cen"
+                onClick={() => setShowCreate(true)}
+                disabled={loading}
+              >
+                <Plus aria-hidden="true" />
+                <span>New Product</span>
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
       {catalog && (
-        <section className="inventory-groups">
+        <section className="grid gap-1">
           {catalog.groups.map((group) => (
             <ProductGroup
               key={group.productId}
               group={group}
               canEdit={canEdit}
               onDeleteRequest={setPendingDelete}
+              onAddVariantsRequest={setPendingAddVariants}
             />
           ))}
         </section>
       )}
 
       {showCreate && (
-        <CreateProductDialog
+        <DialogCreateProduct
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
         />
       )}
 
-      {pendingDelete && (
-        <ConfirmDeleteDialog
-          displayName={pendingDelete.displayName}
-          sku={pendingDelete.sku}
-          variantCount={pendingDelete.rowCount}
-          deleting={deleting}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => {
-            if (!deleting) setPendingDelete(null);
+      {pendingAddVariants && (
+        <DialogCreateVariant
+          group={pendingAddVariants}
+          onClose={() => setPendingAddVariants(null)}
+          onCreated={(skus) => {
+            setPendingAddVariants(null);
+            setLastCreated(skus[0] ?? null);
+            setLastDeleted(null);
+            loadCatalog();
           }}
         />
+      )}
+
+      {pendingDelete && (
+        <DialogConfirm
+          title="Delete product?"
+          confirmLabel="Delete"
+          confirmingLabel="Deleting…"
+          confirmVariant="danger"
+          status={deleteStatus}
+          successMessage="Deleted — reloading catalog…"
+          error={deleteError}
+          onConfirm={() => void handleDeleteConfirm()}
+          onCancel={() => setPendingDelete(null)}
+        >
+          <p className="small">
+            <strong>{pendingDelete.displayName}</strong>
+            <span className="clr-muted"> · {pendingDelete.sku}</span>
+          </p>
+          <p className="small clr-muted">
+            This will permanently remove the product
+            {pendingDelete.rowCount > 0
+              ? `, its ${pendingDelete.rowCount} variant${pendingDelete.rowCount !== 1 ? "s" : ""},`
+              : ","}{" "}
+            its descriptions, and its inventory index entries from the sheet.
+          </p>
+          <p className="small clr-warning">
+            This does not remove the product from the website. Archive or delete
+            it in WooCommerce separately.
+          </p>
+        </DialogConfirm>
       )}
     </>
   );

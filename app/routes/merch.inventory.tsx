@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/merch.inventory";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
-import ConfirmSyncDialog from "~/components/ConfirmSyncDialog";
+import DialogConfirm from "~/components/DialogConfirm";
 import type { CatalogGroup } from "~/types/catalog";
+import { ArrowDownUp, RefreshCw } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -72,7 +73,7 @@ export default function InventoryPage() {
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
 
   const [selectMode, setSelectMode] = useState(false);
-  const [selectedMode, setSelectedMode] = useState("");
+  const [selectedMode, setSelectedMode] = useState("sync_all");
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -82,6 +83,14 @@ export default function InventoryPage() {
       void loadCatalog();
     }
   }, [state.catalog, state.loading, loadCatalog]);
+
+  useEffect(() => {
+    if (state.catalog && selectedMode === "sync_all") {
+      setSelectedSkus(
+        new Set(state.catalog.groups.flatMap((g) => g.rows.map((r) => r.sku))),
+      );
+    }
+  }, [state.catalog]);
 
   if (state.loading && !state.catalog) {
     return (
@@ -242,74 +251,67 @@ export default function InventoryPage() {
       </section>
 
       <section className="toolbar grid gap-1 card">
-        <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
-          <div>
-            <div className="badge">
-              {canEdit ? "Editor Access" : "View Access"}
-            </div>
-            <div className="small">
-              {user?.email ?? "Authorized user"}
-              {user?.role ? ` (${user.role})` : ""}
-            </div>
-          </div>
-
-          <div className="toolbar-actions row fw-wrap gap-1 ai-st">
-            {canEdit && (
-              <form className="select-mode-form">
-                <div className="form-group">
-                  <label className="bold ls-1" htmlFor="select-mode">
-                    Select edit mode:
-                  </label>
-                  <select
-                    className="select-mode"
-                    id="select-mode"
-                    size={4}
-                    value={selectedMode}
-                    onChange={handleSelectMode}
-                    disabled={state.loading || state.saving}
+        <div className="toolbar-actions row fw-wrap gap-1 ai-st">
+          {canEdit && (
+            <form className="form-select-mode">
+              <div className="form-group">
+                <label className="bold ls-1" htmlFor="select-mode">
+                  Select edit mode:
+                </label>
+                <select
+                  className="select-mode"
+                  id="select-mode"
+                  size={4}
+                  value={selectedMode}
+                  onChange={handleSelectMode}
+                  disabled={state.loading || state.saving}
+                >
+                  <option value="sync_all">Sync All</option>
+                  <option value="standard_sync" disabled={!hasDirtyChanges}>
+                    Sync Changes
+                  </option>
+                  <option
+                    value="resolve_conflicts"
+                    disabled={catalog.summary.conflictGroups.length === 0}
                   >
-                    <option value="sync_all">Sync All</option>
-                    <option value="standard_sync" disabled={!hasDirtyChanges}>
-                      Sync Changes
-                    </option>
-                    <option
-                      value="resolve_conflicts"
-                      disabled={catalog.summary.conflictGroups.length === 0}
-                    >
-                      Resolve Conflicts
-                    </option>
-                    <option value="custom_selection">Custom Selection</option>
-                  </select>
-                </div>
-                <div className="form-group row gap-1 fw-wrap  w-100">
-                  <button
-                    type="button"
-                    className="btn-secondary row gap-half jc-cen"
-                    onClick={() => void loadCatalog()}
-                    disabled={state.loading || state.saving}
-                  >
-                    <i className="bi bi-arrow-clockwise" aria-hidden="true" />
+                    Resolve Conflicts
+                  </option>
+                  <option value="custom_selection">Custom Selection</option>
+                </select>
+              </div>
+              <div className="form-group row gap-1 fw-wrap w-100">
+                <button
+                  type="button"
+                  className="btn-secondary flex-1 row gap-half jc-cen ai-cen"
+                  onClick={() => void loadCatalog()}
+                  disabled={state.loading || state.saving}
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={state.loading ? "rotate" : ""}
+                  />
+                  <span>
                     {state.loading
                       ? "Refreshing..."
                       : "Refresh Current Website Stock"}
-                  </button>
+                  </span>
+                </button>
 
-                  <button
-                    type="submit"
-                    className="btn-primary flex-1 row gap-half jc-cen"
-                    disabled={selectedSkus.size === 0 || state.saving}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setShowConfirm(true);
-                    }}
-                  >
-                    <i className="bi bi-arrow-down-up" aria-hidden="true" />
-                    Push Stock({selectedSkus.size})
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
+                <button
+                  type="submit"
+                  className="btn-primary flex-1 row gap-half jc-cen ai-cen"
+                  disabled={selectedSkus.size === 0 || state.saving}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setShowConfirm(true);
+                  }}
+                >
+                  <ArrowDownUp aria-hidden="true" />
+                  <span>Push Stock({selectedSkus.size})</span>
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
@@ -324,7 +326,7 @@ export default function InventoryPage() {
         </div>
       </section>
 
-      <section className="inventory-groups">
+      <section className="grid gap-1">
         {catalog.groups.map((group, i) => {
           const groupSkus = group.rows.map((r) => r.sku);
           const selectedInGroup = groupSkus.filter((sku) =>
@@ -337,7 +339,7 @@ export default function InventoryPage() {
           return (
             <details
               key={group.productId}
-              className="inventory-group card"
+              className="toggle-group inventory-group card"
               open={i === 0}
             >
               <summary>
@@ -481,14 +483,30 @@ export default function InventoryPage() {
       </section>
 
       {showConfirm && (
-        <ConfirmSyncDialog
-          groups={confirmGroups}
-          totalSkus={selectedSkus.size}
-          saving={state.saving}
-          wooSiteUrl={catalog.summary.wooSiteUrl}
+        <DialogConfirm
+          title="Push stock to website"
+          confirmLabel={`Push ${selectedSkus.size} SKU${selectedSkus.size !== 1 ? "s" : ""}`}
+          confirmingLabel="Pushing…"
+          confirmVariant="primary"
+          status={state.saving ? "confirming" : "idle"}
           onConfirm={() => void handleConfirmPush()}
           onCancel={() => setShowConfirm(false)}
-        />
+        >
+          <p className="small clr-muted">
+            These products will be updated on{" "}
+            {catalog.summary.wooSiteUrl ?? "CHR website"}:
+          </p>
+          <ul className="dialog-confirm-list" role="list">
+            {confirmGroups.map((g) => (
+              <li key={g.displayName} className="dialog-confirm-item">
+                <span>{g.displayName}</span>
+                <span className="dialog-confirm-count">
+                  {g.skuCount} SKU{g.skuCount !== 1 ? "s" : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </DialogConfirm>
       )}
     </>
   );

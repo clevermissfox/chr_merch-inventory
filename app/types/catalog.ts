@@ -136,6 +136,21 @@ export interface CreateProductResult {
   sheetRow: number;
 }
 
+export interface NewVariantFields {
+  productId: string;
+  colors: string[];
+  sizes: string[];
+  priceVariant?: string;
+  weightOzVariant?: string;
+  designVariant?: string;
+  stockQty?: number;
+}
+
+export interface CreateVariantsResult {
+  ok: true;
+  skus: string[];
+}
+
 export interface ProductSheetRow {
   product_id: string;
   woo_id: string;
