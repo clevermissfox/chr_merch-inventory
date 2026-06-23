@@ -14,11 +14,13 @@ import type {
 } from "~/types/catalog";
 import type { AuthUser } from "~/types/user";
 import {
+  appendCategoryEntry,
   appendRefEntry,
   buildConflictGroups,
   computeProductSyncHash,
   createProductRow,
   createVariantRows,
+  createWooCategory,
   deleteProduct,
   ensureDescriptionsRow,
   pollForProductSku,
@@ -304,6 +306,38 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
   });
 });
 
+// Lightweight catalog load — sheets only, no Woo calls
+app.get("/api/catalog", async (req: Request, res: Response) => {
+  try {
+    const { sheets, spreadsheetId } = getSheets();
+
+    const response = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: ["products_values", "variants_values"],
+    });
+
+    const valueRanges = response.data.valueRanges ?? [];
+    const productRows = rowsToObjects<ProductSheetRow>(
+      valueRanges[0]?.values ?? [],
+    );
+    const variantRows = rowsToObjects<VariantSheetRow>(
+      valueRanges[1]?.values ?? [],
+    );
+
+    const payload: CatalogPayload = {
+      ...shapeToCatalogPayload(productRows, variantRows),
+      generatedAt: new Date().toISOString(),
+    };
+
+    return res.json(payload);
+  } catch (error: any) {
+    console.error("GET /api/catalog failed:", error);
+    return res
+      .status(500)
+      .json({ ok: false, error: error?.message || "Failed to load catalog" });
+  }
+});
+
 // Get all products/variants, shape to catalog, call woo for current website stock values, write those to inventory_index, patch update catalogs woo_stock
 app.get(
   "/api/catalog/inventory/get_stock",
@@ -445,9 +479,10 @@ app.post(
       // Write last_hash + last_synced_at for every product that had SKUs pushed
       const pushedSkuSet = new Set(wooResult.updatedSkus);
       const hashEntries = catalog.groups
-        .filter((g) =>
-          (g.sku && pushedSkuSet.has(g.sku)) ||
-          g.rows.some((r) => pushedSkuSet.has(r.sku)),
+        .filter(
+          (g) =>
+            (g.sku && pushedSkuSet.has(g.sku)) ||
+            g.rows.some((r) => pushedSkuSet.has(r.sku)),
         )
         .map((g) => ({ sku: g.sku, hash: computeProductSyncHash(g) }));
 
@@ -492,30 +527,119 @@ app.get("/api/catalog/get_meta", async (req: Request, res: Response) => {
     return res.status(200).json({ ok: true, ...refData });
   } catch (error: any) {
     console.error("GET /api/catalog/get_meta failed:", error);
-    return res.status(500).json({ ok: false, error: error?.message || "Failed to load reference data" });
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to load reference data",
+    });
   }
 });
 
 const VALID_REF_TYPES = new Set<RefAddType>([
-  "color", "size", "dimension", "graphicsVariant", "graphic", "style",
+  "color",
+  "size",
+  "dimension",
+  "graphicsVariant",
+  "graphic",
+  "style",
 ]);
 
-app.post("/api/catalog/ref/add", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { type, value, code } = req.body as { type?: string; value?: string; code?: string };
-    if (!type || !VALID_REF_TYPES.has(type as RefAddType)) {
-      return res.status(400).json({ ok: false, error: "Invalid ref type" });
+app.post(
+  "/api/catalog/ref/add",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { type, value, code, label, parentWooId } = req.body as {
+        type?: string;
+        value?: string;
+        code?: string;
+        label?: string;
+        parentWooId?: number;
+      };
+
+      if (!value?.trim()) {
+        return res.status(400).json({ ok: false, error: "Value is required" });
+      }
+
+      const CODED_TYPES = new Set(["color","size","dimension","graphicsVariant","category","subcategory"]);
+      if (CODED_TYPES.has(type ?? "") && !code?.trim()) {
+        return res.status(400).json({ ok: false, error: "Code is required" });
+      }
+      const safeCode = code?.trim() ?? "";
+
+      const { sheets, spreadsheetId } = getSheets();
+
+      const actor = req.session?.user;
+      const actorEmail = actor?.email ?? "unknown";
+
+      if (type === "category" || type === "subcategory") {
+        if (type === "subcategory" && parentWooId == null) {
+          return res.status(400).json({
+            ok: false,
+            error: "parentWooId is required for subcategory",
+          });
+        }
+        const normalizedValue = value.trim().toLowerCase();
+        // label is the sheet display name for subcategories (user-provided, may include capitals/symbols)
+        // Woo name + slug are always the lowercase normalizedValue
+        const sheetLabel = label?.trim() || normalizedValue;
+        const display = type === "category" ? "default" : "subcategories";
+        const wooId = await createWooCategory(
+          normalizedValue,
+          type === "subcategory" ? (parentWooId ?? null) : null,
+          display,
+        );
+        await appendCategoryEntry(
+          sheets,
+          spreadsheetId,
+          type,
+          normalizedValue,
+          safeCode,
+          wooId,
+          sheetLabel,
+        );
+        writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+          new Date().toISOString(),
+          actorEmail,
+          `ref_add_${type}`,
+          `value=${normalizedValue} label=${sheetLabel} code=${safeCode.toUpperCase()} wooId=${wooId}${type === "subcategory" ? ` parentWooId=${parentWooId}` : ""}`,
+          TARGET_ENV,
+        ]).catch((e) => console.error("log failed:", e));
+        return res.status(200).json({
+          ok: true,
+          value: normalizedValue,
+          code: safeCode.toUpperCase(),
+          wooId,
+          label: sheetLabel,
+        });
+      }
+
+      if (!VALID_REF_TYPES.has(type as RefAddType)) {
+        return res.status(400).json({ ok: false, error: "Invalid ref type" });
+      }
+      const entry = await appendRefEntry(
+        sheets,
+        spreadsheetId,
+        type as RefAddType,
+        value.trim().toLowerCase(),
+        code?.trim(),
+      );
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actorEmail,
+        `ref_add_${type}`,
+        `value=${entry.value} code=${entry.code ?? ""}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+      return res.status(200).json({ ok: true, ...entry });
+    } catch (error: any) {
+      console.error("POST /api/catalog/ref/add failed:", error);
+      return res.status(400).json({
+        ok: false,
+        error: error?.message || "Failed to add ref entry",
+      });
     }
-    if (!value?.trim()) {
-      return res.status(400).json({ ok: false, error: "Value is required" });
-    }
-    const { sheets, spreadsheetId } = getSheets();
-    const entry = await appendRefEntry(sheets, spreadsheetId, type as RefAddType, value.trim(), code?.trim());
-    return res.status(200).json({ ok: true, ...entry });
-  } catch (error: any) {
-    return res.status(400).json({ ok: false, error: error?.message || "Failed to add ref entry" });
-  }
-});
+  },
+);
 
 app.post(
   "/api/catalog/create_product",
@@ -528,7 +652,8 @@ app.post(
       if (!category || !subcategory || !basePriceDollars || !weightOz) {
         return res.status(400).json({
           ok: false,
-          error: "Missing required fields: category, subcategory, basePriceDollars, weightOz",
+          error:
+            "Missing required fields: category, subcategory, basePriceDollars, weightOz",
         });
       }
 
@@ -546,8 +671,16 @@ app.post(
       };
 
       const { sheets, spreadsheetId } = getSheets();
-      const { sheetRow, rowId } = await createProductRow(sheets, spreadsheetId, fields);
-      const { productId, sku } = await pollForProductSku(sheets, spreadsheetId, sheetRow);
+      const { sheetRow, rowId } = await createProductRow(
+        sheets,
+        spreadsheetId,
+        fields,
+      );
+      const { productId, sku } = await pollForProductSku(
+        sheets,
+        spreadsheetId,
+        sheetRow,
+      );
       await ensureDescriptionsRow(sheets, spreadsheetId, sku);
 
       const actor = req.session.user!;
@@ -559,10 +692,15 @@ app.post(
         TARGET_ENV,
       ]).catch((e) => console.error("action log failed:", e));
 
-      return res.status(200).json({ ok: true, productId, sku, rowId, sheetRow });
+      return res
+        .status(200)
+        .json({ ok: true, productId, sku, rowId, sheetRow });
     } catch (error: any) {
       console.error("POST /api/catalog/create_product failed:", error);
-      return res.status(500).json({ ok: false, error: error?.message || "Failed to create product" });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to create product",
+      });
     }
   },
 );
@@ -573,7 +711,8 @@ app.delete(
   async (req: Request, res: Response) => {
     try {
       const sku = req.params.sku?.trim();
-      if (!sku) return res.status(400).json({ ok: false, error: "Missing sku" });
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
 
       const { sheets, spreadsheetId } = getSheets();
       const result = await deleteProduct(sheets, spreadsheetId, sku);
@@ -590,7 +729,10 @@ app.delete(
       return res.status(200).json({ ok: true, sku, ...result });
     } catch (error: any) {
       console.error("DELETE /api/catalog/product/:sku failed:", error);
-      return res.status(500).json({ ok: false, error: error?.message || "Failed to delete product" });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to delete product",
+      });
     }
   },
 );
@@ -601,43 +743,58 @@ app.post(
   async (req: Request, res: Response) => {
     try {
       const parentSku = req.params.sku?.trim();
-      if (!parentSku) return res.status(400).json({ ok: false, error: "Missing sku" });
+      if (!parentSku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
 
       const body = req.body as {
         productId?: string;
         colors?: string[];
         sizes?: string[];
+        dimensions?: string[];
         priceVariant?: string;
         weightOzVariant?: string;
         designVariant?: string;
+        descriptionVariant?: string;
         stockQty?: number;
       };
 
       const productId = body.productId?.trim();
-      if (!productId) return res.status(400).json({ ok: false, error: "Missing productId" });
+      if (!productId)
+        return res.status(400).json({ ok: false, error: "Missing productId" });
 
       const colors = Array.isArray(body.colors) ? body.colors.filter(Boolean) : [];
       const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
-      if (!colors.length && !sizes.length) {
-        return res.status(400).json({ ok: false, error: "Must provide at least one color or size" });
+      const dimensions = Array.isArray(body.dimensions) ? body.dimensions.filter(Boolean) : [];
+
+      if (!colors.length && !sizes.length && !dimensions.length) {
+        return res.status(400).json({
+          ok: false,
+          error: "Must provide at least one color, size, or dimension",
+        });
       }
 
       const shared = {
         priceVariant: body.priceVariant || undefined,
         weightOzVariant: body.weightOzVariant || undefined,
         designVariant: body.designVariant || undefined,
+        descriptionVariant: body.descriptionVariant || undefined,
         stockQty: body.stockQty !== undefined ? Number(body.stockQty) : undefined,
       };
 
-      const variants =
-        colors.length && sizes.length
-          ? colors.flatMap((color) => sizes.map((size) => ({ color, size, ...shared })))
-          : colors.length
-            ? colors.map((color) => ({ color, ...shared }))
-            : sizes.map((size) => ({ size, ...shared }));
+      // Build N-dimensional cartesian product across whichever axes are selected
+      let combos: Array<{ color?: string; size?: string; dimension?: string }> = [{}];
+      if (colors.length) combos = combos.flatMap((c) => colors.map((color) => ({ ...c, color })));
+      if (sizes.length) combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
+      if (dimensions.length) combos = combos.flatMap((c) => dimensions.map((dimension) => ({ ...c, dimension })));
+      const variants = combos.map((c) => ({ ...c, ...shared }));
 
       const { sheets, spreadsheetId } = getSheets();
-      const result = await createVariantRows(sheets, spreadsheetId, productId, variants);
+      const result = await createVariantRows(
+        sheets,
+        spreadsheetId,
+        productId,
+        variants,
+      );
 
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
@@ -651,7 +808,10 @@ app.post(
       return res.status(201).json({ ok: true, skus: result.skus });
     } catch (error: any) {
       console.error("POST /api/catalog/product/:sku/variants failed:", error);
-      return res.status(500).json({ ok: false, error: error?.message || "Failed to create variants" });
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to create variants",
+      });
     }
   },
 );

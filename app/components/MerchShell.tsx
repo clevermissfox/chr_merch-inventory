@@ -167,9 +167,9 @@ export function MerchShell({ children }: MerchShellProps) {
             </div>
             {user && (
               <div className="merch-hero__user">
-                <div className="badge">
+                <p className="badge">
                   {user.canEdit ? "Editor Access" : "View Access"}
-                </div>
+                </p>
                 <p className="small clr-muted">
                   {user.email ?? "Authorized user"}
                 </p>

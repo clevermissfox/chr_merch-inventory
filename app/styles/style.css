@@ -12,7 +12,7 @@
   --fw-body: var(--fw-400);
   --fw-bold: var(--fw-700);
 
-  --fs-base: clamp(0.875rem, 0.7rem + 0.4vw, 1rem);
+  --fs-base: clamp(0.875rem, 0.7rem + 0.4vw, 1.25rem);
   --fs-700: 2.4rem;
   --fs-600: 1.6rem;
   --fs-500: 1.25rem;
@@ -54,16 +54,16 @@
   --clr-danger: #ff9ca4;
   --clr-warning: #ffd293;
 
-  --spacing-300: 3rem;
-  --spacing-250: 2.5rem;
-  --spacing-200: 2rem;
-  --spacing-150: 1.5rem;
-  --spacing-125: 1.25rem;
-  --spacing-100: 1rem;
-  --spacing-075: 0.75rem;
-  --spacing-050: 0.5rem;
-  --spacing-025: 0.25rem;
-  --spacing-0125: 0.125rem;
+  --spacing-300: 3em;
+  --spacing-250: 2.5em;
+  --spacing-200: 2em;
+  --spacing-150: 1.5em;
+  --spacing-125: 1.25em;
+  --spacing-100: 1em;
+  --spacing-075: 0.75em;
+  --spacing-050: 0.5em;
+  --spacing-025: 0.25em;
+  --spacing-0125: 0.125em;
 
   --br-400: 0.25rem;
   --br-700: 0.75rem;
@@ -78,8 +78,6 @@
   --default-padding: var(--spacing-150, 1.5rem);
   --default-trans-dur: 400ms;
   --default-timing: cubic-bezier(0.2, 0.8, 0.2, 1);
-
-  interpolate-size: allow-keywords;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -105,6 +103,8 @@
   outline-offset: 0.2rem;
 }
 
+/* pseudo-elements */
+
 ::selection {
   background-color: var(--clr-text);
   color: var(--clr-neutral-900);
@@ -112,6 +112,44 @@
 
 :target {
   scroll-margin-block: 3rlh;
+}
+
+::-webkit-scrollbar {
+  inline-size: 0.5em;
+  block-size: 0.25em;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 0.75em;
+  background: var(--clr-accent);
+}
+
+:is(html, body)::-webkit-scrollbar-thumb {
+  background-color: var(--clr-neutral-900);
+  border-radius: 0;
+}
+
+::placeholder {
+  color: inherit;
+  opacity: 0.6;
+}
+
+/* ELEMENT SELECTORS (RESET) */
+
+html,
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-gutter: stable;
+  interpolate-size: allow-keywords;
+
+  :is(html) {
+    font-size: var(--fs-base);
+  }
 }
 
 :is(ul, ol):is([role="list"]) {
@@ -123,6 +161,8 @@ svg {
   display: block;
   max-width: 100%;
 }
+
+/* INTERACTIVE ELEMENTS */
 
 a {
   color: inherit;
@@ -147,6 +187,11 @@ select {
   background-color: transparent;
   border: 1px solid;
   inline-size: 100%;
+
+  &:is(:user-invalid) {
+    outline-color: var(--clr-danger);
+    border-color: color-mix(in oklch, var(--clr-danger) 34%, transparent);
+  }
 }
 
 /* REMOVE DEFAULT SPINNERS FROM NUMBER INPUTS */
@@ -212,42 +257,11 @@ input[type="color"] {
   cursor: pointer;
 }
 
-::-webkit-scrollbar {
-  inline-size: 0.5em;
-  block-size: 0.25em;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  border-radius: 0.75em;
-  background: var(--clr-accent);
-}
-
-:is(html, body)::-webkit-scrollbar-thumb {
-  background: var(--clr-neutral-900);
-}
-
-::placeholder {
-  color: inherit;
-  opacity: 0.6;
-}
-
-/* ELEMENT SELECTORS */
-
-html,
-body {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  scrollbar-gutter: stable;
-}
+/* ELEMENT SELECTORS (BASE) */
 
 body {
   font-family: var(--ff-primary);
   font-weight: var(--fw-400);
-  font-size: var(--fs-base);
   line-height: var(--lh-body);
   color: var(--clr-text);
   text-wrap: pretty;
@@ -373,9 +387,8 @@ button:disabled {
 
 .btn-ghost {
   --_clr-btn-bg: transparent;
-  --_clr-btn-border: transparent;
   --_clr-btn-txt: var(--clr-text-muted);
-  --_btn-padding: var(--spacing-025) var(--spacing-025);
+  --_btn-padding: var(--spacing-025) var(--spacing-050);
 
   &:is(:hover, :focus-visible) {
     --_clr-btn-bg: var(--clr-surface-secondary);
@@ -383,7 +396,18 @@ button:disabled {
   }
 }
 
-.input-wrapper {
+form :not([type="checkbox"], [type="radio"]):is(input, text-area, select) {
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
+  padding: var(--spacing-025, 0.25em) var(--spacing-050, 0.5em);
+}
+
+:is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--clr-accent);
+}
+
+/* for inputs with button inside the input like a search bar */
+.search-input-wrapper {
   display: grid;
   grid-template-columns: [input-start] 1fr [icon-start] auto [icon-end input-end];
   padding-inline-start: var(--spacing-050);
@@ -396,6 +420,7 @@ button:disabled {
     grid-area: input;
     border: none;
     outline: none;
+    padding: 0;
   }
   & > button[type="submit"] {
     grid-area: icon;

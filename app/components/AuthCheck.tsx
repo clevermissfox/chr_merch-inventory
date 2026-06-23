@@ -128,10 +128,10 @@ export default function AuthCheck({
   if (loading) {
     return (
       <div className="public-page grid">
-        <div className="wrapper padding-i-default margin-bs-2">
-          <div className="status-line">
-            Loading… <span className="loader" />
-          </div>
+        <div className="card wrapper padding-i-default margin-bs-2">
+          <p className="status-line" role="status" data-tone="loading">
+            Loading…
+          </p>
         </div>
       </div>
     );

@@ -37,7 +37,12 @@ interface ProductGroupProps {
   onAddVariantsRequest: (group: CatalogGroup) => void;
 }
 
-function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }: ProductGroupProps) {
+function ProductGroup({
+  group,
+  canEdit,
+  onDeleteRequest,
+  onAddVariantsRequest,
+}: ProductGroupProps) {
   const isSimple = group.rowCount === 0;
 
   return (
@@ -45,11 +50,11 @@ function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }:
       <summary>
         <div className="summary-title">
           <strong>{group.displayName}</strong>
-          <span className="summary-count">
+          <p className="summary-count">
             {isSimple
               ? "Simple product"
               : `${group.rowCount} SKU${group.rowCount !== 1 ? "s" : ""}`}
-          </span>
+          </p>
         </div>
         <span className="toggle-label">Toggle</span>
       </summary>
@@ -83,12 +88,6 @@ function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }:
                 <dd>{group.design}</dd>
               </div>
             )}
-            {isSimple && (
-              <div>
-                <dt>Warehouse Stock</dt>
-                <dd>{group.stockQty ?? "—"}</dd>
-              </div>
-            )}
           </dl>
 
           {group.primaryDescription && (
@@ -107,16 +106,14 @@ function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }:
 
         {canEdit && (
           <div className="product-actions">
-            {isSimple && (
-              <button
-                type="button"
-                className="btn-secondary row gap-half ai-cen"
-                onClick={() => onAddVariantsRequest(group)}
-              >
-                <Plus aria-hidden="true" />
-                <span>Add Variants</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn-secondary row gap-half ai-cen"
+              onClick={() => onAddVariantsRequest(group)}
+            >
+              <Plus aria-hidden="true" />
+              <span>Add Variants</span>
+            </button>
             <button
               type="button"
               className="btn-secondary row gap-half ai-cen"
@@ -147,13 +144,20 @@ function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }:
           </summary>
 
           <div className="table-wrapper">
-            <table className="inventory-table">
+            <table className="data-table variants-table surface-tertiary">
+              <colgroup>
+                <col style={{ width: "fit-content" }}></col>
+                <col style={{ width: "100%" }}></col>
+                <col style={{ width: "fit-content" }}></col>{" "}
+                <col style={{ width: "fit-content" }}></col>
+                <col style={{ width: "fit-content" }}></col>
+                <col style={{ width: "min-content" }}></col>
+              </colgroup>
               <thead>
                 <tr>
                   <th>SKU</th>
                   <th>Details</th>
                   <th>Price</th>
-                  <th>Warehouse Stock</th>
                   <th>Weight (oz)</th>
                   <th>Description</th>
                   <th>Actions</th>
@@ -165,28 +169,31 @@ function ProductGroup({ group, canEdit, onDeleteRequest, onAddVariantsRequest }:
                     <td className="sku-cell">{row.sku}</td>
                     <td>{row.label}</td>
                     <td>{row.priceDollars || "—"}</td>
-                    <td className="ta-cen">{row.stockQty ?? "—"}</td>
-                    <td>{row.weightOzVariant ?? row.baseWeightOz ?? "—"}</td>
+                    <td className="ta-cen">
+                      {row.weightOzVariant ?? row.baseWeightOz ?? "—"}
+                    </td>
                     <td className="clr-muted">
                       {truncate(row.descriptionVariant, 30) ?? "—"}
                     </td>
-                    <td className="variant-actions">
-                      <button
-                        type="button"
-                        className="btn-icon"
-                        aria-label="Edit variant"
-                        disabled
-                      >
-                        <Pencil aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-icon"
-                        aria-label="Delete variant"
-                        disabled
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </button>
+                    <td className="variant-actions padding-i-half ">
+                      <div className="grid gap-1 pc-cen">
+                        <button
+                          className="small"
+                          type="button"
+                          aria-label="Edit variant"
+                          disabled
+                        >
+                          <Pencil aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="small"
+                          aria-label="Delete variant"
+                          disabled
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -211,7 +218,8 @@ export default function ProductsPage() {
   const [pendingDelete, setPendingDelete] = useState<CatalogGroup | null>(null);
   const [deleteStatus, setDeleteStatus] = useState<DialogConfirmStatus>("idle");
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [pendingAddVariants, setPendingAddVariants] = useState<CatalogGroup | null>(null);
+  const [pendingAddVariants, setPendingAddVariants] =
+    useState<CatalogGroup | null>(null);
 
   useEffect(() => {
     if (!catalog && !loading) {
@@ -269,14 +277,15 @@ export default function ProductsPage() {
     <>
       <section className="toolbar card">
         <div className="row gap-1 jc-sb ai-cen fw-wrap">
-          <div
+          <p
             className="status-line"
             role={statusTone === "error" ? "alert" : "status"}
-            data-tone={statusTone}
+            data-tone={
+              statusTone === "error" ? "error" : loading ? "loading" : ""
+            }
           >
-            <span>{statusMessage}</span>
-            {loading && <span className="loader" />}
-          </div>
+            {statusMessage}
+          </p>
 
           {canEdit && (
             <div className="row gap-1 fw-wrap ai-cen">
@@ -340,6 +349,7 @@ export default function ProductsPage() {
       {pendingDelete && (
         <DialogConfirm
           title="Delete product?"
+          confirmIcon={<Trash2 aria-hidden="true" />}
           confirmLabel="Delete"
           confirmingLabel="Deleting…"
           confirmVariant="danger"

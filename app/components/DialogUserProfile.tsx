@@ -32,16 +32,11 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
     "?";
 
   return (
-    <dialog ref={ref} className="dialog dialog-profile" onCancel={onClose}>
-      <div className="card grid gap-1half dialog-profile-inner">
+    <dialog ref={ref} className="dialog dialog-profile card" onCancel={onClose}>
+      <div className="grid gap-1half dialog-inner dialog-profile-inner">
         <div className="row jc-sb ai-cen">
           <h2>Profile</h2>
-          <button
-            type="button"
-            className="btn-icon"
-            onClick={onClose}
-            aria-label="Close"
-          >
+          <button type="button" onClick={onClose} aria-label="Close">
             <X aria-hidden="true" />
           </button>
         </div>
@@ -60,7 +55,7 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
           </div>
           <div className="grid gap-quarter">
             <strong>{user.name}</strong>
-            <span className="badge">{roleLabel[user.role] ?? user.role}</span>
+            <p className="badge">{roleLabel[user.role] ?? user.role}</p>
           </div>
         </div>
 

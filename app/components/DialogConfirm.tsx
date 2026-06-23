@@ -5,6 +5,7 @@ export type DialogConfirmStatus = "idle" | "confirming" | "success";
 interface DialogConfirmProps {
   title: string;
   children: React.ReactNode;
+  confirmIcon?: React.ReactNode;
   confirmLabel: string;
   confirmingLabel?: string;
   confirmVariant?: "danger" | "primary";
@@ -18,6 +19,7 @@ interface DialogConfirmProps {
 export default function DialogConfirm({
   title,
   children,
+  confirmIcon,
   confirmLabel,
   confirmingLabel,
   confirmVariant = "primary",
@@ -44,15 +46,18 @@ export default function DialogConfirm({
   const inFlight = status === "confirming" || status === "success";
 
   return (
-    <dialog ref={ref} className="dialog dialog-confirm" onCancel={handleNativeCancel}>
-      <div className="dialog-confirm-inner card grid gap-1">
+    <dialog
+      ref={ref}
+      className="dialog dialog-confirm card"
+      onCancel={handleNativeCancel}
+    >
+      <div className="dialog-inner dialog-confirm-inner grid gap-1">
         <h2 className="dialog-confirm-title">{title}</h2>
 
         {status === "success" && successMessage ? (
-          <div role="status" className="status-line">
+          <p role="status" className="status-line" data-tone="success">
             <span>{successMessage}</span>
-            <span className="loader" />
-          </div>
+          </p>
         ) : (
           children
         )}
@@ -74,13 +79,16 @@ export default function DialogConfirm({
           </button>
           <button
             type="button"
-            className={`btn-${confirmVariant}`}
+            className={`btn-${confirmVariant} row ai-cen gap-half`}
             onClick={onConfirm}
             disabled={inFlight}
           >
-            {status === "confirming" && confirmingLabel
-              ? confirmingLabel
-              : confirmLabel}
+            {status !== "confirming" && confirmIcon}
+            <span>
+              {status === "confirming" && confirmingLabel
+                ? confirmingLabel
+                : confirmLabel}
+            </span>
           </button>
         </div>
       </div>

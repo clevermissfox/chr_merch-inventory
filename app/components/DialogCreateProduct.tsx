@@ -1,7 +1,7 @@
 import { CircleQuestionMark, X, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NewProductFields, RefData } from "~/types/catalog";
-import AddNewRef from "./AddNewRef";
+import RefAddNew from "./RefAddNew";
 
 interface DialogCreateProductProps {
   onClose: () => void;
@@ -39,6 +39,7 @@ export default function DialogCreateProduct({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showCatHelp, setShowCatHelp] = useState(false);
+  const [subcatFormOpen, setSubcatFormOpen] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -94,13 +95,12 @@ export default function DialogCreateProduct({
     form.category && form.subcategory && form.basePriceDollars && form.weightOz;
 
   return (
-    <dialog ref={ref} className="dialog dialog-product" onCancel={onClose}>
-      <div className="card grid gap-1half">
+    <dialog ref={ref} className="dialog dialog-product card" onCancel={onClose}>
+      <div className="grid gap-1half dialog-inner dialog-product-inner">
         <div className="row jc-sb ai-cen">
           <h2>New Product</h2>
           <button
             type="button"
-            className="btn-icon"
             onClick={onClose}
             aria-label="Close"
             disabled={submitting}
@@ -110,15 +110,15 @@ export default function DialogCreateProduct({
         </div>
 
         {metaError && (
-          <div role="alert" className="status-line" data-tone="error">
+          <p role="alert" className="status-line" data-tone="error">
             {metaError}
-          </div>
+          </p>
         )}
 
         {!refData && !metaError && (
-          <div role="status" className="status-line">
-            Loading options… <span className="loader" />
-          </div>
+          <p role="status" className="status-line" data-tone="loading">
+            Loading options…
+          </p>
         )}
 
         {refData && (
@@ -152,15 +152,43 @@ export default function DialogCreateProduct({
                 value={form.category}
                 onChange={set("category")}
                 required
-                disabled={submitting}
+                disabled={submitting || subcatFormOpen}
               >
                 <option value="">— select —</option>
-                {refData.categories.map((c) => (
-                  <option key={c.code} value={c.value}>
-                    {c.value} ({c.code})
-                  </option>
-                ))}
+                {[...refData.categories]
+                  .filter((c) => c.wooId !== 112)
+                  .sort((a, b) => a.value.localeCompare(b.value))
+                  .map((c) => (
+                    <option key={c.code} value={c.value}>
+                      {c.value} ({c.code})
+                    </option>
+                  ))}
               </select>
+              {subcatFormOpen && (
+                <p className="ref-add__hint clr-muted xsmall">
+                  Close the subcategory form to change category
+                </p>
+              )}
+              <RefAddNew
+                refType="category"
+                existingValues={refData.categories.map((c) => c.value)}
+                existingCodes={refData.categories.map((c) => c.code)}
+                onAdded={({ value, code, wooId }) => {
+                  setRefData((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          categories: [
+                            ...prev.categories,
+                            { value, code, wooId: wooId ?? null },
+                          ],
+                        }
+                      : prev,
+                  );
+                  setForm((f) => ({ ...f, category: value }));
+                }}
+                disabled={submitting || subcatFormOpen}
+              />
             </div>
 
             <div className="form-group">
@@ -175,12 +203,51 @@ export default function DialogCreateProduct({
                 disabled={submitting}
               >
                 <option value="">— select —</option>
-                {refData.subcategories.map((s) => (
-                  <option key={s.code} value={s.value}>
-                    {s.label} ({s.code})
-                  </option>
-                ))}
+                {[...refData.subcategories]
+                  .sort((a, b) =>
+                    (a.label ?? a.value).localeCompare(b.label ?? b.value),
+                  )
+                  .map((s) => (
+                    <option key={s.code} value={s.value}>
+                      {s.label} ({s.code})
+                    </option>
+                  ))}
               </select>
+              {(() => {
+                const selectedCat = refData.categories.find(
+                  (c) => c.value === form.category,
+                );
+                return (
+                  <RefAddNew
+                    refType="subcategory"
+                    existingValues={refData.subcategories.map((s) => s.value)}
+                    existingCodes={refData.subcategories.map((s) => s.code)}
+                    parentWooId={selectedCat?.wooId ?? null}
+                    parentDisplayName={form.category || undefined}
+                    onExpandedChange={setSubcatFormOpen}
+                    onAdded={({ value, code, wooId, label }) => {
+                      setRefData((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              subcategories: [
+                                ...prev.subcategories,
+                                {
+                                  value,
+                                  code,
+                                  label: label ?? value,
+                                  wooId: wooId ?? null,
+                                },
+                              ],
+                            }
+                          : prev,
+                      );
+                      setForm((f) => ({ ...f, subcategory: value }));
+                    }}
+                    disabled={submitting}
+                  />
+                );
+              })()}
             </div>
 
             <div className="row gap-1 fw-wrap">
@@ -195,6 +262,9 @@ export default function DialogCreateProduct({
                   step="0.01"
                   value={form.basePriceDollars}
                   onChange={set("basePriceDollars")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
                   placeholder="0.00"
                   required
                   disabled={submitting}
@@ -212,6 +282,9 @@ export default function DialogCreateProduct({
                   step="0.1"
                   value={form.weightOz}
                   onChange={set("weightOz")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
                   placeholder="0.0"
                   required
                   disabled={submitting}
@@ -245,19 +318,23 @@ export default function DialogCreateProduct({
                 disabled={submitting}
               >
                 <option value="">— none —</option>
-                {refData.graphics.map((g) => (
-                  <option key={g} value={g}>
-                    {g}
-                  </option>
-                ))}
+                {[...refData.graphics]
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
               </select>
-              <AddNewRef
+              <RefAddNew
                 refType="graphic"
                 existingValues={refData.graphics}
                 existingCodes={[]}
                 onAdded={({ value }) => {
                   setRefData((prev) =>
-                    prev ? { ...prev, graphics: [...prev.graphics, value] } : prev,
+                    prev
+                      ? { ...prev, graphics: [...prev.graphics, value] }
+                      : prev,
                   );
                   setForm((f) => ({ ...f, design: value }));
                 }}
@@ -277,13 +354,15 @@ export default function DialogCreateProduct({
                 disabled={submitting}
               >
                 <option value="">— none —</option>
-                {refData.styles.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
+                {[...refData.styles]
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
               </select>
-              <AddNewRef
+              <RefAddNew
                 refType="style"
                 existingValues={refData.styles}
                 existingCodes={[]}
@@ -298,9 +377,9 @@ export default function DialogCreateProduct({
             </div>
 
             {submitError && (
-              <div role="alert" className="status-line" data-tone="error">
+              <p role="alert" className="status-line" data-tone="error">
                 {submitError}
-              </div>
+              </p>
             )}
 
             <div className="row gap-1 jc-end">
@@ -314,17 +393,18 @@ export default function DialogCreateProduct({
               </button>
               <button
                 type="submit"
-                className="btn-primary row gap-half"
+                className="btn-primary row ai-cen gap-half"
                 disabled={!canSubmit || submitting}
               >
                 {submitting ? (
                   <>
-                    Creating… <span className="loader" />
+                    <span className="loader" aria-hidden="true" />
+                    <span>Creating… </span>
                   </>
                 ) : (
                   <>
                     <Plus aria-hidden="true" />
-                    Create Product
+                    <span>Create Product</span>
                   </>
                 )}
               </button>

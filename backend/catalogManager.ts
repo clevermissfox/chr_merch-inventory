@@ -2,7 +2,10 @@ import { createHash } from "crypto";
 import {
   ensureInventoryIndexRowsExist,
   loadInventoryIndexState,
+  getWooConfig,
+  buildWooUrl,
 } from "./inventoryManager";
+import type { WooConfig } from "./inventoryManager";
 import type { sheets_v4 } from "googleapis";
 import type {
   CatalogConflictGroup,
@@ -28,14 +31,23 @@ export async function readRefData(
   spreadsheetId: string,
 ): Promise<RefData> {
   const namedRanges = [
-    "catList", "catCode", "catId",
-    "subCatList", "subCatCode", "subCatLabel", "subCatId",
+    "catList",
+    "catCode",
+    "catId",
+    "subCatList",
+    "subCatCode",
+    "subCatLabel",
+    "subCatId",
     "graphicsList",
-    "graphicsVariantList", "graphicsVariantCode",
+    "graphicsVariantList",
+    "graphicsVariantCode",
     "styleModList",
-    "colorsList", "colorsCode",
-    "sizesList", "sizesCode",
-    "dimensionsList", "dimensionsCode",
+    "colorsList",
+    "colorsCode",
+    "sizesList",
+    "sizesCode",
+    "dimensionsList",
+    "dimensionsCode",
   ];
 
   const response = await sheets.spreadsheets.values.batchGet({
@@ -48,14 +60,23 @@ export async function readRefData(
     (vr[i]?.values ?? []).flat().map(String).filter(Boolean);
 
   const [
-    catList, catCode, catId,
-    subCatList, subCatCode, subCatLabel, subCatId,
+    catList,
+    catCode,
+    catId,
+    subCatList,
+    subCatCode,
+    subCatLabel,
+    subCatId,
     graphicsList,
-    graphicsVariantList, graphicsVariantCode,
+    graphicsVariantList,
+    graphicsVariantCode,
     styleModList,
-    colorsList, colorsCode,
-    sizesList, sizesCode,
-    dimensionsList, dimensionsCode,
+    colorsList,
+    colorsCode,
+    sizesList,
+    sizesCode,
+    dimensionsList,
+    dimensionsCode,
   ] = namedRanges.map((_, i) => flat(i));
 
   return {
@@ -100,15 +121,22 @@ export type RefAddType =
   | "style";
 
 const REF_RANGE_MAP: Record<RefAddType, { value: string; code?: string }> = {
-  color:          { value: "colorsList",         code: "colorsCode" },
-  size:           { value: "sizesList",           code: "sizesCode" },
-  dimension:      { value: "dimensionsList",      code: "dimensionsCode" },
-  graphicsVariant:{ value: "graphicsVariantList", code: "graphicsVariantCode" },
-  graphic:        { value: "graphicsList" },
-  style:          { value: "styleModList" },
+  color: { value: "colorsList", code: "colorsCode" },
+  size: { value: "sizesList", code: "sizesCode" },
+  dimension: { value: "dimensionsList", code: "dimensionsCode" },
+  graphicsVariant: {
+    value: "graphicsVariantList",
+    code: "graphicsVariantCode",
+  },
+  graphic: { value: "graphicsList" },
+  style: { value: "styleModList" },
 };
 
-function parseA1(rangeStr: string): { sheet: string; col: string; startRow: number } {
+function parseA1(rangeStr: string): {
+  sheet: string;
+  col: string;
+  startRow: number;
+} {
   const m = rangeStr.match(/^(.+)!([A-Z]+)(\d+)/);
   if (!m) throw new Error(`Cannot parse range: ${rangeStr}`);
   return { sheet: m[1], col: m[2], startRow: parseInt(m[3], 10) };
@@ -124,7 +152,8 @@ export async function appendRefEntry(
   const config = REF_RANGE_MAP[type];
   const isCodedType = Boolean(config.code);
 
-  if (isCodedType && !code) throw new Error("Code is required for this ref type");
+  if (isCodedType && !code)
+    throw new Error("Code is required for this ref type");
 
   const rangesToRead = [config.value, ...(config.code ? [config.code] : [])];
   const response = await sheets.spreadsheets.values.batchGet({
@@ -133,9 +162,16 @@ export async function appendRefEntry(
   });
 
   const vrs = response.data.valueRanges ?? [];
-  const existingValues = (vrs[0]?.values ?? []).flat().map(String).filter(Boolean);
-  const existingCodes  = config.code
-    ? (vrs[1]?.values ?? []).flat().map(String).filter(Boolean).map((c) => c.toUpperCase())
+  const existingValues = (vrs[0]?.values ?? [])
+    .flat()
+    .map(String)
+    .filter(Boolean);
+  const existingCodes = config.code
+    ? (vrs[1]?.values ?? [])
+        .flat()
+        .map(String)
+        .filter(Boolean)
+        .map((c) => c.toUpperCase())
     : [];
 
   if (existingValues.some((v) => v.toLowerCase() === value.toLowerCase())) {
@@ -170,6 +206,150 @@ export async function appendRefEntry(
   });
 
   return { value, code: normalizedCode };
+}
+
+export async function createWooCategory(
+  name: string,
+  parentWooId: number | null,
+  display: "default" | "subcategories",
+): Promise<number> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, "products/categories");
+  // slug: lowercase, hyphens only — Woo auto-generates from name but we set it explicitly
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const body: Record<string, unknown> = { name, slug, display };
+  if (parentWooId != null) body.parent = parentWooId;
+
+  const targetUrl = url.split("?")[0];
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const responseText = await res.text();
+  console.log(`[createWooCategory] HTTP ${res.status}:`, responseText);
+
+  if (!res.ok) {
+    throw new Error(
+      `Woo category create failed (HTTP ${res.status}): ${responseText}`,
+    );
+  }
+
+  let data: { id?: number };
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error(`Woo category response not valid JSON: ${responseText}`);
+  }
+
+  if (!data.id)
+    throw new Error(`Woo category response missing id: ${responseText}`);
+
+  // Verify the category actually persisted — some staging setups silently drop it
+  const getUrl = buildWooUrl(woo, "products/categories", { slug });
+  const getRes = await fetch(getUrl, {
+    headers: { Accept: "application/json" },
+  });
+  if (getRes.ok) {
+    const list = (await getRes.json()) as Array<{ id: number }>;
+    if (list.length > 0) {
+      const verifiedId = list[0].id;
+      console.log(
+        `[createWooCategory] verified: POST id=${data.id}, GET by slug="${slug}" id=${verifiedId}`,
+      );
+      return verifiedId;
+    }
+    // POST returned 201 but GET finds nothing — category was not persisted
+    throw new Error(
+      `Woo created category (id=${data.id}, slug="${slug}") but it cannot be found via GET. ` +
+        `A plugin or hook may be deleting it immediately after creation.`,
+    );
+  }
+
+  return data.id;
+}
+
+export async function appendCategoryEntry(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  type: "category" | "subcategory",
+  value: string,
+  code: string,
+  wooId: number,
+  label?: string,
+): Promise<void> {
+  const valueRange = type === "category" ? "catList" : "subCatList";
+  const codeRange = type === "category" ? "catCode" : "subCatCode";
+  const wooIdRange = type === "category" ? "catId" : "subCatId";
+  const labelRange = type === "subcategory" ? "subCatLabel" : null;
+
+  const rangesToRead = [
+    valueRange,
+    codeRange,
+    wooIdRange,
+    ...(labelRange ? [labelRange] : []),
+  ];
+
+  const response = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: rangesToRead,
+  });
+
+  const vrs = response.data.valueRanges ?? [];
+  const existingValues = (vrs[0]?.values ?? [])
+    .flat()
+    .map(String)
+    .filter(Boolean);
+  const existingCodes = (vrs[1]?.values ?? [])
+    .flat()
+    .map(String)
+    .filter(Boolean)
+    .map((c) => c.toUpperCase());
+
+  if (existingValues.some((v) => v.toLowerCase() === value.toLowerCase())) {
+    throw new Error(`"${value}" already exists`);
+  }
+  if (existingCodes.includes(code.toUpperCase())) {
+    throw new Error(`Code "${code.toUpperCase()}" is already in use`);
+  }
+
+  const valueMeta = parseA1(vrs[0]?.range ?? "");
+  const codeMeta = parseA1(vrs[1]?.range ?? "");
+  const wooMeta = parseA1(vrs[2]?.range ?? "");
+  const nextRow = valueMeta.startRow + existingValues.length;
+
+  const data: { range: string; values: string[][] }[] = [
+    {
+      range: `'${valueMeta.sheet}'!${valueMeta.col}${nextRow}`,
+      values: [[value]],
+    },
+    {
+      range: `'${codeMeta.sheet}'!${codeMeta.col}${nextRow}`,
+      values: [[code.toUpperCase()]],
+    },
+    {
+      range: `'${wooMeta.sheet}'!${wooMeta.col}${nextRow}`,
+      values: [[String(wooId)]],
+    },
+  ];
+
+  if (labelRange && vrs[3]) {
+    const labelMeta = parseA1(vrs[3]?.range ?? "");
+    data.push({
+      range: `'${labelMeta.sheet}'!${labelMeta.col}${nextRow}`,
+      values: [[label || value]],
+    });
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "USER_ENTERED", data },
+  });
 }
 
 // Convert 0-based column index to A1 column letter (A, B, ..., Z, AA, AB, ...)
@@ -217,10 +397,18 @@ export async function createProductRow(
     cell("row_id", rowId),
     ...(fields.displayName ? [cell("display_name", fields.displayName)] : []),
     ...(fields.design ? [cell("design", fields.design)] : []),
-    ...(fields.styleModifier ? [cell("style_modifier", fields.styleModifier)] : []),
-    ...(fields.dimensionsWidth ? [cell("dimensions_width", fields.dimensionsWidth)] : []),
-    ...(fields.dimensionsHeight ? [cell("dimensions_height", fields.dimensionsHeight)] : []),
-    ...(fields.dimensionsDepth ? [cell("dimensions_depth", fields.dimensionsDepth)] : []),
+    ...(fields.styleModifier
+      ? [cell("style_modifier", fields.styleModifier)]
+      : []),
+    ...(fields.dimensionsWidth
+      ? [cell("dimensions_width", fields.dimensionsWidth)]
+      : []),
+    ...(fields.dimensionsHeight
+      ? [cell("dimensions_height", fields.dimensionsHeight)]
+      : []),
+    ...(fields.dimensionsDepth
+      ? [cell("dimensions_depth", fields.dimensionsDepth)]
+      : []),
   ];
 
   await sheets.spreadsheets.values.batchUpdate({
@@ -322,14 +510,25 @@ function stableStringify(val: unknown): string {
   const keys = Object.keys(val as object).sort();
   return (
     "{" +
-    keys.map((k) => JSON.stringify(k) + ":" + stableStringify((val as Record<string, unknown>)[k])).join(",") +
+    keys
+      .map(
+        (k) =>
+          JSON.stringify(k) +
+          ":" +
+          stableStringify((val as Record<string, unknown>)[k]),
+      )
+      .join(",") +
     "}"
   );
 }
 
 export function computeProductSyncHash(group: CatalogGroup): string {
-  const uniqueColors = [...new Set(group.rows.map((r) => r.color).filter(Boolean))].sort() as string[];
-  const uniqueSizes = [...new Set(group.rows.map((r) => r.size).filter(Boolean))].sort() as string[];
+  const uniqueColors = [
+    ...new Set(group.rows.map((r) => r.color).filter(Boolean)),
+  ].sort() as string[];
+  const uniqueSizes = [
+    ...new Set(group.rows.map((r) => r.size).filter(Boolean)),
+  ].sort() as string[];
 
   const core = {
     skuRoot: group.sku,
@@ -344,8 +543,12 @@ export function computeProductSyncHash(group: CatalogGroup): string {
       depth: group.dimensionsDepth || "",
     },
     attributes: [
-      ...(uniqueColors.length ? [{ name: "Color", options: uniqueColors, variation: true }] : []),
-      ...(uniqueSizes.length ? [{ name: "Size", options: uniqueSizes, variation: true }] : []),
+      ...(uniqueColors.length
+        ? [{ name: "Color", options: uniqueColors, variation: true }]
+        : []),
+      ...(uniqueSizes.length
+        ? [{ name: "Size", options: uniqueSizes, variation: true }]
+        : []),
     ],
     variations: group.rows
       .map((v) => ({
@@ -376,8 +579,8 @@ export async function writeProductSyncHash(
     spreadsheetId,
     range: "products!1:1",
   });
-  const headers = ((headerResponse.data.values?.[0] ?? []) as string[]).map((h) =>
-    String(h).trim(),
+  const headers = ((headerResponse.data.values?.[0] ?? []) as string[]).map(
+    (h) => String(h).trim(),
   );
   const col = (name: string) => colByHeader(headers, name);
   const now = new Date().toISOString();
@@ -387,8 +590,14 @@ export async function writeProductSyncHash(
     requestBody: {
       valueInputOption: "RAW",
       data: [
-        { range: `products!${colLetter(col("last_hash"))}${sheetRow}`, values: [[hash]] },
-        { range: `products!${colLetter(col("last_synced_at"))}${sheetRow}`, values: [[now]] },
+        {
+          range: `products!${colLetter(col("last_hash"))}${sheetRow}`,
+          values: [[hash]],
+        },
+        {
+          range: `products!${colLetter(col("last_synced_at"))}${sheetRow}`,
+          values: [[now]],
+        },
       ],
     },
   });
@@ -430,7 +639,10 @@ export async function writeProductSyncHashes(
     if (!sheetRow) continue;
     data.push(
       { range: `products!${colLetter(hashIdx)}${sheetRow}`, values: [[hash]] },
-      { range: `products!${colLetter(syncedAtIdx)}${sheetRow}`, values: [[now]] },
+      {
+        range: `products!${colLetter(syncedAtIdx)}${sheetRow}`,
+        values: [[now]],
+      },
     );
   }
 
@@ -469,19 +681,28 @@ async function deleteSheetRows(
 
   for (const { sheetName, indices } of targets) {
     const sheetId = sheetIdByName.get(sheetName);
-    if (sheetId === undefined) throw new Error(`Sheet "${sheetName}" not found`);
+    if (sheetId === undefined)
+      throw new Error(`Sheet "${sheetName}" not found`);
     const sorted = [...indices].sort((a, b) => b - a);
     for (const idx of sorted) {
       requests.push({
         deleteDimension: {
-          range: { sheetId, dimension: "ROWS", startIndex: idx, endIndex: idx + 1 },
+          range: {
+            sheetId,
+            dimension: "ROWS",
+            startIndex: idx,
+            endIndex: idx + 1,
+          },
         },
       });
     }
   }
 
   if (requests.length) {
-    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
   }
 }
 
@@ -499,7 +720,10 @@ export async function deleteProduct(
     fields: "sheets(properties(sheetId,title))",
   });
   const sheetIdByName = new Map(
-    (meta.data.sheets ?? []).map((s) => [s.properties?.title ?? "", s.properties?.sheetId ?? 0]),
+    (meta.data.sheets ?? []).map((s) => [
+      s.properties?.title ?? "",
+      s.properties?.sheetId ?? 0,
+    ]),
   );
 
   const [productsRes, variantsRes, descRes, invRes] = await Promise.all([
@@ -512,7 +736,9 @@ export async function deleteProduct(
   // Locate the product row
   const productValues = productsRes.data.values ?? [];
   if (!productValues.length) throw new Error("products sheet is empty");
-  const productHeaders = (productValues[0] as string[]).map((h) => String(h).trim());
+  const productHeaders = (productValues[0] as string[]).map((h) =>
+    String(h).trim(),
+  );
   const pSkuIdx = colByHeader(productHeaders, "sku");
   const pProductIdIdx = colByHeader(productHeaders, "product_id");
 
@@ -521,12 +747,17 @@ export async function deleteProduct(
   for (let i = 1; i < productValues.length; i++) {
     if (String((productValues[i] as string[])[pSkuIdx] ?? "").trim() === sku) {
       productRowIdx = i;
-      productId = String((productValues[i] as string[])[pProductIdIdx] ?? "").trim();
+      productId = String(
+        (productValues[i] as string[])[pProductIdIdx] ?? "",
+      ).trim();
       break;
     }
   }
   if (productRowIdx === -1) throw new Error(`Product SKU "${sku}" not found`);
-  if (productRowIdx === 1) throw new Error(`Product SKU "${sku}" is in the protected row 2 and cannot be deleted through this tool`);
+  if (productRowIdx === 1)
+    throw new Error(
+      `Product SKU "${sku}" is in the protected row 2 and cannot be deleted through this tool`,
+    );
 
   // Locate all variant rows for this product
   const variantValues = variantsRes.data.values ?? [];
@@ -551,7 +782,10 @@ export async function deleteProduct(
 
   const allSkus = new Set([sku, ...variantSkus].filter(Boolean));
 
-  const descRowIndices = findRowIndicesBySku(descRes.data.values ?? [], allSkus);
+  const descRowIndices = findRowIndicesBySku(
+    descRes.data.values ?? [],
+    allSkus,
+  );
   const invRowIndices = findRowIndicesBySku(invRes.data.values ?? [], allSkus);
 
   await deleteSheetRows(sheets, spreadsheetId, sheetIdByName, [
@@ -568,7 +802,6 @@ export async function deleteProduct(
   };
 }
 
-
 async function lookupSelectProduct(
   sheets: SheetsClient,
   spreadsheetId: string,
@@ -583,7 +816,8 @@ async function lookupSelectProduct(
     .filter(Boolean);
 
   const match = entries.find((entry) => entry.endsWith(` - ${productId}`));
-  if (!match) throw new Error(`No productList entry found for product_id "${productId}"`);
+  if (!match)
+    throw new Error(`No productList entry found for product_id "${productId}"`);
   return match;
 }
 
@@ -634,7 +868,9 @@ export async function createVariantRows(
   variants: Array<{
     color?: string;
     size?: string;
+    dimension?: string;
     designVariant?: string;
+    descriptionVariant?: string;
     priceVariant?: string;
     weightOzVariant?: string;
     stockQty?: number;
@@ -642,7 +878,11 @@ export async function createVariantRows(
 ): Promise<{ skus: string[] }> {
   if (!variants.length) return { skus: [] };
 
-  const selectProductValue = await lookupSelectProduct(sheets, spreadsheetId, productId);
+  const selectProductValue = await lookupSelectProduct(
+    sheets,
+    spreadsheetId,
+    productId,
+  );
 
   const variantsData = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -656,18 +896,29 @@ export async function createVariantRows(
   const startSheetRow = values.length + 1;
 
   const spIdx = colIdx("select_product");
-  if (spIdx === -1) throw new Error('variants sheet missing "select_product" column');
+  if (spIdx === -1)
+    throw new Error('variants sheet missing "select_product" column');
 
   const rowData: string[][] = variants.map(
-    ({ color, size, designVariant, priceVariant, weightOzVariant }) => {
+    ({ color, size, dimension, designVariant, descriptionVariant, priceVariant, weightOzVariant }) => {
       const row = new Array(headers.length).fill("");
       row[spIdx] = selectProductValue;
-      const ci = colIdx("color"); if (ci >= 0 && color) row[ci] = color;
-      const si = colIdx("size"); if (si >= 0 && size) row[si] = size;
-      const di = colIdx("design_variant"); if (di >= 0 && designVariant) row[di] = designVariant;
-      const pi = colIdx("price_variant"); if (pi >= 0 && priceVariant) row[pi] = priceVariant;
-      const wi = colIdx("weight_oz_variant"); if (wi >= 0 && weightOzVariant) row[wi] = weightOzVariant;
-      const ri = colIdx("row_id"); if (ri >= 0) row[ri] = crypto.randomUUID();
+      const ci = colIdx("color");
+      if (ci >= 0 && color) row[ci] = color;
+      const si = colIdx("size");
+      if (si >= 0 && size) row[si] = size;
+      const dimi = colIdx("dimensions");
+      if (dimi >= 0 && dimension) row[dimi] = dimension;
+      const di = colIdx("design_variant");
+      if (di >= 0 && designVariant) row[di] = designVariant;
+      const dvi = colIdx("description_variant");
+      if (dvi >= 0 && descriptionVariant) row[dvi] = descriptionVariant;
+      const pi = colIdx("price_variant");
+      if (pi >= 0 && priceVariant) row[pi] = priceVariant;
+      const wi = colIdx("weight_oz_variant");
+      if (wi >= 0 && weightOzVariant) row[wi] = weightOzVariant;
+      const ri = colIdx("row_id");
+      if (ri >= 0) row[ri] = crypto.randomUUID();
       return row;
     },
   );
@@ -680,17 +931,31 @@ export async function createVariantRows(
     },
   });
 
-  const skus = await pollForVariantSkus(sheets, spreadsheetId, startSheetRow, variants.length);
+  const skus = await pollForVariantSkus(
+    sheets,
+    spreadsheetId,
+    startSheetRow,
+    variants.length,
+  );
 
   const invState = await loadInventoryIndexState(sheets, spreadsheetId);
   const invUpdates = skus.map((sku, i) => {
     const fields: Record<string, number | string> = {};
-    if (variants[i].stockQty !== undefined) fields.stock_qty = variants[i].stockQty as number;
+    if (variants[i].stockQty !== undefined)
+      fields.stock_qty = variants[i].stockQty as number;
     return { sku, fields };
   });
   await Promise.all([
-    Promise.all(skus.map((sku) => ensureDescriptionsRow(sheets, spreadsheetId, sku))),
-    ensureInventoryIndexRowsExist(sheets, spreadsheetId, invState, invUpdates, new Map()),
+    Promise.all(
+      skus.map((sku) => ensureDescriptionsRow(sheets, spreadsheetId, sku)),
+    ),
+    ensureInventoryIndexRowsExist(
+      sheets,
+      spreadsheetId,
+      invState,
+      invUpdates,
+      new Map(),
+    ),
   ]);
 
   return { skus };
@@ -820,7 +1085,9 @@ function buildCatalogGroup(product: ProductSheetRow): CatalogGroup {
   };
 }
 
-export function buildConflictGroups(groups: CatalogGroup[]): CatalogConflictGroup[] {
+export function buildConflictGroups(
+  groups: CatalogGroup[],
+): CatalogConflictGroup[] {
   return groups
     .map((group) => {
       const count = group.rows.filter(

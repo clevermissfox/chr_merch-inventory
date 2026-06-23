@@ -49,7 +49,7 @@ export default function MerchDashboard() {
           idSuffix="quick-inventory"
           data={state.catalog?.groups}
         /> */}
-        <div className="input-wrapper">
+        <div className="search-input-wrapper">
           <input
             type="search"
             minLength={3}

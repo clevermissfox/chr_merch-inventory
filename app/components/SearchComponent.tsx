@@ -59,7 +59,7 @@ export function SearchComponent<T extends Record<string, any>>({
       >
         <div className="form-group">
           <label htmlFor={inputId}>{label ? label : "Search"}</label>
-          <div className="input-wrapper">
+          <div className="search-input-wrapper">
             <input
               type="search"
               id={inputId}

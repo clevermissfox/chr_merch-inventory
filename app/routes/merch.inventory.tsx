@@ -80,7 +80,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     if (!state.catalog && !state.loading) {
-      void loadCatalog();
+      void loadCatalog({ withStock: true });
     }
   }, [state.catalog, state.loading, loadCatalog]);
 
@@ -95,9 +95,13 @@ export default function InventoryPage() {
   if (state.loading && !state.catalog) {
     return (
       <section className="card">
-        <div className="status-line">
-          Loading inventory…<span className="loader"></span>
-        </div>
+        <p
+          className="status-line row ai-cen gap-half"
+          role="status"
+          data-tone="loading"
+        >
+          Loading inventory…
+        </p>
       </section>
     );
   }
@@ -105,7 +109,9 @@ export default function InventoryPage() {
   if (!state.catalog) {
     return (
       <section className="card">
-        <div className="status-line">No inventory data available.</div>
+        <p role="status" className="status-line">
+          No inventory data available.
+        </p>
       </section>
     );
   }
@@ -242,8 +248,8 @@ export default function InventoryPage() {
         <div className="hero-grid">
           {metrics.map((metric) => (
             <div key={metric.label} className="metric">
-              <div className="metric-label">{metric.label}</div>
-              <div className="metric-value">{metric.value}</div>
+              <p className="metric-label">{metric.label}</p>
+              <p className="metric-value">{metric.value}</p>
               {metric.renderExtra?.()}
             </div>
           ))}
@@ -283,7 +289,7 @@ export default function InventoryPage() {
                 <button
                   type="button"
                   className="btn-secondary flex-1 row gap-half jc-cen ai-cen"
-                  onClick={() => void loadCatalog()}
+                  onClick={() => void loadCatalog({ withStock: true })}
                   disabled={state.loading || state.saving}
                 >
                   <RefreshCw
@@ -315,14 +321,15 @@ export default function InventoryPage() {
         </div>
 
         <div className="toolbar-row row gap-1 jc-sb ai-cen fw-wrap">
-          <div
+          <p
             className="status-line"
             role={statusTone === "error" ? "alert" : "status"}
-            data-tone={statusTone}
+            data-tone={
+              statusTone === "error" ? "error" : showLoader ? "loading" : ""
+            }
           >
-            <span>{statusMessage}</span>
-            {showLoader && <span className="loader" />}
-          </div>
+            {statusMessage}
+          </p>
         </div>
       </section>
 
@@ -356,16 +363,16 @@ export default function InventoryPage() {
                   )}
                   <div className="summary-title">
                     <strong>{group.displayName}</strong>
-                    <span className="summary-count">
+                    <p className="summary-count">
                       {group.rowCount} SKU{group.rowCount === 1 ? "" : "s"}
-                    </span>
+                    </p>
                   </div>
                 </div>
                 <span className="toggle-label">Toggle</span>
               </summary>
 
               <div className="table-wrapper">
-                <table className="inventory-table">
+                <table className="data-table inventory-table">
                   <colgroup>
                     {selectMode && <col style={{ width: "fit-content" }} />}
                     <col style={{ width: "fit-content" }} />

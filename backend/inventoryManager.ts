@@ -28,7 +28,7 @@ function colLetter(idx: number): string {
 }
 
 /* MARK: LOCAL TYPES */
-interface WooConfig {
+export interface WooConfig {
   storeUrl: string;
   consumerKey: string;
   consumerSecret: string;
@@ -53,7 +53,7 @@ interface StockSyncRequestChange {
  * Uses staging credentials unless TARGET_ENV is set to "production".
  * Throws when any required WooCommerce setting is missing.
  */
-function getWooConfig(): WooConfig {
+export function getWooConfig(): WooConfig {
   const isStaging = process.env.TARGET_ENV !== "production";
   const storeUrl = isStaging
     ? process.env.WOO_STAGING_URL
@@ -101,7 +101,7 @@ function getCatalogWooStock(
  * Builds a WooCommerce REST API URL with authentication query parameters.
  * Normalizes the path and optionally appends additional query string values.
  */
-function buildWooUrl(
+export function buildWooUrl(
   woo: WooConfig,
   path: string,
   query?: Record<string, string>,

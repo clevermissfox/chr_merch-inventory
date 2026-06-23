@@ -33,7 +33,7 @@ type CatalogAction =
 
 interface CatalogContextValue {
   state: CatalogState;
-  loadCatalog: () => Promise<void>;
+  loadCatalog: (options?: { withStock?: boolean }) => Promise<void>;
   setStockQty: (
     sku: string,
     stockQty: number | "",
@@ -141,15 +141,17 @@ const CatalogContext = createContext<CatalogContextValue | undefined>(
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(catalogReducer, initialState);
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (options?: { withStock?: boolean }) => {
     dispatch({ type: "LOAD_START" });
 
+    const url = options?.withStock
+      ? "/api/catalog/inventory/get_stock"
+      : "/api/catalog";
+
     try {
-      const response = await fetch("/api/catalog/inventory/get_stock", {
+      const response = await fetch(url, {
         method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
+        headers: { Accept: "application/json" },
       });
 
       const data = await response.json();
@@ -237,7 +239,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           dirtyBySku: state.dirtyBySku,
           mode,
         });
-        await loadCatalog();
+        await loadCatalog({ withStock: true });
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to sync stock";
@@ -283,7 +285,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           mode: "standard_sync",
         });
 
-        await loadCatalog();
+        await loadCatalog({ withStock: true });
 
         const updatedSkus: unknown[] = Array.isArray(data?.updatedSkus)
           ? data.updatedSkus
@@ -332,7 +334,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         mode: "resolve_conflicts",
       });
 
-      await loadCatalog();
+      await loadCatalog({ withStock: true });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to resolve conflicts";

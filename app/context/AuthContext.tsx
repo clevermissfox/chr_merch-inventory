@@ -21,10 +21,10 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setisLoading] = useState(true);
 
   const refreshAuth = useCallback(async () => {
-    setIsLoading(true);
+    setisLoading(true);
 
     try {
       const response = await fetch("/api/auth/status", {
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setUser(null);
     } finally {
-      setIsLoading(false);
+      setisLoading(false);
     }
   }, []);
 

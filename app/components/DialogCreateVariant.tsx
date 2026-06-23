@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, RefData } from "~/types/catalog";
-import AddNewRef from "./AddNewRef";
+import RefAddNew from "./RefAddNew";
 
 interface DialogCreateVariantProps {
   group: CatalogGroup;
@@ -19,8 +19,12 @@ export default function DialogCreateVariant({
   const [metaError, setMetaError] = useState<string | null>(null);
   const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
   const [selectedSizes, setSelectedSizes] = useState<Set<string>>(new Set());
+  const [selectedDimensions, setSelectedDimensions] = useState<Set<string>>(
+    new Set(),
+  );
   const [priceVariant, setPriceVariant] = useState("");
   const [weightOzVariant, setWeightOzVariant] = useState("");
+  const [descriptionVariant, setDescriptionVariant] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -49,10 +53,19 @@ export default function DialogCreateVariant({
       return next;
     });
 
-  const variantCount =
-    selectedColors.size && selectedSizes.size
-      ? selectedColors.size * selectedSizes.size
-      : selectedColors.size + selectedSizes.size;
+  const toggleDimension = (value: string) =>
+    setSelectedDimensions((prev) => {
+      const next = new Set(prev);
+      next.has(value) ? next.delete(value) : next.add(value);
+      return next;
+    });
+
+  const axes = [
+    selectedColors.size,
+    selectedSizes.size,
+    selectedDimensions.size,
+  ].filter((n) => n > 0);
+  const variantCount = axes.length > 0 ? axes.reduce((a, b) => a * b, 1) : 0;
 
   const canSubmit = variantCount > 0;
 
@@ -73,8 +86,10 @@ export default function DialogCreateVariant({
             productId: group.productId,
             colors: Array.from(selectedColors),
             sizes: Array.from(selectedSizes),
+            dimensions: Array.from(selectedDimensions),
             priceVariant: priceVariant || undefined,
             weightOzVariant: weightOzVariant || undefined,
+            descriptionVariant: descriptionVariant || undefined,
           }),
         },
       );
@@ -88,8 +103,8 @@ export default function DialogCreateVariant({
   };
 
   return (
-    <dialog ref={ref} className="dialog dialog-variant" onCancel={onClose}>
-      <div className="card grid gap-1half">
+    <dialog ref={ref} className="dialog dialog-variant card" onCancel={onClose}>
+      <div className="grid gap-1half dialog-inner dialog-variant-inner">
         <div className="row jc-sb ai-cen">
           <div>
             <h2>Add Variants</h2>
@@ -97,7 +112,6 @@ export default function DialogCreateVariant({
           </div>
           <button
             type="button"
-            className="btn-icon"
             onClick={onClose}
             aria-label="Close"
             disabled={submitting}
@@ -105,37 +119,36 @@ export default function DialogCreateVariant({
             <X aria-hidden="true" />
           </button>
         </div>
-
         {metaError && (
-          <div role="alert" className="status-line" data-tone="error">
+          <p role="alert" className="status-line" data-tone="error">
             {metaError}
-          </div>
+          </p>
         )}
-
         {!refData && !metaError && (
-          <div role="status" className="status-line">
-            Loading options… <span className="loader" />
-          </div>
+          <p role="status" className="status-line" data-tone="loading">
+            Loading options…
+          </p>
         )}
-
         {refData && (
           <form className="grid gap-1" onSubmit={handleSubmit}>
             <fieldset className="form-fieldset">
               <legend className="bold">Colors</legend>
               <div className="check-grid">
-                {refData.colors.map((c) => (
-                  <label key={c.value} className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={selectedColors.has(c.value)}
-                      onChange={() => toggleColor(c.value)}
-                      disabled={submitting}
-                    />
-                    <span>{c.value}</span>
-                  </label>
-                ))}
+                {[...refData.colors]
+                  .sort((a, b) => a.value.localeCompare(b.value))
+                  .map((c) => (
+                    <label key={c.value} className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={selectedColors.has(c.value)}
+                        onChange={() => toggleColor(c.value)}
+                        disabled={submitting}
+                      />
+                      <span>{c.value}</span>
+                    </label>
+                  ))}
               </div>
-              <AddNewRef
+              <RefAddNew
                 refType="color"
                 existingValues={refData.colors.map((c) => c.value)}
                 existingCodes={refData.colors.map((c) => c.code)}
@@ -150,23 +163,24 @@ export default function DialogCreateVariant({
                 disabled={submitting}
               />
             </fieldset>
-
             <fieldset className="form-fieldset">
               <legend className="bold">Sizes</legend>
               <div className="check-grid">
-                {refData.sizes.map((s) => (
-                  <label key={s.value} className="check-label">
-                    <input
-                      type="checkbox"
-                      checked={selectedSizes.has(s.value)}
-                      onChange={() => toggleSize(s.value)}
-                      disabled={submitting}
-                    />
-                    <span>{s.value}</span>
-                  </label>
-                ))}
+                {[...refData.sizes]
+                  .sort((a, b) => a.value.localeCompare(b.value))
+                  .map((s) => (
+                    <label key={s.value} className="check-label">
+                      <input
+                        type="checkbox"
+                        checked={selectedSizes.has(s.value)}
+                        onChange={() => toggleSize(s.value)}
+                        disabled={submitting}
+                      />
+                      <span>{s.value}</span>
+                    </label>
+                  ))}
               </div>
-              <AddNewRef
+              <RefAddNew
                 refType="size"
                 existingValues={refData.sizes.map((s) => s.value)}
                 existingCodes={refData.sizes.map((s) => s.code)}
@@ -181,7 +195,46 @@ export default function DialogCreateVariant({
                 disabled={submitting}
               />
             </fieldset>
-
+            {refData.dimensions.length > 0 && (
+              <fieldset className="form-fieldset">
+                <legend className="bold">
+                  Dimensions{" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </legend>
+                <div className="check-grid">
+                  {[...refData.dimensions]
+                    .sort((a, b) => a.value.localeCompare(b.value))
+                    .map((d) => (
+                      <label key={d.value} className="check-label">
+                        <input
+                          type="checkbox"
+                          checked={selectedDimensions.has(d.value)}
+                          onChange={() => toggleDimension(d.value)}
+                          disabled={submitting}
+                        />
+                        <span>{d.value}</span>
+                      </label>
+                    ))}
+                </div>
+                <RefAddNew
+                  refType="dimension"
+                  existingValues={refData.dimensions.map((d) => d.value)}
+                  existingCodes={refData.dimensions.map((d) => d.code)}
+                  onAdded={({ value, code }) => {
+                    setRefData((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            dimensions: [...prev.dimensions, { value, code }],
+                          }
+                        : prev,
+                    );
+                    setSelectedDimensions((prev) => new Set([...prev, value]));
+                  }}
+                  disabled={submitting}
+                />
+              </fieldset>
+            )}
             <div className="row gap-1 fw-wrap">
               <div className="form-group flex-1">
                 <label htmlFor="cv-price">
@@ -195,6 +248,9 @@ export default function DialogCreateVariant({
                   step="0.01"
                   value={priceVariant}
                   onChange={(e) => setPriceVariant(e.target.value)}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
                   placeholder={group.basePriceDollars}
                   disabled={submitting}
                 />
@@ -211,30 +267,61 @@ export default function DialogCreateVariant({
                   step="0.1"
                   value={weightOzVariant}
                   onChange={(e) => setWeightOzVariant(e.target.value)}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
                   placeholder={group.weightOz ?? ""}
                   disabled={submitting}
                 />
               </div>
             </div>
-
+            <div className="form-group">
+              <label htmlFor="cv-desc">
+                Variant Description{" "}
+                <span className="clr-muted xsmall">(optional)</span>
+              </label>
+              <textarea
+                id="cv-desc"
+                value={descriptionVariant}
+                onChange={(e) => setDescriptionVariant(e.target.value)}
+                placeholder="Describe what's unique about this variant…"
+                rows={3}
+                disabled={submitting}
+              />
+            </div>
             {canSubmit && (
               <p className="small clr-muted">
                 Will create{" "}
                 <strong>
                   {variantCount} variant{variantCount !== 1 ? "s" : ""}
                 </strong>
-                {selectedColors.size && selectedSizes.size
-                  ? ` (${selectedColors.size} color${selectedColors.size !== 1 ? "s" : ""} × ${selectedSizes.size} size${selectedSizes.size !== 1 ? "s" : ""})`
-                  : ""}
+                {axes.length > 1 && (
+                  <>
+                    {" "}
+                    (
+                    {[
+                      selectedColors.size
+                        ? `${selectedColors.size} color${selectedColors.size !== 1 ? "s" : ""}`
+                        : null,
+                      selectedSizes.size
+                        ? `${selectedSizes.size} size${selectedSizes.size !== 1 ? "s" : ""}`
+                        : null,
+                      selectedDimensions.size
+                        ? `${selectedDimensions.size} dimension${selectedDimensions.size !== 1 ? "s" : ""}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" × ")}
+                    )
+                  </>
+                )}
               </p>
             )}
-
             {submitError && (
-              <div role="alert" className="status-line" data-tone="error">
+              <p role="alert" className="status-line" data-tone="error">
                 {submitError}
-              </div>
+              </p>
             )}
-
             <div className="row gap-1 jc-end">
               <button
                 type="button"
@@ -251,7 +338,8 @@ export default function DialogCreateVariant({
               >
                 {submitting ? (
                   <>
-                    Creating… <span className="loader" />
+                    <span className="loader" aria-hidden="true" />
+                    <span>Creating… </span>
                   </>
                 ) : (
                   `Add ${variantCount || ""} Variant${variantCount !== 1 ? "s" : ""}`
