@@ -120,6 +120,10 @@
   flex-wrap: wrap;
 }
 
+.fw-wrap-reverse {
+  flex-wrap: wrap-reverse;
+}
+
 .fw-nowrap {
   flex-wrap: nowrap;
 }

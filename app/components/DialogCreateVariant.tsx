@@ -1,7 +1,14 @@
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, RefData } from "~/types/catalog";
+import { sizeRank } from "~/utils/sizeUtils";
+import FormGroupRef from "./FormGroupRef";
 import RefAddNew from "./RefAddNew";
+
+function parseDimCode(code: string): [number, number] {
+  const parts = code.toUpperCase().split("X");
+  return [Number(parts[0]) || 0, Number(parts[1]) || 0];
+}
 
 interface DialogCreateVariantProps {
   group: CatalogGroup;
@@ -22,7 +29,8 @@ export default function DialogCreateVariant({
   const [selectedDimensions, setSelectedDimensions] = useState<Set<string>>(
     new Set(),
   );
-  const [priceVariant, setPriceVariant] = useState("");
+  const [design, setDesign] = useState("");
+  const [designVariant, setDesignVariant] = useState("");
   const [weightOzVariant, setWeightOzVariant] = useState("");
   const [descriptionVariant, setDescriptionVariant] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -87,7 +95,8 @@ export default function DialogCreateVariant({
             colors: Array.from(selectedColors),
             sizes: Array.from(selectedSizes),
             dimensions: Array.from(selectedDimensions),
-            priceVariant: priceVariant || undefined,
+            design: design || undefined,
+            designVariant: designVariant || undefined,
             weightOzVariant: weightOzVariant || undefined,
             descriptionVariant: descriptionVariant || undefined,
           }),
@@ -106,10 +115,10 @@ export default function DialogCreateVariant({
     <dialog ref={ref} className="dialog dialog-variant card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner dialog-variant-inner">
         <div className="row jc-sb ai-cen">
-          <div>
+          <hgroup>
             <h2>Add Variants</h2>
             <p className="small clr-muted">{group.displayName}</p>
-          </div>
+          </hgroup>
           <button
             type="button"
             onClick={onClose}
@@ -167,7 +176,12 @@ export default function DialogCreateVariant({
               <legend className="bold">Sizes</legend>
               <div className="check-grid">
                 {[...refData.sizes]
-                  .sort((a, b) => a.value.localeCompare(b.value))
+                  .sort((a, b) => {
+                    const ra = sizeRank(a.value),
+                      rb = sizeRank(b.value);
+                    if (ra !== rb) return ra - rb;
+                    return a.value.localeCompare(b.value);
+                  })
                   .map((s) => (
                     <label key={s.value} className="check-label">
                       <input
@@ -203,7 +217,11 @@ export default function DialogCreateVariant({
                 </legend>
                 <div className="check-grid">
                   {[...refData.dimensions]
-                    .sort((a, b) => a.value.localeCompare(b.value))
+                    .sort((a, b) => {
+                      const [aw, ah] = parseDimCode(a.code);
+                      const [bw, bh] = parseDimCode(b.code);
+                      return aw !== bw ? aw - bw : ah - bh;
+                    })
                     .map((d) => (
                       <label key={d.value} className="check-label">
                         <input
@@ -235,48 +253,110 @@ export default function DialogCreateVariant({
                 />
               </fieldset>
             )}
-            <div className="row gap-1 fw-wrap">
-              <div className="form-group flex-1">
-                <label htmlFor="cv-price">
-                  Price Override ($){" "}
-                  <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <input
-                  id="cv-price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={priceVariant}
-                  onChange={(e) => setPriceVariant(e.target.value)}
-                  onKeyDown={(e) =>
-                    (e.key === "-" || e.key === "e") && e.preventDefault()
-                  }
-                  placeholder={group.basePriceDollars}
+            {refData.graphics.length > 0 && (
+              <FormGroupRef
+                label={
+                  <>
+                    Design <span className="clr-muted xsmall">(optional)</span>
+                  </>
+                }
+                htmlFor="cv-design"
+                refType="graphic"
+                existingValues={refData.graphics}
+                existingCodes={[]}
+                onAdded={({ value }) => {
+                  setRefData((prev) =>
+                    prev
+                      ? { ...prev, graphics: [...prev.graphics, value] }
+                      : prev,
+                  );
+                  setDesign(value);
+                }}
+                disabled={submitting}
+              >
+                <select
+                  id="cv-design"
+                  value={design}
+                  onChange={(e) => setDesign(e.target.value)}
                   disabled={submitting}
-                />
-              </div>
-              <div className="form-group flex-1">
-                <label htmlFor="cv-weight">
-                  Weight Override (oz){" "}
-                  <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <input
-                  id="cv-weight"
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={weightOzVariant}
-                  onChange={(e) => setWeightOzVariant(e.target.value)}
-                  onKeyDown={(e) =>
-                    (e.key === "-" || e.key === "e") && e.preventDefault()
-                  }
-                  placeholder={group.weightOz ?? ""}
+                >
+                  <option value="">— none —</option>
+                  {[...refData.graphics]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                </select>
+              </FormGroupRef>
+            )}
+            {refData.graphicsVariants.length > 0 && (
+              <FormGroupRef
+                label={
+                  <>
+                    Design variant{" "}
+                    <span className="clr-muted xsmall">(optional)</span>
+                  </>
+                }
+                htmlFor="cv-design-variant"
+                refType="graphicsVariant"
+                existingValues={refData.graphicsVariants.map((g) => g.value)}
+                existingCodes={refData.graphicsVariants.map((g) => g.code)}
+                onAdded={({ value, code }) => {
+                  setRefData((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          graphicsVariants: [
+                            ...prev.graphicsVariants,
+                            { value, code },
+                          ],
+                        }
+                      : prev,
+                  );
+                  setDesignVariant(value);
+                }}
+                disabled={submitting}
+              >
+                <select
+                  id="cv-design-variant"
+                  value={designVariant}
+                  onChange={(e) => setDesignVariant(e.target.value)}
                   disabled={submitting}
-                />
-              </div>
+                >
+                  <option value="">— none —</option>
+                  {[...refData.graphicsVariants]
+                    .sort((a, b) => a.value.localeCompare(b.value))
+                    .map((g) => (
+                      <option key={g.value} value={g.value}>
+                        {g.value} ({g.code})
+                      </option>
+                    ))}
+                </select>
+              </FormGroupRef>
+            )}
+            <div className="form-group">
+              <label htmlFor="cv-weight" className="bold">
+                Weight Override (oz){" "}
+                <span className="clr-muted xsmall">(optional)</span>
+              </label>
+              <input
+                id="cv-weight"
+                type="number"
+                min="0"
+                step="0.001"
+                value={weightOzVariant}
+                onChange={(e) => setWeightOzVariant(e.target.value)}
+                onKeyDown={(e) =>
+                  (e.key === "-" || e.key === "e") && e.preventDefault()
+                }
+                placeholder={group.weightOz ?? ""}
+                disabled={submitting}
+              />
             </div>
             <div className="form-group">
-              <label htmlFor="cv-desc">
+              <label htmlFor="cv-desc" className="bold">
                 Variant Description{" "}
                 <span className="clr-muted xsmall">(optional)</span>
               </label>
@@ -322,15 +402,7 @@ export default function DialogCreateVariant({
                 {submitError}
               </p>
             )}
-            <div className="row gap-1 jc-end">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={onClose}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
+            <div className="row gap-1  fw-wrap">
               <button
                 type="submit"
                 className="btn-primary row gap-half ai-cen"
@@ -342,8 +414,22 @@ export default function DialogCreateVariant({
                     <span>Creating… </span>
                   </>
                 ) : (
-                  `Add ${variantCount || ""} Variant${variantCount !== 1 ? "s" : ""}`
+                  <>
+                    <Plus aria-hidden="true" />
+                    <span>
+                      Add {variantCount || ""} Variant
+                      {variantCount > 1 ? "s" : ""}
+                    </span>
+                  </>
                 )}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
               </button>
             </div>
           </form>

@@ -71,15 +71,7 @@ export default function DialogConfirm({
         <div className="dialog-confirm-actions">
           <button
             type="button"
-            className="btn-secondary"
-            onClick={onCancel}
-            disabled={inFlight}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={`btn-${confirmVariant} row ai-cen gap-half`}
+            className={`btn-primary btn-${confirmVariant} row ai-cen gap-half`}
             onClick={onConfirm}
             disabled={inFlight}
           >
@@ -89,6 +81,14 @@ export default function DialogConfirm({
                 ? confirmingLabel
                 : confirmLabel}
             </span>
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onCancel}
+            disabled={inFlight}
+          >
+            Cancel
           </button>
         </div>
       </div>

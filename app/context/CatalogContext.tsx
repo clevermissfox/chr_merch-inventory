@@ -254,7 +254,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const syncSelectedSkus = useCallback(
     async (skus: string[]): Promise<SyncResult> => {
       if (!state.catalog || skus.length === 0) {
-        return { updatedCount: 0, skippedCount: 0 };
+        return { updatedCount: 0, skippedCount: 0, skipped: [] };
       }
 
       const rowBySku = new Map(
@@ -290,11 +290,17 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         const updatedSkus: unknown[] = Array.isArray(data?.updatedSkus)
           ? data.updatedSkus
           : [];
-        const skipped: unknown[] = Array.isArray(data?.skipped)
+        const skipped: Array<{ sku: string; reason: string }> = Array.isArray(
+          data?.skipped,
+        )
           ? data.skipped
           : [];
 
-        return { updatedCount: updatedSkus.length, skippedCount: skipped.length };
+        return {
+          updatedCount: updatedSkus.length,
+          skippedCount: skipped.length,
+          skipped,
+        };
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to sync stock";

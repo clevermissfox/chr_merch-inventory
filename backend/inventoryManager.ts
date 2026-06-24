@@ -458,10 +458,20 @@ export function buildInventoryIndexUpdates(
       fields.stock_qty = stockQty == null ? "" : stockQty;
     }
 
-    updates.push({
-      sku,
-      fields,
-    });
+    updates.push({ sku, fields });
+  }
+
+  // Write stock_qty for dirty SKUs with no Woo presence (e.g. draft/unpublished products).
+  // No woo_stock or last_sync_at — those only apply once the product is on the site.
+  if (stockQtyBySku) {
+    for (const [sku, stockQty] of stockQtyBySku.entries()) {
+      if (wooQtyBySku.has(sku)) continue; // already handled above
+      if (touchedSkus && !touchedSkus.has(sku)) continue;
+      updates.push({
+        sku,
+        fields: { stock_qty: stockQty == null ? "" : stockQty },
+      });
+    }
   }
 
   return updates;

@@ -1,5 +1,6 @@
 import { Pencil, Plus } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { sizeRank } from "~/utils/sizeUtils";
 import { suggestCode } from "~/utils/suggestCode";
 
 export type RefAddType =
@@ -63,6 +64,7 @@ interface RefAddNewProps {
   parentDisplayName?: string;
   onExpandedChange?: (expanded: boolean) => void;
   disabled?: boolean;
+  startExpanded?: boolean;
 }
 
 export default function RefAddNew({
@@ -74,6 +76,7 @@ export default function RefAddNew({
   parentDisplayName,
   onExpandedChange,
   disabled,
+  startExpanded,
 }: RefAddNewProps) {
   const rawId = useId();
   const uid = `raf-${refType}-${rawId.replace(/\W/g, "")}`;
@@ -81,7 +84,7 @@ export default function RefAddNew({
   const isCategoryType = CATEGORY_TYPES.has(refType);
   const isSubcategory = refType === "subcategory";
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(startExpanded ?? false);
   const [value, setValue] = useState("");
   const [code, setCode] = useState("");
   const [codeConflict, setCodeConflict] = useState(false);
@@ -123,7 +126,11 @@ export default function RefAddNew({
     if (refType === "dimension") {
       // Derive code from digits and X-separator only (e.g. 6"x2" → 6X2, 12x2 → 12X2)
       const upper = existingCodes.map((c) => c.toUpperCase());
-      suggestedCode = value.trim().toUpperCase().replace(/[^0-9X]/g, "").slice(0, 4);
+      suggestedCode = value
+        .trim()
+        .toUpperCase()
+        .replace(/[^0-9X]/g, "")
+        .slice(0, 4);
       hasConflict = suggestedCode.length < 2 || upper.includes(suggestedCode);
     } else {
       const suggestion = suggestCode(value.trim(), existingCodes);
@@ -144,12 +151,21 @@ export default function RefAddNew({
     }
   }, [value, isSubcategory, labelTouched]);
 
-  const isDuplicate = existingValues.some(
-    (v) => v.toLowerCase() === value.trim().toLowerCase(),
-  );
+  const minCodeLen = refType === "size" ? 2 : 3;
+
+  const newSizeRank = refType === "size" ? sizeRank(value.trim()) : 999;
+  const aliasConflict =
+    newSizeRank !== 999
+      ? (existingValues.find((v) => sizeRank(v) === newSizeRank) ?? null)
+      : null;
+  const isDuplicate =
+    existingValues.some(
+      (v) => v.toLowerCase() === value.trim().toLowerCase(),
+    ) || aliasConflict !== null;
+
   const codeInUse =
     isCoded &&
-    code.length >= 3 &&
+    code.length >= minCodeLen &&
     existingCodes.map((c) => c.toUpperCase()).includes(code.toUpperCase());
 
   const subcatMissingParent = isSubcategory && parentWooId == null;
@@ -158,7 +174,7 @@ export default function RefAddNew({
     value.trim().length > 0 &&
     !isDuplicate &&
     !subcatMissingParent &&
-    (!isCoded || (code.length >= 3 && !codeInUse));
+    (!isCoded || (code.length >= minCodeLen && !codeInUse));
 
   const handleAdd = async () => {
     if (!canSubmit) return;
@@ -209,7 +225,7 @@ export default function RefAddNew({
     return (
       <button
         type="button"
-        className="ref-add__trigger btn-ghost row gap-quarter ai-cen"
+        className="ref-add__trigger btn-ghost margin-is-auto row gap-quarter ai-cen"
         onClick={() => setExpandedWithCallback(true)}
         disabled={triggerDisabled}
         title={triggerTitle}
@@ -246,11 +262,11 @@ export default function RefAddNew({
           </p>
         )}
         {isDuplicate && (
-          <p
-            role="alert"
-            className="ref-add__hint ref-add__hint--warn"
-          >
-            "{value.trim()}" already exists
+          <p role="alert" className="ref-add__hint ref-add__hint--warn">
+            {aliasConflict &&
+            aliasConflict.toLowerCase() !== value.trim().toLowerCase()
+              ? `"${value.trim()}" already exists as "${aliasConflict}"`
+              : `"${value.trim()}" already exists`}
           </p>
         )}
       </div>
@@ -273,22 +289,22 @@ export default function RefAddNew({
                   setCode(
                     e.target.value
                       .toUpperCase()
-                      .replace(refType === "dimension" ? /[^A-Z0-9]/g : /[^A-Z]/g, "")
+                      .replace(
+                        refType === "dimension" ? /[^A-Z0-9]/g : /[^A-Z]/g,
+                        "",
+                      )
                       .slice(0, 4),
                   )
                 }
-                minLength={3}
+                minLength={minCodeLen}
                 maxLength={4}
-                placeholder="ABC"
+                placeholder={refType === "size" ? "AB" : "ABC"}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
                 disabled={submitting}
                 className="ref-add__code-input"
               />
-              {code.length >= 3 && codeInUse && (
-                <p
-                  role="alert"
-                  className="ref-add__hint ref-add__hint--warn"
-                >
+              {code.length >= minCodeLen && codeInUse && (
+                <p role="alert" className="ref-add__hint ref-add__hint--warn">
                   "{code}" is already in use
                 </p>
               )}
@@ -300,7 +316,6 @@ export default function RefAddNew({
               </p>
               <button
                 type="button"
-                className="btn-icon"
                 onClick={() => setCodeEditable(true)}
                 title="Edit code"
                 disabled={submitting}
@@ -358,7 +373,7 @@ export default function RefAddNew({
         </button>
         <button
           type="button"
-          className="btn-ghost"
+          className="btn-secondary"
           onClick={collapse}
           disabled={submitting}
         >

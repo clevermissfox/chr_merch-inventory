@@ -1,7 +1,7 @@
 import { CircleQuestionMark, X, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NewProductFields, RefData } from "~/types/catalog";
-import RefAddNew from "./RefAddNew";
+import FormGroupRef from "./FormGroupRef";
 
 interface DialogCreateProductProps {
   onClose: () => void;
@@ -12,20 +12,34 @@ interface FormState {
   category: string;
   subcategory: string;
   basePriceDollars: string;
+  salePriceDollars: string;
+  publishedStatus: string;
   weightOz: string;
   displayName: string;
   design: string;
   styleModifier: string;
+  dimensionsWidth: string;
+  dimensionsHeight: string;
+  dimensionsDepth: string;
+  primaryDescription: string;
+  shortDescription: string;
 }
 
 const empty: FormState = {
   category: "",
   subcategory: "",
   basePriceDollars: "",
+  salePriceDollars: "",
+  publishedStatus: "draft",
   weightOz: "",
   displayName: "",
   design: "",
   styleModifier: "",
+  dimensionsWidth: "",
+  dimensionsHeight: "",
+  dimensionsDepth: "",
+  primaryDescription: "",
+  shortDescription: "",
 };
 
 export default function DialogCreateProduct({
@@ -39,6 +53,8 @@ export default function DialogCreateProduct({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showCatHelp, setShowCatHelp] = useState(false);
+  const [showPrimaryDescHelp, setShowPrimaryDescHelp] = useState(false);
+  const [showShortDescHelp, setShowShortDescHelp] = useState(false);
   const [subcatFormOpen, setSubcatFormOpen] = useState(false);
 
   useEffect(() => {
@@ -55,7 +71,11 @@ export default function DialogCreateProduct({
 
   const set =
     (field: keyof FormState) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    (
+      e: React.ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -68,10 +88,17 @@ export default function DialogCreateProduct({
         category: form.category,
         subcategory: form.subcategory,
         basePriceDollars: form.basePriceDollars,
+        salePriceDollars: form.salePriceDollars || undefined,
+        publishedStatus: form.publishedStatus,
         weightOz: form.weightOz,
         displayName: form.displayName || undefined,
         design: form.design || undefined,
         styleModifier: form.styleModifier || undefined,
+        dimensionsWidth: form.dimensionsWidth || undefined,
+        dimensionsHeight: form.dimensionsHeight || undefined,
+        dimensionsDepth: form.dimensionsDepth || undefined,
+        primaryDescription: form.primaryDescription || undefined,
+        shortDescription: form.shortDescription || undefined,
       };
 
       const res = await fetch("/api/catalog/create_product", {
@@ -126,11 +153,11 @@ export default function DialogCreateProduct({
             className="form-product_create grid gap-1"
             onSubmit={handleSubmit}
           >
-            <div className="form-group">
-              <div className="row ai-cen gap-half">
-                <label className="bold" htmlFor="cp-category">
-                  Category
-                </label>
+            <FormGroupRef
+              label="Category"
+              htmlFor="cp-category"
+              hasRequired={true}
+              labelActions={
                 <button
                   type="button"
                   className="btn-icon btn-help"
@@ -140,13 +167,41 @@ export default function DialogCreateProduct({
                 >
                   <CircleQuestionMark aria-hidden="true" />
                 </button>
-              </div>
-              {showCatHelp && (
-                <p id="cp-category-help" className="small clr-warning">
-                  Once a product is published to the website, its category
-                  cannot be changed as the sku relies on category.
-                </p>
-              )}
+              }
+              hint={
+                <>
+                  {showCatHelp && (
+                    <p id="cp-category-help" className="xsmall clr-warning">
+                      Once a product is published to the website, its category
+                      cannot be changed as the sku relies on category.
+                    </p>
+                  )}
+                  {subcatFormOpen && (
+                    <p className="ref-add__hint clr-muted xsmall">
+                      Close the subcategory form to change category
+                    </p>
+                  )}
+                </>
+              }
+              refType="category"
+              existingValues={refData.categories.map((c) => c.value)}
+              existingCodes={refData.categories.map((c) => c.code)}
+              onAdded={({ value, code, wooId }) => {
+                setRefData((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        categories: [
+                          ...prev.categories,
+                          { value, code, wooId: wooId ?? null },
+                        ],
+                      }
+                    : prev,
+                );
+                setForm((f) => ({ ...f, category: value }));
+              }}
+              disabled={submitting || subcatFormOpen}
+            >
               <select
                 id="cp-category"
                 value={form.category}
@@ -160,41 +215,47 @@ export default function DialogCreateProduct({
                   .sort((a, b) => a.value.localeCompare(b.value))
                   .map((c) => (
                     <option key={c.code} value={c.value}>
-                      {c.value} ({c.code})
+                      {c.value.charAt(0).toUpperCase() + c.value.slice(1)} (
+                      {c.code})
                     </option>
                   ))}
               </select>
-              {subcatFormOpen && (
-                <p className="ref-add__hint clr-muted xsmall">
-                  Close the subcategory form to change category
-                </p>
-              )}
-              <RefAddNew
-                refType="category"
-                existingValues={refData.categories.map((c) => c.value)}
-                existingCodes={refData.categories.map((c) => c.code)}
-                onAdded={({ value, code, wooId }) => {
-                  setRefData((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          categories: [
-                            ...prev.categories,
-                            { value, code, wooId: wooId ?? null },
-                          ],
-                        }
-                      : prev,
-                  );
-                  setForm((f) => ({ ...f, category: value }));
-                }}
-                disabled={submitting || subcatFormOpen}
-              />
-            </div>
+            </FormGroupRef>
 
-            <div className="form-group">
-              <label className="bold" htmlFor="cp-subcategory">
-                Subcategory
-              </label>
+            <FormGroupRef
+              label="Subcategory"
+              htmlFor="cp-subcategory"
+              hasRequired={true}
+              refType="subcategory"
+              existingValues={refData.subcategories.map((s) => s.value)}
+              existingCodes={refData.subcategories.map((s) => s.code)}
+              parentWooId={
+                refData.categories.find((c) => c.value === form.category)
+                  ?.wooId ?? null
+              }
+              parentDisplayName={form.category || undefined}
+              onExpandedChange={setSubcatFormOpen}
+              onAdded={({ value, code, wooId, label }) => {
+                setRefData((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        subcategories: [
+                          ...prev.subcategories,
+                          {
+                            value,
+                            code,
+                            label: label ?? value,
+                            wooId: wooId ?? null,
+                          },
+                        ],
+                      }
+                    : prev,
+                );
+                setForm((f) => ({ ...f, subcategory: value }));
+              }}
+              disabled={submitting}
+            >
               <select
                 id="cp-subcategory"
                 value={form.subcategory}
@@ -213,44 +274,9 @@ export default function DialogCreateProduct({
                     </option>
                   ))}
               </select>
-              {(() => {
-                const selectedCat = refData.categories.find(
-                  (c) => c.value === form.category,
-                );
-                return (
-                  <RefAddNew
-                    refType="subcategory"
-                    existingValues={refData.subcategories.map((s) => s.value)}
-                    existingCodes={refData.subcategories.map((s) => s.code)}
-                    parentWooId={selectedCat?.wooId ?? null}
-                    parentDisplayName={form.category || undefined}
-                    onExpandedChange={setSubcatFormOpen}
-                    onAdded={({ value, code, wooId, label }) => {
-                      setRefData((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              subcategories: [
-                                ...prev.subcategories,
-                                {
-                                  value,
-                                  code,
-                                  label: label ?? value,
-                                  wooId: wooId ?? null,
-                                },
-                              ],
-                            }
-                          : prev,
-                      );
-                      setForm((f) => ({ ...f, subcategory: value }));
-                    }}
-                    disabled={submitting}
-                  />
-                );
-              })()}
-            </div>
+            </FormGroupRef>
 
-            <div className="row gap-1 fw-wrap">
+            <div className="row gap-1 fw-wrap ai-end">
               <div className="form-group flex-1">
                 <label className="bold" htmlFor="cp-price">
                   Base Price ($)
@@ -272,6 +298,26 @@ export default function DialogCreateProduct({
               </div>
 
               <div className="form-group flex-1">
+                <label htmlFor="cp-sale-price" className="bold">
+                  Sale Price ($){" "}
+                  <span className="muted xsmall">(optional)</span>
+                </label>
+                <input
+                  id="cp-sale-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.salePriceDollars}
+                  onChange={set("salePriceDollars")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  placeholder="0.00"
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="form-group flex-1">
                 <label className="bold" htmlFor="cp-weight">
                   Weight (oz)
                 </label>
@@ -279,7 +325,7 @@ export default function DialogCreateProduct({
                   id="cp-weight"
                   type="number"
                   min="0"
-                  step="0.1"
+                  step="0.001"
                   value={form.weightOz}
                   onChange={set("weightOz")}
                   onKeyDown={(e) =>
@@ -290,6 +336,23 @@ export default function DialogCreateProduct({
                   disabled={submitting}
                 />
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="bold" htmlFor="cp-published-status">
+                Published status{" "}
+                <span className="clr-muted xsmall">(optional — defaults to draft)</span>
+              </label>
+              <select
+                id="cp-published-status"
+                value={form.publishedStatus}
+                onChange={set("publishedStatus")}
+                disabled={submitting}
+              >
+                <option value="draft">Draft</option>
+                <option value="publish">Published</option>
+                <option value="private">Private</option>
+              </select>
             </div>
 
             <div className="form-group">
@@ -307,10 +370,26 @@ export default function DialogCreateProduct({
               />
             </div>
 
-            <div className="form-group">
-              <label className="bold" htmlFor="cp-design">
-                Design <span className="clr-muted xsmall">(optional)</span>
-              </label>
+            <FormGroupRef
+              label={
+                <>
+                  Design <span className="clr-muted xsmall">(optional)</span>
+                </>
+              }
+              htmlFor="cp-design"
+              refType="graphic"
+              existingValues={refData.graphics}
+              existingCodes={[]}
+              onAdded={({ value }) => {
+                setRefData((prev) =>
+                  prev
+                    ? { ...prev, graphics: [...prev.graphics, value] }
+                    : prev,
+                );
+                setForm((f) => ({ ...f, design: value }));
+              }}
+              disabled={submitting}
+            >
               <select
                 id="cp-design"
                 value={form.design}
@@ -326,27 +405,27 @@ export default function DialogCreateProduct({
                     </option>
                   ))}
               </select>
-              <RefAddNew
-                refType="graphic"
-                existingValues={refData.graphics}
-                existingCodes={[]}
-                onAdded={({ value }) => {
-                  setRefData((prev) =>
-                    prev
-                      ? { ...prev, graphics: [...prev.graphics, value] }
-                      : prev,
-                  );
-                  setForm((f) => ({ ...f, design: value }));
-                }}
-                disabled={submitting}
-              />
-            </div>
+            </FormGroupRef>
 
-            <div className="form-group">
-              <label className="bold" htmlFor="cp-style">
-                Style Modifier{" "}
-                <span className="clr-muted xsmall">(optional)</span>
-              </label>
+            <FormGroupRef
+              label={
+                <>
+                  Style Modifier{" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </>
+              }
+              htmlFor="cp-style"
+              refType="style"
+              existingValues={refData.styles}
+              existingCodes={[]}
+              onAdded={({ value }) => {
+                setRefData((prev) =>
+                  prev ? { ...prev, styles: [...prev.styles, value] } : prev,
+                );
+                setForm((f) => ({ ...f, styleModifier: value }));
+              }}
+              disabled={submitting}
+            >
               <select
                 id="cp-style"
                 value={form.styleModifier}
@@ -362,16 +441,117 @@ export default function DialogCreateProduct({
                     </option>
                   ))}
               </select>
-              <RefAddNew
-                refType="style"
-                existingValues={refData.styles}
-                existingCodes={[]}
-                onAdded={({ value }) => {
-                  setRefData((prev) =>
-                    prev ? { ...prev, styles: [...prev.styles, value] } : prev,
-                  );
-                  setForm((f) => ({ ...f, styleModifier: value }));
-                }}
+            </FormGroupRef>
+
+            <fieldset className="form-fieldset grid gap-half">
+              <legend>
+                Dimensions <span className="clr-muted xsmall">(optional)</span>
+              </legend>
+              <div className="row gap-1 fw-wrap">
+                <div className="form-group flex-1">
+                  <label htmlFor="cp-dim-w" className="bold">
+                    Width (in)
+                  </label>
+                  <input
+                    id="cp-dim-w"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.dimensionsWidth}
+                    onChange={set("dimensionsWidth")}
+                    disabled={submitting}
+                  />
+                </div>
+                <div className="form-group flex-1">
+                  <label htmlFor="cp-dim-h" className="bold">
+                    Height (in)
+                  </label>
+                  <input
+                    id="cp-dim-h"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.dimensionsHeight}
+                    onChange={set("dimensionsHeight")}
+                    disabled={submitting}
+                  />
+                </div>
+                <div className="form-group flex-1">
+                  <label htmlFor="cp-dim-d" className="bold">
+                    Depth (in)
+                  </label>
+                  <input
+                    id="cp-dim-d"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.dimensionsDepth}
+                    onChange={set("dimensionsDepth")}
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
+            </fieldset>
+
+            <div className="form-group">
+              <div className="row ai-cen gap-half">
+                <label htmlFor="cp-primary-desc" className="bold">
+                  Primary description{" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn-icon btn-help"
+                  onClick={() => setShowPrimaryDescHelp((v) => !v)}
+                  aria-expanded={showPrimaryDescHelp}
+                  aria-controls="cp-primary-desc-help"
+                >
+                  <CircleQuestionMark aria-hidden="true" />
+                </button>
+              </div>
+              {showPrimaryDescHelp && (
+                <p id="cp-primary-desc-help" className="xsmall clr-warning">
+                  The full product description shown on the product page —
+                  materials, care, sizing notes, story, etc. This is the main
+                  body of content.
+                </p>
+              )}
+              <textarea
+                id="cp-primary-desc"
+                rows={4}
+                value={form.primaryDescription}
+                onChange={set("primaryDescription")}
+                disabled={submitting}
+              />
+            </div>
+
+            <div className="form-group">
+              <div className="row ai-cen gap-half">
+                <label htmlFor="cp-short-desc" className="bold">
+                  Short description{" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn-icon btn-help"
+                  onClick={() => setShowShortDescHelp((v) => !v)}
+                  aria-expanded={showShortDescHelp}
+                  aria-controls="cp-short-desc-help"
+                >
+                  <CircleQuestionMark aria-hidden="true" />
+                </button>
+              </div>
+              {showShortDescHelp && (
+                <p id="cp-short-desc-help" className="xsmall clr-warning">
+                  A 1–2 sentence summary shown in product listings and previews.
+                  Keep it brief — this is not where the full story goes.
+                </p>
+              )}
+              <textarea
+                id="cp-short-desc"
+                rows={2}
+                value={form.shortDescription}
+                onChange={set("shortDescription")}
                 disabled={submitting}
               />
             </div>
@@ -382,18 +562,10 @@ export default function DialogCreateProduct({
               </p>
             )}
 
-            <div className="row gap-1 jc-end">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={onClose}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
+            <div className="row gap-1 fw-wrap">
               <button
                 type="submit"
-                className="btn-primary row ai-cen gap-half"
+                className="btn-primary row ai-cen jc-cen gap-half flex-1"
                 disabled={!canSubmit || submitting}
               >
                 {submitting ? (
@@ -407,6 +579,14 @@ export default function DialogCreateProduct({
                     <span>Create Product</span>
                   </>
                 )}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
               </button>
             </div>
           </form>

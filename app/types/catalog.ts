@@ -21,6 +21,9 @@ export interface CatalogRow {
   priceDollars: string;
   priceVariant: string | null;
   priceCents: string;
+  salePriceDollars: string | null;
+  salePriceVariant: string | null;
+  salePriceCents: string | null;
   stockQty: number | null;
   wooStock: number | null;
   imageVariant: string | null;
@@ -44,6 +47,8 @@ export interface CatalogGroup {
   design: string | null;
   styleModifier: string | null;
   basePriceDollars: string;
+  salePriceDollars: string | null;
+  publishedStatus: string | null;
   stockQty: number | null;
   wooStock: number | null;
   category: string;
@@ -102,6 +107,7 @@ export interface DirtyStockChange {
 export interface SyncResult {
   updatedCount: number;
   skippedCount: number;
+  skipped: Array<{ sku: string; reason: string }>;
 }
 
 export interface RefData {
@@ -126,6 +132,10 @@ export interface NewProductFields {
   dimensionsWidth?: string;
   dimensionsHeight?: string;
   dimensionsDepth?: string;
+  primaryDescription?: string;
+  shortDescription?: string;
+  salePriceDollars?: string;
+  publishedStatus?: string;
 }
 
 export interface CreateProductResult {
@@ -160,6 +170,8 @@ export interface ProductSheetRow {
   design: string;
   style_modifier: string;
   base_price_dollars: string;
+  sale_price_dollars: string;
+  published_status: string;
   stock_qty: string;
   woo_stock: string;
   category: string;
@@ -193,6 +205,9 @@ export interface VariantSheetRow {
   price_dollars: string;
   price_variant: string;
   price_cents: string;
+  sale_price_dollars: string;
+  sale_price_variant: string;
+  sale_price_cents: string;
   stock_qty: string;
   woo_stock: string;
   image_variant: string;

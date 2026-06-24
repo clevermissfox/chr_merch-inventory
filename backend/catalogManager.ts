@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { sizeRank } from "~/utils/sizeUtils";
 import {
   ensureInventoryIndexRowsExist,
   loadInventoryIndexState,
@@ -409,6 +410,18 @@ export async function createProductRow(
     ...(fields.dimensionsDepth
       ? [cell("dimensions_depth", fields.dimensionsDepth)]
       : []),
+    ...(fields.primaryDescription
+      ? [cell("primary_description", fields.primaryDescription)]
+      : []),
+    ...(fields.shortDescription
+      ? [cell("short_description", fields.shortDescription)]
+      : []),
+    ...(fields.salePriceDollars
+      ? [cell("sale_price_dollars", fields.salePriceDollars)]
+      : []),
+    ...(fields.publishedStatus
+      ? [cell("published_status", fields.publishedStatus)]
+      : [cell("published_status", "draft")]),
   ];
 
   await sheets.spreadsheets.values.batchUpdate({
@@ -420,6 +433,170 @@ export async function createProductRow(
   });
 
   return { sheetRow, rowId };
+}
+
+export interface UpdateProductFields {
+  displayName?: string;
+  basePriceDollars?: string;
+  salePriceDollars?: string;
+  publishedStatus?: string;
+  weightOz?: string;
+  primaryDescription?: string;
+  shortDescription?: string;
+  dimensionsWidth?: string;
+  dimensionsHeight?: string;
+  dimensionsDepth?: string;
+}
+
+export async function updateProduct(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+  fields: UpdateProductFields,
+): Promise<void> {
+  const productData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+
+  const values = productData.data.values ?? [];
+  if (!values.length) throw new Error("products sheet returned no data");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const col = (name: string) => colByHeader(headers, name);
+  const skuIdx = col("sku");
+
+  let rowIdx = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String((values[i] as string[])[skuIdx] ?? "").trim() === sku) {
+      rowIdx = i;
+      break;
+    }
+  }
+  if (rowIdx === -1) throw new Error(`Product SKU "${sku}" not found`);
+  if (rowIdx === 1)
+    throw new Error(
+      `Product SKU "${sku}" is in the protected row 2 and cannot be edited`,
+    );
+
+  const sheetRow = rowIdx + 1;
+  const cell = (name: string, value: string) => ({
+    range: `products!${colLetter(col(name))}${sheetRow}`,
+    values: [[value]],
+  });
+
+  const writes = [
+    ...(fields.displayName !== undefined
+      ? [cell("display_name", fields.displayName)]
+      : []),
+    ...(fields.basePriceDollars !== undefined
+      ? [cell("base_price_dollars", fields.basePriceDollars)]
+      : []),
+    ...(fields.salePriceDollars !== undefined
+      ? [cell("sale_price_dollars", fields.salePriceDollars)]
+      : []),
+    ...(fields.publishedStatus !== undefined
+      ? [cell("published_status", fields.publishedStatus)]
+      : []),
+    ...(fields.weightOz !== undefined
+      ? [cell("weight_oz", fields.weightOz)]
+      : []),
+    ...(fields.primaryDescription !== undefined
+      ? [cell("primary_description", fields.primaryDescription)]
+      : []),
+    ...(fields.shortDescription !== undefined
+      ? [cell("short_description", fields.shortDescription)]
+      : []),
+    ...(fields.dimensionsWidth !== undefined
+      ? [cell("dimensions_width", fields.dimensionsWidth)]
+      : []),
+    ...(fields.dimensionsHeight !== undefined
+      ? [cell("dimensions_height", fields.dimensionsHeight)]
+      : []),
+    ...(fields.dimensionsDepth !== undefined
+      ? [cell("dimensions_depth", fields.dimensionsDepth)]
+      : []),
+  ];
+
+  if (!writes.length) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: writes,
+    },
+  });
+}
+
+export interface UpdateVariantFields {
+  priceVariant?: string;
+  salePriceVariant?: string;
+  weightOzVariant?: string;
+  descriptionVariant?: string;
+}
+
+export async function updateVariant(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+  fields: UpdateVariantFields,
+): Promise<void> {
+  const variantData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "variants_values",
+  });
+
+  const values = variantData.data.values ?? [];
+  if (!values.length) throw new Error("variants sheet returned no data");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const col = (name: string) => colByHeader(headers, name);
+  const skuIdx = col("sku");
+
+  let rowIdx = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String((values[i] as string[])[skuIdx] ?? "").trim() === sku) {
+      rowIdx = i;
+      break;
+    }
+  }
+  if (rowIdx === -1) throw new Error(`Variant SKU "${sku}" not found`);
+  if (rowIdx === 1)
+    throw new Error(
+      `Variant SKU "${sku}" is in the protected row 2 and cannot be edited`,
+    );
+
+  const sheetRow = rowIdx + 1;
+  const cell = (name: string, value: string) => ({
+    range: `variants!${colLetter(col(name))}${sheetRow}`,
+    values: [[value]],
+  });
+
+  const writes = [
+    ...(fields.priceVariant !== undefined
+      ? [cell("price_variant", fields.priceVariant)]
+      : []),
+    ...(fields.salePriceVariant !== undefined
+      ? [cell("sale_price_variant", fields.salePriceVariant)]
+      : []),
+    ...(fields.weightOzVariant !== undefined
+      ? [cell("weight_oz_variant", fields.weightOzVariant)]
+      : []),
+    ...(fields.descriptionVariant !== undefined
+      ? [cell("description_variant", fields.descriptionVariant)]
+      : []),
+  ];
+
+  if (!writes.length) return;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: writes,
+    },
+  });
 }
 
 export async function ensureDescriptionsRow(
@@ -802,6 +979,67 @@ export async function deleteProduct(
   };
 }
 
+export async function deleteVariant(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+): Promise<{
+  descriptionsDeleted: number;
+  inventoryIndexDeleted: number;
+}> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  const sheetIdByName = new Map(
+    (meta.data.sheets ?? []).map((s) => [
+      s.properties?.title ?? "",
+      s.properties?.sheetId ?? 0,
+    ]),
+  );
+
+  const [variantsRes, descRes, invRes] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "variants_values" }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "descriptions" }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "inventory_index" }),
+  ]);
+
+  const variantValues = variantsRes.data.values ?? [];
+  if (variantValues.length < 2) throw new Error("variants sheet is empty");
+  const variantHeaders = (variantValues[0] as string[]).map((h) =>
+    String(h).trim(),
+  );
+  const vSkuIdx = colByHeader(variantHeaders, "sku");
+
+  let variantRowIdx = -1;
+  for (let i = 1; i < variantValues.length; i++) {
+    if (String((variantValues[i] as string[])[vSkuIdx] ?? "").trim() === sku) {
+      variantRowIdx = i;
+      break;
+    }
+  }
+  if (variantRowIdx === -1) throw new Error(`Variant SKU "${sku}" not found`);
+  if (variantRowIdx === 1)
+    throw new Error(
+      `Variant SKU "${sku}" is in the protected row 2 and cannot be deleted through this tool`,
+    );
+
+  const skus = new Set([sku]);
+  const descRowIndices = findRowIndicesBySku(descRes.data.values ?? [], skus);
+  const invRowIndices = findRowIndicesBySku(invRes.data.values ?? [], skus);
+
+  await deleteSheetRows(sheets, spreadsheetId, sheetIdByName, [
+    { sheetName: "variants", indices: [variantRowIdx] },
+    { sheetName: "descriptions", indices: descRowIndices },
+    { sheetName: "inventory_index", indices: invRowIndices },
+  ]);
+
+  return {
+    descriptionsDeleted: descRowIndices.length,
+    inventoryIndexDeleted: invRowIndices.length,
+  };
+}
+
 async function lookupSelectProduct(
   sheets: SheetsClient,
   spreadsheetId: string,
@@ -869,6 +1107,7 @@ export async function createVariantRows(
     color?: string;
     size?: string;
     dimension?: string;
+    design?: string;
     designVariant?: string;
     descriptionVariant?: string;
     priceVariant?: string;
@@ -900,7 +1139,7 @@ export async function createVariantRows(
     throw new Error('variants sheet missing "select_product" column');
 
   const rowData: string[][] = variants.map(
-    ({ color, size, dimension, designVariant, descriptionVariant, priceVariant, weightOzVariant }) => {
+    ({ color, size, dimension, design, designVariant, descriptionVariant, priceVariant, weightOzVariant }) => {
       const row = new Array(headers.length).fill("");
       row[spIdx] = selectProductValue;
       const ci = colIdx("color");
@@ -909,6 +1148,8 @@ export async function createVariantRows(
       if (si >= 0 && size) row[si] = size;
       const dimi = colIdx("dimensions");
       if (dimi >= 0 && dimension) row[dimi] = dimension;
+      const desi = colIdx("design");
+      if (desi >= 0 && design) row[desi] = design;
       const di = colIdx("design_variant");
       if (di >= 0 && designVariant) row[di] = designVariant;
       const dvi = colIdx("description_variant");
@@ -1033,6 +1274,9 @@ function buildCatalogRow(row: VariantSheetRow): CatalogRow {
     priceDollars: row.price_dollars,
     priceVariant: toNullableString(row.price_variant),
     priceCents: row.price_cents,
+    salePriceDollars: toNullableString(row.sale_price_dollars),
+    salePriceVariant: toNullableString(row.sale_price_variant),
+    salePriceCents: toNullableString(row.sale_price_cents),
     stockQty: toNullableNumber(row.stock_qty),
     wooStock: toNullableNumber(row.woo_stock),
     imageVariant: toNullableString(row.image_variant),
@@ -1062,6 +1306,8 @@ function buildCatalogGroup(product: ProductSheetRow): CatalogGroup {
     design: toNullableString(product.design),
     styleModifier: toNullableString(product.style_modifier),
     basePriceDollars: product.base_price_dollars,
+    salePriceDollars: toNullableString(product.sale_price_dollars),
+    publishedStatus: toNullableString(product.published_status),
     stockQty: toNullableNumber(product.stock_qty),
     wooStock: toNullableNumber(product.woo_stock),
     category: product.category,
@@ -1156,24 +1402,8 @@ export function shapeToCatalogPayload(
   };
 }
 
-const SIZE_ORDER: Record<string, number> = {
-  "x-small": 1,
-  small: 2,
-  medium: 3,
-  large: 4,
-  "x-large": 5,
-  "xx-large": 6,
-  "xxx-large": 7,
-  "one size": 8,
-  "no size": 9,
-};
-
 function normalizeSortValue(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
-}
-
-function getSizeRank(size: string | null | undefined): number {
-  return SIZE_ORDER[normalizeSortValue(size)] ?? 999;
 }
 
 function compareCatalogRows(a: CatalogRow, b: CatalogRow): number {
@@ -1187,7 +1417,7 @@ function compareCatalogRows(a: CatalogRow, b: CatalogRow): number {
   );
   if (colorCompare !== 0) return colorCompare;
 
-  const sizeRankCompare = getSizeRank(a.size) - getSizeRank(b.size);
+  const sizeRankCompare = sizeRank(a.size) - sizeRank(b.size);
   if (sizeRankCompare !== 0) return sizeRankCompare;
 
   const sizeTextCompare = normalizeSortValue(a.size).localeCompare(

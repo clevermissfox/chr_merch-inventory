@@ -6,8 +6,11 @@ import DialogCreateProduct from "~/components/DialogCreateProduct";
 import DialogConfirm from "~/components/DialogConfirm";
 import type { DialogConfirmStatus } from "~/components/DialogConfirm";
 import DialogCreateVariant from "~/components/DialogCreateVariant";
-import type { CatalogGroup } from "~/types/catalog";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import DialogDeleteVariant from "~/components/DialogDeleteVariant";
+import DialogEditProduct from "~/components/DialogEditProduct";
+import DialogEditVariant from "~/components/DialogEditVariant";
+import type { CatalogGroup, CatalogRow } from "~/types/catalog";
+import { Globe, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -35,6 +38,10 @@ interface ProductGroupProps {
   canEdit: boolean;
   onDeleteRequest: (group: CatalogGroup) => void;
   onAddVariantsRequest: (group: CatalogGroup) => void;
+  onDeleteVariantRequest: (row: CatalogRow, group: CatalogGroup) => void;
+  onEditVariantRequest: (row: CatalogRow, group: CatalogGroup) => void;
+  onPublishRequest: (group: CatalogGroup) => void;
+  onEditRequest: (group: CatalogGroup) => void;
 }
 
 function ProductGroup({
@@ -42,6 +49,10 @@ function ProductGroup({
   canEdit,
   onDeleteRequest,
   onAddVariantsRequest,
+  onDeleteVariantRequest,
+  onEditVariantRequest,
+  onPublishRequest,
+  onEditRequest,
 }: ProductGroupProps) {
   const isSimple = group.rowCount === 0;
 
@@ -109,6 +120,14 @@ function ProductGroup({
             <button
               type="button"
               className="btn-secondary row gap-half ai-cen"
+              onClick={() => onPublishRequest(group)}
+            >
+              <Globe aria-hidden="true" />
+              <span>{group.wooId ? "Sync to site" : "Publish to site"}</span>
+            </button>
+            <button
+              type="button"
+              className="btn-secondary row gap-half ai-cen"
               onClick={() => onAddVariantsRequest(group)}
             >
               <Plus aria-hidden="true" />
@@ -117,14 +136,14 @@ function ProductGroup({
             <button
               type="button"
               className="btn-secondary row gap-half ai-cen"
-              disabled
+              onClick={() => onEditRequest(group)}
             >
               <Pencil aria-hidden="true" />
               <span>Edit</span>
             </button>
             <button
               type="button"
-              className="btn-danger row gap-half ai-cen"
+              className="btn-primary btn-danger row gap-half ai-cen"
               onClick={() => onDeleteRequest(group)}
             >
               <Trash2 aria-hidden="true" />
@@ -147,10 +166,10 @@ function ProductGroup({
             <table className="data-table variants-table surface-tertiary">
               <colgroup>
                 <col style={{ width: "fit-content" }}></col>
-                <col style={{ width: "100%" }}></col>
-                <col style={{ width: "fit-content" }}></col>{" "}
+                <col style={{ width: "max(50%, 30ch)" }}></col>
                 <col style={{ width: "fit-content" }}></col>
                 <col style={{ width: "fit-content" }}></col>
+                <col style={{ width: "max(50%, 30ch)" }}></col>
                 <col style={{ width: "min-content" }}></col>
               </colgroup>
               <thead>
@@ -181,7 +200,10 @@ function ProductGroup({
                           className="small"
                           type="button"
                           aria-label="Edit variant"
-                          disabled
+                          onClick={() =>
+                            canEdit && onEditVariantRequest(row, group)
+                          }
+                          disabled={!canEdit}
                         >
                           <Pencil aria-hidden="true" />
                         </button>
@@ -189,7 +211,10 @@ function ProductGroup({
                           type="button"
                           className="small"
                           aria-label="Delete variant"
-                          disabled
+                          onClick={() =>
+                            canEdit && onDeleteVariantRequest(row, group)
+                          }
+                          disabled={!canEdit}
                         >
                           <Trash2 aria-hidden="true" />
                         </button>
@@ -220,6 +245,19 @@ export default function ProductsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pendingAddVariants, setPendingAddVariants] =
     useState<CatalogGroup | null>(null);
+  const [pendingDeleteVariant, setPendingDeleteVariant] = useState<{
+    row: CatalogRow;
+    group: CatalogGroup;
+  } | null>(null);
+  const [pendingEditVariant, setPendingEditVariant] = useState<{
+    row: CatalogRow;
+    group: CatalogGroup;
+  } | null>(null);
+  const [publishPending, setPublishPending] = useState<CatalogGroup | null>(
+    null,
+  );
+  const [pendingEdit, setPendingEdit] = useState<CatalogGroup | null>(null);
+  const [lastEdited, setLastEdited] = useState<string | null>(null);
 
   useEffect(() => {
     if (!catalog && !loading) {
@@ -231,26 +269,29 @@ export default function ProductsPage() {
     setShowCreate(false);
     setLastCreated(sku);
     setLastDeleted(null);
+    setLastEdited(null);
     loadCatalog();
+  };
+
+  const performDeleteProduct = async (group: CatalogGroup): Promise<void> => {
+    const res = await fetch(
+      `/api/catalog/product/${encodeURIComponent(group.sku)}`,
+      { method: "DELETE", credentials: "include" },
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Delete failed");
+    setLastDeleted(group.sku);
+    setLastCreated(null);
+    setLastEdited(null);
+    await loadCatalog();
   };
 
   const handleDeleteConfirm = async () => {
     if (!pendingDelete) return;
     setDeleteStatus("confirming");
     setDeleteError(null);
-
     try {
-      const res = await fetch(
-        `/api/catalog/product/${encodeURIComponent(pendingDelete.sku)}`,
-        { method: "DELETE", credentials: "include" },
-      );
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Delete failed");
-
-      setDeleteStatus("success");
-      setLastDeleted(pendingDelete.sku);
-      setLastCreated(null);
-      await loadCatalog();
+      await performDeleteProduct(pendingDelete);
       setPendingDelete(null);
       setDeleteStatus("idle");
     } catch (err) {
@@ -265,13 +306,23 @@ export default function ProductsPage() {
       ? `Created — new SKU: ${lastCreated}`
       : lastDeleted
         ? `Deleted — SKU: ${lastDeleted}`
-        : error
-          ? error
-          : catalog
-            ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
-            : "";
+        : lastEdited
+          ? `Saved — ${lastEdited}`
+          : publishPending
+            ? `WooCommerce push coming soon — ${publishPending.displayName}`
+            : error
+              ? error
+              : catalog
+                ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
+                : "";
 
-  const statusTone = error ? "error" : undefined;
+  const statusTone = error
+    ? "error"
+    : publishPending
+      ? "warning"
+      : lastEdited
+        ? "success"
+        : undefined;
 
   return (
     <>
@@ -280,9 +331,7 @@ export default function ProductsPage() {
           <p
             className="status-line"
             role={statusTone === "error" ? "alert" : "status"}
-            data-tone={
-              statusTone === "error" ? "error" : loading ? "loading" : ""
-            }
+            data-tone={statusTone ?? (loading ? "loading" : "")}
           >
             {statusMessage}
           </p>
@@ -291,7 +340,7 @@ export default function ProductsPage() {
             <div className="row gap-1 fw-wrap ai-cen">
               <button
                 type="button"
-                className="btn-secondary row gap-half ai-cen"
+                className="btn-secondary btn-lg row gap-half ai-cen"
                 onClick={() => loadCatalog()}
                 disabled={loading}
               >
@@ -300,7 +349,7 @@ export default function ProductsPage() {
               </button>
               <button
                 type="button"
-                className="btn-primary row gap-half ai-cen"
+                className="btn-primary btn-lg row gap-half ai-cen"
                 onClick={() => setShowCreate(true)}
                 disabled={loading}
               >
@@ -321,9 +370,52 @@ export default function ProductsPage() {
               canEdit={canEdit}
               onDeleteRequest={setPendingDelete}
               onAddVariantsRequest={setPendingAddVariants}
+              onDeleteVariantRequest={(row, grp) =>
+                setPendingDeleteVariant({ row, group: grp })
+              }
+              onEditVariantRequest={(row, grp) =>
+                setPendingEditVariant({ row, group: grp })
+              }
+              onPublishRequest={(grp) => {
+                setPublishPending(grp);
+                setLastCreated(null);
+                setLastDeleted(null);
+              }}
+              onEditRequest={setPendingEdit}
             />
           ))}
         </section>
+      )}
+
+      {pendingEdit && (
+        <DialogEditProduct
+          group={pendingEdit}
+          onClose={() => setPendingEdit(null)}
+          onSaved={() => {
+            const sku = pendingEdit.sku;
+            setPendingEdit(null);
+            setLastCreated(null);
+            setLastDeleted(null);
+            setLastEdited(sku);
+            loadCatalog();
+          }}
+        />
+      )}
+
+      {pendingEditVariant && (
+        <DialogEditVariant
+          row={pendingEditVariant.row}
+          group={pendingEditVariant.group}
+          onClose={() => setPendingEditVariant(null)}
+          onSaved={async () => {
+            const sku = pendingEditVariant.row.sku;
+            setPendingEditVariant(null);
+            setLastCreated(null);
+            setLastDeleted(null);
+            setLastEdited(sku);
+            await loadCatalog();
+          }}
+        />
       )}
 
       {showCreate && (
@@ -342,6 +434,25 @@ export default function ProductsPage() {
             setLastCreated(skus[0] ?? null);
             setLastDeleted(null);
             loadCatalog();
+          }}
+        />
+      )}
+
+      {pendingDeleteVariant && (
+        <DialogDeleteVariant
+          row={pendingDeleteVariant.row}
+          group={pendingDeleteVariant.group}
+          onClose={() => setPendingDeleteVariant(null)}
+          onDeleted={async (sku) => {
+            setLastDeleted(sku);
+            setLastCreated(null);
+            setLastEdited(null);
+            await loadCatalog();
+            setPendingDeleteVariant(null);
+          }}
+          onDeleteProduct={async (group) => {
+            await performDeleteProduct(group);
+            setPendingDeleteVariant(null);
           }}
         />
       )}

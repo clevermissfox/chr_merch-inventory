@@ -24,12 +24,14 @@ function LandingPage() {
         </header>
 
         <main className="wrapper margin-b-2 as-cen container">
-          <section className="public-hero card padding-2">
-            <p className="merch-hero__eyebrow">Cochise Harm Reduction</p>
-            <h2 className="merch-hero__title">
-              Merchandise Inventory Management
-            </h2>
-            <p className="merch-hero__kicker">
+          <section className="public-hero card padding-2 grid gap-half">
+            <hgroup className="grid gap-quarter">
+              <p className="merch-hero__eyebrow">Cochise Harm Reduction</p>
+              <h2 className="merch-hero__title">
+                Merchandise Inventory Management
+              </h2>
+            </hgroup>
+            <p className="clr-muted">
               A tool for CHR staff, board, and volunteers to track, manage, and
               sync merchandise stock between our warehouse inventory and the CHR
               online store.
@@ -39,7 +41,7 @@ function LandingPage() {
           <div className="row fw-wrap gap-1 margin-b-1">
             <div className="card public-feature">
               <h3 className="public-feature__title">Live Inventory Tracking</h3>
-              <p className="public-feature__body clr-muted">
+              <p className="clr-muted">
                 View current stock levels for all CHR merchandise products and
                 variants in one place, sourced directly from our inventory
                 spreadsheet.
@@ -47,14 +49,14 @@ function LandingPage() {
             </div>
             <div className="card public-feature">
               <h3 className="public-feature__title">WooCommerce Sync</h3>
-              <p className="public-feature__body">
+              <p className="clr-muted">
                 Compare warehouse stock against what's listed on the CHR online
                 store and push updates to keep the website accurate and in sync.
               </p>
             </div>
             <div className="card public-feature">
               <h3 className="public-feature__title">Conflict Resolution</h3>
-              <p className="public-feature__body">
+              <p className="clr-muted">
                 Quickly identify products where warehouse and website stock
                 counts differ, and selectively push the correct quantities to
                 the store.
@@ -65,13 +67,13 @@ function LandingPage() {
           <section className="card public-signin row fw-wrap gap-1half ai-cen jc-sb">
             <div className="public-signin__content grid gap-half">
               <h2 className="public-signin__title">Staff Access</h2>
-              <p className="public-signin__body clr-muted">
+              <p className="clr-muted">
                 This tool is restricted to authorized CHR staff and volunteers.
                 Sign in with your Google account to access the dashboard. Access
                 is granted based on your permissions on the CHR Merch Products
                 Spreadsheet.
               </p>
-              <p className="xsmall clr-muted">
+              <p className="xsmall clr-muted margin-bs-half">
                 Need access? Contact your CHR admin to be added to the CHR Merch
                 Products Spreadsheet.
               </p>

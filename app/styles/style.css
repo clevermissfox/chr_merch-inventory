@@ -16,6 +16,8 @@
   --fs-700: 2.4rem;
   --fs-600: 1.6rem;
   --fs-500: 1.25rem;
+  --fs-430: 1.3rem;
+  --fs-410: 1.1rem;
   --fs-400: 1rem;
   --fs-300: 0.875rem;
   --fs-200: 0.75rem;
@@ -68,7 +70,7 @@
   --br-400: 0.25rem;
   --br-700: 0.75rem;
   --br-900: 1rem;
-  --br-round: 999px;
+  --br-round: 100vw;
 
   --default-max-inline-size: 100ch;
   --default-shadow: 0 10px 24px
@@ -125,7 +127,7 @@
 
 ::-webkit-scrollbar-thumb {
   border-radius: 0.75em;
-  background: var(--clr-accent);
+  background: color-mix(in oklch, var(--clr-neutral-0) 18%, transparent);
 }
 
 :is(html, body)::-webkit-scrollbar-thumb {
@@ -177,6 +179,16 @@ button {
   font: inherit;
   border: none;
   cursor: pointer;
+}
+
+:is(
+  label[data-required="true"],
+  label:has(> input[required], + input[required])
+)::after {
+  content: "*";
+  color: var(--clr-accent);
+  display: inline-block;
+  margin-inline-start: 0.25em;
 }
 
 input:not([type="checkbox"], [type="radio"]),
@@ -314,17 +326,17 @@ a {
 }
 
 button {
+  padding: var(--_btn-padding);
   border: var(--default-border);
   border-color: var(--_clr-btn-border, transparent);
   border-radius: var(--_btn-br, var(--default-br));
   background: var(--_clr-btn-bg);
   color: var(--_clr-btn-txt);
-  padding: var(--_btn-padding);
   font-size: var(--_btn-font-size);
   font-weight: var(--_btn-font-weight, var(--fw-500));
-  cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+  cursor: pointer;
   transition:
     transform var(--default-trans-dur) var(--default-timing),
     opacity var(--default-trans-dur) var(--default-timing),
@@ -347,12 +359,18 @@ button:disabled {
 .btn-primary {
   --_clr-btn-bg: var(--clr-accent);
   --_clr-btn-txt: var(--clr-neutral-900);
-  --_btn-padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
+  --_btn-padding: var(--spacing-050) var(--spacing-125, 1.25rem);
+  min-inline-size: fit-content;
 }
 
 .btn-secondary {
   --_clr-btn-border: var(--clr-border-soft);
-  --_btn-padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
+  --_btn-padding: var(--spacing-050) var(--spacing-125, 1.25rem);
+  min-inline-size: fit-content;
+}
+
+:is(.btn-lg) {
+  --_btn-padding: var(--spacing-075, 0.75rem) var(--spacing-125, 1.25rem);
 }
 
 .btn-icon {
@@ -371,7 +389,6 @@ button:disabled {
 .btn-danger {
   --_clr-btn-bg: var(--clr-danger);
   --_clr-btn-txt: var(--clr-neutral-900);
-  --_btn-padding: var(--spacing-100, 1rem) var(--spacing-125, 1.25rem);
 }
 
 .btn-logout {
@@ -396,7 +413,7 @@ button:disabled {
   }
 }
 
-form :not([type="checkbox"], [type="radio"]):is(input, text-area, select) {
+form :not([type="checkbox"], [type="radio"]):is(input, textarea, select) {
   border: var(--default-border);
   border-color: var(--clr-border-soft);
   padding: var(--spacing-025, 0.25em) var(--spacing-050, 0.5em);
@@ -406,31 +423,43 @@ form :not([type="checkbox"], [type="radio"]):is(input, text-area, select) {
   accent-color: var(--clr-accent);
 }
 
-/* for inputs with button inside the input like a search bar */
+/* search input: left icon + input + optional right clear button */
 .search-input-wrapper {
   display: grid;
   grid-template-columns: [input-start] 1fr [icon-start] auto [icon-end input-end];
-  padding-inline-start: var(--spacing-050);
+  align-items: center;
   border: var(--default-border);
   border-color: currentColor;
   border-radius: var(--default-br);
   outline-offset: unset;
 
   & > input {
-    grid-area: input;
     border: none;
     outline: none;
-    padding: 0;
+    padding: var(--spacing-050) var(--spacing-025);
+    min-width: 0;
+    grid-area: input;
   }
-  & > button[type="submit"] {
+
+  & .icon-wrapper {
     grid-area: icon;
-    border: none;
+    padding: var(--spacing-050);
+    color: var(--clr-text-muted);
+
+    & svg {
+      width: 1em;
+      height: 1em;
+      flex-shrink: 0;
+    }
+  }
+
+  & .search-clear {
+    --_btn-padding: var(--spacing-050);
     border-radius: 0;
-    display: grid;
-    place-content: center;
-    padding: var(--spacing-050, 0.5rem);
-    outline-offset: unset;
-    font-size: var(--fs-500, 1.25rem);
+    color: var(--clr-text-muted);
+    outline: none;
+    border: none;
+    grid-area: icon;
   }
 
   &:has(:focus-within) {

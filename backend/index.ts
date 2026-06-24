@@ -22,16 +22,23 @@ import {
   createVariantRows,
   createWooCategory,
   deleteProduct,
+  deleteVariant,
   ensureDescriptionsRow,
   pollForProductSku,
   readRefData,
   rowsToObjects,
   shapeToCatalogPayload,
+  updateProduct,
+  updateVariant,
   writeProductSyncHash,
   writeProductSyncHashes,
   writeSheetLog,
 } from "./catalogManager";
-import type { RefAddType } from "./catalogManager";
+import type {
+  RefAddType,
+  UpdateProductFields,
+  UpdateVariantFields,
+} from "./catalogManager";
 import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
@@ -471,7 +478,9 @@ app.post(
         spreadsheetId,
         catalog.groups,
         {
-          touchedSkus: new Set(wooResult.updatedSkus),
+          // Use all dirty SKUs (not just Woo-pushed) so draft/unpublished products
+          // still get their stock_qty written to the sheet even if Woo was skipped.
+          touchedSkus: new Set(plan.changeMap.keys()),
           stockQtyBySku: plan.changeMap,
         },
       );
@@ -668,6 +677,12 @@ app.post(
         dimensionsWidth: body.dimensionsWidth,
         dimensionsHeight: body.dimensionsHeight,
         dimensionsDepth: body.dimensionsDepth,
+        primaryDescription: body.primaryDescription,
+        shortDescription: body.shortDescription,
+        salePriceDollars: body.salePriceDollars,
+        publishedStatus: body.publishedStatus && ["draft","publish","private"].includes(body.publishedStatus)
+          ? body.publishedStatus
+          : "draft",
       };
 
       const { sheets, spreadsheetId } = getSheets();
@@ -705,6 +720,67 @@ app.post(
   },
 );
 
+app.put(
+  "/api/catalog/product/:sku",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const body = req.body as Partial<UpdateProductFields>;
+      const fields: UpdateProductFields = {};
+
+      if (typeof body.displayName === "string")
+        fields.displayName = body.displayName.trim();
+      if (typeof body.basePriceDollars === "string")
+        fields.basePriceDollars = body.basePriceDollars.trim();
+      if (typeof body.salePriceDollars === "string")
+        fields.salePriceDollars = body.salePriceDollars.trim();
+      if (typeof body.publishedStatus === "string" && ["draft","publish","private"].includes(body.publishedStatus))
+        fields.publishedStatus = body.publishedStatus;
+      if (typeof body.weightOz === "string")
+        fields.weightOz = body.weightOz.trim();
+      if (typeof body.primaryDescription === "string")
+        fields.primaryDescription = body.primaryDescription.trim();
+      if (typeof body.shortDescription === "string")
+        fields.shortDescription = body.shortDescription.trim();
+      if (typeof body.dimensionsWidth === "string")
+        fields.dimensionsWidth = body.dimensionsWidth.trim();
+      if (typeof body.dimensionsHeight === "string")
+        fields.dimensionsHeight = body.dimensionsHeight.trim();
+      if (typeof body.dimensionsDepth === "string")
+        fields.dimensionsDepth = body.dimensionsDepth.trim();
+
+      if (!Object.keys(fields).length)
+        return res
+          .status(400)
+          .json({ ok: false, error: "No updatable fields provided" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      await updateProduct(sheets, spreadsheetId, sku, fields);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "update_product",
+        `sku=${sku} fields=${Object.keys(fields).join(",")}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(200).json({ ok: true, sku });
+    } catch (error: any) {
+      console.error("PUT /api/catalog/product/:sku failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to update product",
+      });
+    }
+  },
+);
+
 app.delete(
   "/api/catalog/product/:sku",
   requireAuth,
@@ -737,6 +813,86 @@ app.delete(
   },
 );
 
+app.put(
+  "/api/catalog/variant/:sku",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const body = req.body ?? {};
+      const fields: UpdateVariantFields = {};
+      if (body.priceVariant !== undefined)
+        fields.priceVariant = String(body.priceVariant).trim();
+      if (body.salePriceVariant !== undefined)
+        fields.salePriceVariant = String(body.salePriceVariant).trim();
+      if (body.weightOzVariant !== undefined)
+        fields.weightOzVariant = String(body.weightOzVariant).trim();
+      if (body.descriptionVariant !== undefined)
+        fields.descriptionVariant = String(body.descriptionVariant).trim();
+
+      if (!Object.keys(fields).length)
+        return res
+          .status(400)
+          .json({ ok: false, error: "No updatable fields provided" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      await updateVariant(sheets, spreadsheetId, sku, fields);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "update_variant",
+        `sku=${sku} fields=${Object.keys(fields).join(",")}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(200).json({ ok: true, sku });
+    } catch (error: any) {
+      console.error("PUT /api/catalog/variant/:sku failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to update variant",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/api/catalog/variant/:sku",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const result = await deleteVariant(sheets, spreadsheetId, sku);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "delete_variant",
+        `sku=${sku} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(200).json({ ok: true, sku, ...result });
+    } catch (error: any) {
+      console.error("DELETE /api/catalog/variant/:sku failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to delete variant",
+      });
+    }
+  },
+);
+
 app.post(
   "/api/catalog/product/:sku/variants",
   requireAuth,
@@ -751,9 +907,10 @@ app.post(
         colors?: string[];
         sizes?: string[];
         dimensions?: string[];
+        design?: string;
+        designVariant?: string;
         priceVariant?: string;
         weightOzVariant?: string;
-        designVariant?: string;
         descriptionVariant?: string;
         stockQty?: number;
       };
@@ -774,9 +931,10 @@ app.post(
       }
 
       const shared = {
+        design: body.design || undefined,
+        designVariant: body.designVariant || undefined,
         priceVariant: body.priceVariant || undefined,
         weightOzVariant: body.weightOzVariant || undefined,
-        designVariant: body.designVariant || undefined,
         descriptionVariant: body.descriptionVariant || undefined,
         stockQty: body.stockQty !== undefined ? Number(body.stockQty) : undefined,
       };

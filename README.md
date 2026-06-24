@@ -7,9 +7,10 @@ Internal merch management tool for Cochise Harm Reduction. Manages product catal
 ## Stack
 
 - **Frontend** — React Router v7 (SSR), TypeScript
-- **Backend** — Express, Google Sheets API v4, WooCommerce REST API
-- **Auth** — Google OAuth2 + session; sheet editor role = write access
+- **Backend** — Express, Google Sheets API v4, Google Drive API v3, WooCommerce REST API
+- **Auth** — Google OAuth2 + `express-session` (`chr-merch-session` cookie); Drive API checks the user's permission role on the spreadsheet to determine write access
 - **Data** — Google Sheets (products_values, variants_values, inventory_index, merch_app_logs, ref tabs)
+- **Legacy** — GAS (Google Apps Script) worker handles `action=inventory_sync_stock` webhook; the payload shape in this README reflects that contract
 
 ---
 

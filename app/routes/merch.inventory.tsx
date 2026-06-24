@@ -77,6 +77,9 @@ export default function InventoryPage() {
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [syncSkipped, setSyncSkipped] = useState<
+    Array<{ sku: string; reason: string }>
+  >([]);
 
   useEffect(() => {
     if (!state.catalog && !state.loading) {
@@ -122,6 +125,7 @@ export default function InventoryPage() {
     const mode = e.target.value;
     setSelectedMode(mode);
     setSyncFeedback(null);
+    setSyncSkipped([]);
 
     let skus: Set<string>;
     if (mode === "sync_all") {
@@ -181,14 +185,19 @@ export default function InventoryPage() {
     const skusToSync = Array.from(selectedSkus);
     exitSelectMode();
     setSyncFeedback("Pushing selected stock…");
+    setSyncSkipped([]);
     try {
       const result = await syncSelectedSkus(skusToSync);
       setSyncFeedback(
         `Pushed ${result.updatedCount} SKU${result.updatedCount !== 1 ? "s" : ""} to website.` +
-          (result.skippedCount > 0 ? ` ${result.skippedCount} skipped.` : ""),
+          (result.skippedCount > 0
+            ? ` ${result.skippedCount} not synced to site.`
+            : ""),
       );
+      setSyncSkipped(result.skipped);
     } catch {
       setSyncFeedback(null);
+      setSyncSkipped([]);
     }
   };
 
@@ -242,6 +251,28 @@ export default function InventoryPage() {
     },
   ];
 
+  function formatSkipReason(reason: string): {
+    label: string;
+    hint: string | null;
+  } {
+    if (reason.toLowerCase().includes("missing woo parent product")) {
+      return {
+        label: "Not yet published to site",
+        hint: "Stock is recorded in the sheet and will sync automatically once the product is published to WooCommerce.",
+      };
+    }
+    if (reason === "variable_parent_not_editable") {
+      return {
+        label: "Variable product parent — update individual variants",
+        hint: null,
+      };
+    }
+    if (reason === "not_found") {
+      return { label: "SKU not found in catalog", hint: null };
+    }
+    return { label: reason, hint: null };
+  }
+
   return (
     <>
       <section className="hero card">
@@ -288,7 +319,7 @@ export default function InventoryPage() {
               <div className="form-group row gap-1 fw-wrap w-100">
                 <button
                   type="button"
-                  className="btn-secondary flex-1 row gap-half jc-cen ai-cen"
+                  className="btn-secondary btn-lg flex-1 row gap-half jc-cen ai-cen"
                   onClick={() => void loadCatalog({ withStock: true })}
                   disabled={state.loading || state.saving}
                 >
@@ -305,7 +336,7 @@ export default function InventoryPage() {
 
                 <button
                   type="submit"
-                  className="btn-primary flex-1 row gap-half jc-cen ai-cen"
+                  className="btn-primary btn-lg flex-1 row gap-half jc-cen ai-cen"
                   disabled={selectedSkus.size === 0 || state.saving}
                   onClick={(e) => {
                     e.preventDefault();
@@ -331,6 +362,29 @@ export default function InventoryPage() {
             {statusMessage}
           </p>
         </div>
+
+        {syncSkipped.length > 0 && (
+          <div className="grid gap-half">
+            <p className="xsmall bold clr-muted">Not synced to site:</p>
+            <ul className="grid gap-quarter" role="list">
+              {syncSkipped.map(({ sku, reason }) => {
+                const { label, hint } = formatSkipReason(reason);
+                return (
+                  <li
+                    key={sku}
+                    className="grid gap-025 padding-half surface-secondary"
+                  >
+                    <span className="xsmall">
+                      <strong>{sku}</strong>
+                      <span className="clr-muted"> — {label}</span>
+                    </span>
+                    {hint && <span className="xsmall clr-muted">{hint}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="grid gap-1">
