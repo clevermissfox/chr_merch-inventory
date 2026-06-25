@@ -43,7 +43,10 @@ interface CatalogContextValue {
   syncCatalogStock: (
     mode?: "standard_sync" | "resolve_conflicts" | "sync_all",
   ) => Promise<void>;
-  syncSelectedSkus: (skus: string[]) => Promise<SyncResult>;
+  syncSelectedSkus: (
+    skus: string[],
+    overrideDirty?: Record<string, DirtyStockChange>,
+  ) => Promise<SyncResult>;
   resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
 }
@@ -252,7 +255,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   );
 
   const syncSelectedSkus = useCallback(
-    async (skus: string[]): Promise<SyncResult> => {
+    async (
+      skus: string[],
+      overrideDirty?: Record<string, DirtyStockChange>,
+    ): Promise<SyncResult> => {
       if (!state.catalog || skus.length === 0) {
         return { updatedCount: 0, skippedCount: 0, skipped: [] };
       }
@@ -260,19 +266,33 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       const rowBySku = new Map(
         state.catalog.groups.flatMap((g) => g.rows.map((r) => [r.sku, r])),
       );
+      const groupBySku = new Map(
+        state.catalog.groups.map((g) => [g.sku, g]),
+      );
 
       const syntheticDirty: CatalogState["dirtyBySku"] = {};
       for (const sku of skus) {
-        if (state.dirtyBySku[sku]) {
-          syntheticDirty[sku] = state.dirtyBySku[sku];
+        const dirtyEntry = overrideDirty?.[sku] ?? state.dirtyBySku[sku];
+        if (dirtyEntry) {
+          syntheticDirty[sku] = dirtyEntry;
         } else {
           const row = rowBySku.get(sku);
-          if (!row) continue;
-          syntheticDirty[sku] = {
-            sku,
-            stockQty: row.stockQty ?? 0,
-            originalStockQty: row.wooStock,
-          };
+          if (row) {
+            syntheticDirty[sku] = {
+              sku,
+              stockQty: row.stockQty ?? 0,
+              originalStockQty: row.wooStock,
+            };
+          } else {
+            // simple product — no variant rows, use group-level stock
+            const group = groupBySku.get(sku);
+            if (!group) continue;
+            syntheticDirty[sku] = {
+              sku,
+              stockQty: group.stockQty ?? 0,
+              originalStockQty: group.wooStock,
+            };
+          }
         }
       }
 

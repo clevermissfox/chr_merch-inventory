@@ -118,12 +118,8 @@ export default function DialogDeleteVariant({
             onClick={() => void doDeleteVariant()}
             disabled={inFlight}
           >
-            {status === "deleting-variant" ? (
-              <span className="loader" aria-hidden="true" />
-            ) : (
-              <Trash2 aria-hidden="true" />
-            )}
-            <span>
+            {status !== "deleting-variant" && <Trash2 aria-hidden="true" />}
+            <span className={status === "deleting-variant" ? "render-loader" : ""}>
               {isLast ? "Convert to simple product" : "Delete variant"}
             </span>
           </button>
@@ -135,15 +131,9 @@ export default function DialogDeleteVariant({
               onClick={() => void doDeleteProduct()}
               disabled={inFlight}
             >
-              {status === "deleting-product" ? (
-                <span className="loader" aria-hidden="true" />
-              ) : (
-                <Trash2 aria-hidden="true" />
-              )}
-              <span>
-                {status === "deleting-product"
-                  ? "Deleting…"
-                  : "Delete entire product"}
+              {status !== "deleting-product" && <Trash2 aria-hidden="true" />}
+              <span className={status === "deleting-product" ? "render-loader" : ""}>
+                {status === "deleting-product" ? "Deleting…" : "Delete entire product"}
               </span>
             </button>
           )}

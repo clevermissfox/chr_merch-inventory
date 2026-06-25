@@ -419,6 +419,10 @@ menu.user-menu {
   color: var(--clr-text-muted);
 }
 
+.status-line[data-tone="accent"] {
+  color: var(--clr-accent);
+}
+
 .status-line[data-tone="error"] {
   color: var(--clr-danger);
 }
@@ -431,7 +435,7 @@ menu.user-menu {
   color: var(--clr-warning);
 }
 
-.status-line:is([data-tone="loading"]) {
+:is(.render-loader, .status-line:is([data-tone="loading"])) {
   display: flex;
   gap: var(--spacing-050, 0.5em);
   align-items: center;
@@ -483,6 +487,7 @@ menu.user-menu {
 }
 
 .summary-title {
+  --_clr-feedback: var(--clr-accent);
   display: flex;
   align-items: baseline;
   gap: var(--spacing-075, 0.75rem);
@@ -491,18 +496,24 @@ menu.user-menu {
 }
 
 .inventory-group:has(tr:is([data-dirty="true"]), td:is([data-mismatch="true"]))
-  .summary-title {
-  position: relative;
-
-  &::before {
-    content: "";
+  :is(.summary-title) {
+  & > :first-child {
     position: relative;
-    left: 0;
-    inset-block: 0;
-    inline-size: 1ch;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background-color: var(--_clr-feedback);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-050, 0.5em);
+
+    &::before {
+      content: "";
+      position: relative;
+      left: 0;
+      inset-block: 0;
+      inline-size: 1ch;
+      aspect-ratio: 1;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background-color: var(--_clr-feedback);
+    }
   }
 }
 
@@ -578,7 +589,7 @@ menu.user-menu {
 
 .inventory-table
   tr:is([data-dirty="true"], :has(td[data-mismatch="true"]))
-  .sku-cell {
+  > td:first-child {
   position: relative;
 
   &::before {
@@ -886,10 +897,6 @@ label.item-selection input[type="checkbox"] {
 .dialog::backdrop {
   background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
   backdrop-filter: blur(2px);
-}
-
-.dialog-inner hgroup p {
-  margin-block-start: var(--spacing-05, 0.5em);
 }
 
 .dialog-profile {

@@ -3,8 +3,10 @@ import type { Route } from "./+types/merch._index";
 import SearchComponent from "~/components/SearchComponent";
 import type { SearchResult } from "~/components/SearchComponent";
 import { useCatalog } from "~/context/CatalogContext";
+import { useAuth } from "~/context/AuthContext";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
 import { Save } from "lucide-react";
+import { formatSkipReason } from "~/utils/skipReason";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -46,7 +48,9 @@ function resultToTarget(result: SearchResult): QuickUpdateTarget {
 }
 
 export default function MerchDashboard() {
-  const { state, loadCatalog, setStockQty, syncSelectedSkus } = useCatalog();
+  const { user } = useAuth();
+  const canEdit = user?.canEdit === true;
+  const { state, loadCatalog, syncSelectedSkus } = useCatalog();
   const groups = state.catalog?.groups ?? [];
 
   useEffect(() => {
@@ -79,8 +83,14 @@ export default function MerchDashboard() {
     setSaving(true);
     setSaveError(null);
     try {
-      setStockQty(target.sku, qty, target.currentStock);
-      const result = await syncSelectedSkus([target.sku]);
+      const overrideDirty = {
+        [target.sku]: {
+          sku: target.sku,
+          stockQty: qty,
+          originalStockQty: target.currentStock ?? null,
+        },
+      };
+      const result = await syncSelectedSkus([target.sku], overrideDirty);
       const skippedEntry = result.skipped.find((s) => s.sku === target.sku);
       setSavedSku(target.sku);
       setSavedSheetOnly(!!skippedEntry);
@@ -105,12 +115,12 @@ export default function MerchDashboard() {
   return (
     <>
       <section className="card grid gap-1">
-        <div>
+        <hgroup>
           <h2>Quick Inventory Update</h2>
           <p className="small clr-muted">
             Search for a SKU or product to update its warehouse stock.
           </p>
-        </div>
+        </hgroup>
 
         {state.loading && !state.catalog && (
           <p role="status" className="status-line" data-tone="loading">
@@ -191,7 +201,7 @@ export default function MerchDashboard() {
             </div>
             <form className="grid gap-half">
               <div className="form-group">
-                <label htmlFor="quick-update-qty">
+                <label htmlFor="quick-update-qty" className="bold">
                   Warehouse stock
                   {target.currentStock != null && (
                     <span className="clr-muted xsmall">
@@ -211,7 +221,7 @@ export default function MerchDashboard() {
                     if (e.key === "Enter") void handleSave();
                     if (e.key === "-" || e.key === "e") e.preventDefault();
                   }}
-                  disabled={saving}
+                  disabled={saving || !canEdit}
                   autoFocus
                 />
               </div>
@@ -220,34 +230,35 @@ export default function MerchDashboard() {
                   {saveError}
                 </p>
               )}
-              <div className="row gap-half">
-                <button
-                  type="button"
-                  className="btn-primary row gap-half ai-cen jc-cen"
-                  onClick={handleSave}
-                  disabled={saving || inputVal === ""}
-                >
-                  {saving ? (
-                    <>
-                      <span className="loader" aria-hidden="true" />
-                      <span>Saving…</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save aria-hidden="true" />
-                      <span>Save</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleDismiss}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-              </div>
+              {canEdit && (
+                <div className="row gap-half">
+                  <button
+                    type="button"
+                    className="btn-primary row gap-half ai-cen jc-cen"
+                    onClick={handleSave}
+                    disabled={saving || inputVal === ""}
+                  >
+                    {saving ? (
+                      <>
+                        <span className="render-loader">Saving…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save aria-hidden="true" />
+                        <span>Save</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleDismiss}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </form>
           </div>
         )}
@@ -258,18 +269,19 @@ export default function MerchDashboard() {
           </p>
         )}
 
-        {savedSku && savedSheetOnly && (
-          <div role="status" className="grid gap-quarter">
-            <p className="status-line" data-tone="warning">
-              Stock saved to sheet for {savedSku} — not synced to site
-            </p>
-            <p className="xsmall clr-muted">
-              {savedSkipReason?.toLowerCase().includes("missing woo parent")
-                ? "This product hasn't been published to WooCommerce yet — stock is recorded in the sheet and will sync automatically once the product is on the site."
-                : (savedSkipReason ?? "Woo sync was skipped.")}
-            </p>
-          </div>
-        )}
+        {savedSku &&
+          savedSheetOnly &&
+          (() => {
+            const { label, hint } = formatSkipReason(savedSkipReason ?? "");
+            return (
+              <div role="status" className="grid gap-quarter">
+                <p className="status-line" data-tone="warning">
+                  Stock saved to sheet for {savedSku} — {label}
+                </p>
+                {hint && <p className="xsmall clr-muted">{hint}</p>}
+              </div>
+            );
+          })()}
       </section>
     </>
   );

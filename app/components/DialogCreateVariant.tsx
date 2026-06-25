@@ -42,7 +42,19 @@ export default function DialogCreateVariant({
       .then((r) => r.json())
       .then((data) => {
         if (!data.ok) throw new Error(data.error || "Failed to load ref data");
-        setRefData(data as RefData);
+        const loaded = data as RefData;
+        setRefData(loaded);
+
+        // Pre-select the dimension that matches the parent product's dimensions
+        if (group.dimensionsWidth && group.dimensionsHeight) {
+          const targetW = parseFloat(group.dimensionsWidth);
+          const targetH = parseFloat(group.dimensionsHeight);
+          const match = loaded.dimensions.find((d) => {
+            const [dw, dh] = parseDimCode(d.code);
+            return dw === targetW && dh === targetH;
+          });
+          if (match) setSelectedDimensions(new Set([match.value]));
+        }
       })
       .catch((err) => setMetaError(err.message));
   }, []);
@@ -357,7 +369,7 @@ export default function DialogCreateVariant({
             </div>
             <div className="form-group">
               <label htmlFor="cv-desc" className="bold">
-                Variant Description{" "}
+                Bulk Variant Description{" "}
                 <span className="clr-muted xsmall">(optional)</span>
               </label>
               <textarea
@@ -410,8 +422,7 @@ export default function DialogCreateVariant({
               >
                 {submitting ? (
                   <>
-                    <span className="loader" aria-hidden="true" />
-                    <span>Creating… </span>
+                    <span className="render-loader">Creating… </span>
                   </>
                 ) : (
                   <>

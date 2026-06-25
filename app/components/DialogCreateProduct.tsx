@@ -51,11 +51,21 @@ export default function DialogCreateProduct({
   const [metaError, setMetaError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(empty);
   const [submitting, setSubmitting] = useState(false);
+  const [slowCreate, setSlowCreate] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showCatHelp, setShowCatHelp] = useState(false);
   const [showPrimaryDescHelp, setShowPrimaryDescHelp] = useState(false);
   const [showShortDescHelp, setShowShortDescHelp] = useState(false);
   const [subcatFormOpen, setSubcatFormOpen] = useState(false);
+
+  useEffect(() => {
+    if (!submitting) {
+      setSlowCreate(false);
+      return;
+    }
+    const t = setTimeout(() => setSlowCreate(true), 10_000);
+    return () => clearTimeout(t);
+  }, [submitting]);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -77,6 +87,13 @@ export default function DialogCreateProduct({
       >,
     ) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
+
+  const setNumeric =
+    (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.value;
+      const stripped = raw.replace(/^0+(?=\d)/, "");
+      setForm((prev) => ({ ...prev, [field]: stripped }));
+    };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,7 +304,8 @@ export default function DialogCreateProduct({
                   min="0"
                   step="0.01"
                   value={form.basePriceDollars}
-                  onChange={set("basePriceDollars")}
+                  onChange={setNumeric("basePriceDollars")}
+                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) =>
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
@@ -308,7 +326,8 @@ export default function DialogCreateProduct({
                   min="0"
                   step="0.01"
                   value={form.salePriceDollars}
-                  onChange={set("salePriceDollars")}
+                  onChange={setNumeric("salePriceDollars")}
+                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) =>
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
@@ -327,7 +346,8 @@ export default function DialogCreateProduct({
                   min="0"
                   step="0.001"
                   value={form.weightOz}
-                  onChange={set("weightOz")}
+                  onChange={setNumeric("weightOz")}
+                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) =>
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
@@ -341,7 +361,9 @@ export default function DialogCreateProduct({
             <div className="form-group">
               <label className="bold" htmlFor="cp-published-status">
                 Published status{" "}
-                <span className="clr-muted xsmall">(optional — defaults to draft)</span>
+                <span className="clr-muted xsmall">
+                  (optional — defaults to draft)
+                </span>
               </label>
               <select
                 id="cp-published-status"
@@ -544,16 +566,21 @@ export default function DialogCreateProduct({
               {showShortDescHelp && (
                 <p id="cp-short-desc-help" className="xsmall clr-warning">
                   A 1–2 sentence summary shown in product listings and previews.
-                  Keep it brief — this is not where the full story goes.
+                  Keep it brief — this is not where the full story goes. Max 100
+                  characters.
                 </p>
               )}
               <textarea
                 id="cp-short-desc"
                 rows={2}
+                maxLength={100}
                 value={form.shortDescription}
                 onChange={set("shortDescription")}
                 disabled={submitting}
               />
+              <p className="xsmall clr-muted" aria-live="polite">
+                {form.shortDescription.length}/100
+              </p>
             </div>
 
             {submitError && (
@@ -570,8 +597,9 @@ export default function DialogCreateProduct({
               >
                 {submitting ? (
                   <>
-                    <span className="loader" aria-hidden="true" />
-                    <span>Creating… </span>
+                    <span className="render-loader">
+                      {slowCreate ? "Waiting for SKU…" : "Creating…"}
+                    </span>
                   </>
                 ) : (
                   <>

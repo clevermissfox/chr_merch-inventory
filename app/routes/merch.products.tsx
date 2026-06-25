@@ -320,7 +320,7 @@ export default function ProductsPage() {
     ? "error"
     : publishPending
       ? "warning"
-      : lastEdited
+      : lastCreated || lastEdited
         ? "success"
         : undefined;
 

@@ -98,4 +98,5 @@ export interface RefreshWooStockResult {
   simpleCount: number;
   variationCount: number;
   wooQtyBySku: Map<string, number | "">;
+  warehouseStockBySku: Map<string, number | null>;
 }

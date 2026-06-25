@@ -164,6 +164,10 @@ svg {
   max-width: 100%;
 }
 
+hgroup {
+  margin-block-start: var(--spacing-050, 0.5em);
+}
+
 /* INTERACTIVE ELEMENTS */
 
 a {
@@ -417,6 +421,11 @@ form :not([type="checkbox"], [type="radio"]):is(input, textarea, select) {
   border: var(--default-border);
   border-color: var(--clr-border-soft);
   padding: var(--spacing-025, 0.25em) var(--spacing-050, 0.5em);
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 :is(input[type="checkbox"], input[type="radio"]) {

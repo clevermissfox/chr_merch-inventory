@@ -23,7 +23,8 @@ import {
   createWooCategory,
   deleteProduct,
   deleteVariant,
-  ensureDescriptionsRow,
+  ensureDimensionExists,
+  updateDescriptionFields,
   pollForProductSku,
   readRefData,
   rowsToObjects,
@@ -43,6 +44,7 @@ import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
   buildStockSyncPlan,
+  ensureSkuInInventoryIndex,
   refreshWooStockForCatalog,
   syncStockSyncPlanToWoo,
 } from "./inventoryManager";
@@ -153,6 +155,27 @@ function requireAuth(req: Request, res: Response, next: any) {
     return res.json({ success: false, error: "AUTH_REQUIRED", canEdit: false });
   }
   next();
+}
+
+function requireCanEdit(req: Request, res: Response, next: any) {
+  if (!req.session?.user?.canEdit) {
+    return res.status(403).json({ ok: false, error: "Edit permission required" });
+  }
+  next();
+}
+
+// Best-effort error logger — wraps getSheets() so it won't throw if sheets are unavailable
+function tryLogError(req: Request, action: string, error: any) {
+  try {
+    const { sheets, spreadsheetId } = getSheets();
+    writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+      new Date().toISOString(),
+      req.session?.user?.email ?? "",
+      `error_${action}`,
+      String(error?.message ?? "unknown"),
+      TARGET_ENV,
+    ]).catch(() => {});
+  } catch {}
 }
 
 // Load service account
@@ -348,6 +371,7 @@ app.get("/api/catalog", async (req: Request, res: Response) => {
 // Get all products/variants, shape to catalog, call woo for current website stock values, write those to inventory_index, patch update catalogs woo_stock
 app.get(
   "/api/catalog/inventory/get_stock",
+  requireAuth,
   async (req: Request, res: Response) => {
     try {
       const { sheets, spreadsheetId } = getSheets();
@@ -378,10 +402,18 @@ app.get(
         payload.groups,
       );
 
-      const updatedGroups = applyWooStockMapToCatalogGroups(
+      const wooPatched = applyWooStockMapToCatalogGroups(
         payload.groups,
         refreshResult.wooQtyBySku,
       );
+
+      // For simple products, the products sheet may not populate stock_qty via
+      // ARRAYFORMULA (it's keyed to variants). Merge from inventory_index directly.
+      const updatedGroups = wooPatched.map((group) => {
+        if (group.rowCount > 0 || group.stockQty != null) return group;
+        const qty = refreshResult.warehouseStockBySku.get(group.sku);
+        return qty !== undefined ? { ...group, stockQty: qty } : group;
+      });
 
       const wooSiteUrl =
         TARGET_ENV === "production"
@@ -417,7 +449,7 @@ app.get(
       return res.status(200).json(payload);
     } catch (error: any) {
       console.error("GET /api/catalog/inventory/get_stock failed:", error);
-
+      tryLogError(req, "inventory_get_stock", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to refresh catalog inventory",
@@ -433,6 +465,8 @@ app.get(
  */
 app.post(
   "/api/catalog/inventory/sync_stock",
+  requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const { sheets, spreadsheetId } = getSheets();
@@ -495,18 +529,34 @@ app.post(
         )
         .map((g) => ({ sku: g.sku, hash: computeProductSyncHash(g) }));
 
+      const actor = req.session?.user;
+
       if (hashEntries.length) {
-        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch((e) =>
-          console.error("hash write failed:", e),
-        );
+        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch((e) => {
+          console.error("hash write failed:", e);
+          writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+            new Date().toISOString(),
+            actor?.email ?? "",
+            "inventory_sync_hash_write_failed",
+            `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
+            TARGET_ENV,
+          ]).catch(() => {});
+        });
       }
 
-      const actor = req.session?.user;
+      const skuQtyLog = wooResult.updatedSkus
+        .map((sku) => {
+          const reqQty = plan.changeMap.get(sku);
+          const wooQty = refreshResult.wooQtyBySku.get(sku);
+          return `${sku}(req=${String(reqQty ?? "?")},woo=${String(wooQty ?? "?")})`;
+        })
+        .join("|");
+
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor?.email ?? "",
         `inventory_sync_stock_${mode}`,
-        `pushed=${wooResult.updatedProducts} skus=${wooResult.updatedSkus.join(",")} skipped=${wooResult.skipped.length} index_updated=${refreshResult.updated}`,
+        `pushed=${wooResult.updatedProducts} skus=${skuQtyLog || wooResult.updatedSkus.join(",")} skipped=${wooResult.skipped.length} index_updated=${refreshResult.updated}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -521,7 +571,7 @@ app.post(
       });
     } catch (error: any) {
       console.error("POST /api/catalog/inventory/sync_stock failed:", error);
-
+      tryLogError(req, "inventory_sync_stock", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to sync stock",
@@ -555,6 +605,7 @@ const VALID_REF_TYPES = new Set<RefAddType>([
 app.post(
   "/api/catalog/ref/add",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const { type, value, code, label, parentWooId } = req.body as {
@@ -569,7 +620,14 @@ app.post(
         return res.status(400).json({ ok: false, error: "Value is required" });
       }
 
-      const CODED_TYPES = new Set(["color","size","dimension","graphicsVariant","category","subcategory"]);
+      const CODED_TYPES = new Set([
+        "color",
+        "size",
+        "dimension",
+        "graphicsVariant",
+        "category",
+        "subcategory",
+      ]);
       if (CODED_TYPES.has(type ?? "") && !code?.trim()) {
         return res.status(400).json({ ok: false, error: "Code is required" });
       }
@@ -653,6 +711,7 @@ app.post(
 app.post(
   "/api/catalog/create_product",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const body = req.body as Partial<NewProductFields>;
@@ -680,9 +739,11 @@ app.post(
         primaryDescription: body.primaryDescription,
         shortDescription: body.shortDescription,
         salePriceDollars: body.salePriceDollars,
-        publishedStatus: body.publishedStatus && ["draft","publish","private"].includes(body.publishedStatus)
-          ? body.publishedStatus
-          : "draft",
+        publishedStatus:
+          body.publishedStatus &&
+          ["draft", "publish", "private"].includes(body.publishedStatus)
+            ? body.publishedStatus
+            : "draft",
       };
 
       const { sheets, spreadsheetId } = getSheets();
@@ -691,12 +752,40 @@ app.post(
         spreadsheetId,
         fields,
       );
+
+      if (fields.dimensionsWidth && fields.dimensionsHeight) {
+        const w = fields.dimensionsWidth.trim();
+        const h = fields.dimensionsHeight.trim();
+        await ensureDimensionExists(
+          sheets,
+          spreadsheetId,
+          `${w}"x${h}"`,
+          `${w}x${h}`,
+        ).catch((e) =>
+          console.warn("create_product: could not ensure dimension:", e?.message),
+        );
+      }
+
       const { productId, sku } = await pollForProductSku(
         sheets,
         spreadsheetId,
         sheetRow,
       );
-      await ensureDescriptionsRow(sheets, spreadsheetId, sku);
+      await updateDescriptionFields(sheets, spreadsheetId, sku, {
+        primaryDescription: fields.primaryDescription,
+        shortDescription: fields.shortDescription,
+      });
+
+      // Add the new product to inventory_index immediately so it appears
+      // without waiting for a stock sync (draft products never get a Woo row).
+      await ensureSkuInInventoryIndex(
+        sheets,
+        spreadsheetId,
+        sku,
+        fields.displayName || sku,
+      ).catch((e) =>
+        console.warn("create_product: could not add to inventory_index:", e?.message),
+      );
 
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
@@ -712,6 +801,7 @@ app.post(
         .json({ ok: true, productId, sku, rowId, sheetRow });
     } catch (error: any) {
       console.error("POST /api/catalog/create_product failed:", error);
+      tryLogError(req, "create_product", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to create product",
@@ -723,6 +813,7 @@ app.post(
 app.put(
   "/api/catalog/product/:sku",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const sku = req.params.sku?.trim();
@@ -738,7 +829,10 @@ app.put(
         fields.basePriceDollars = body.basePriceDollars.trim();
       if (typeof body.salePriceDollars === "string")
         fields.salePriceDollars = body.salePriceDollars.trim();
-      if (typeof body.publishedStatus === "string" && ["draft","publish","private"].includes(body.publishedStatus))
+      if (
+        typeof body.publishedStatus === "string" &&
+        ["draft", "publish", "private"].includes(body.publishedStatus)
+      )
         fields.publishedStatus = body.publishedStatus;
       if (typeof body.weightOz === "string")
         fields.weightOz = body.weightOz.trim();
@@ -773,6 +867,7 @@ app.put(
       return res.status(200).json({ ok: true, sku });
     } catch (error: any) {
       console.error("PUT /api/catalog/product/:sku failed:", error);
+      tryLogError(req, "update_product", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to update product",
@@ -784,6 +879,7 @@ app.put(
 app.delete(
   "/api/catalog/product/:sku",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const sku = req.params.sku?.trim();
@@ -805,6 +901,7 @@ app.delete(
       return res.status(200).json({ ok: true, sku, ...result });
     } catch (error: any) {
       console.error("DELETE /api/catalog/product/:sku failed:", error);
+      tryLogError(req, "delete_product", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to delete product",
@@ -816,6 +913,7 @@ app.delete(
 app.put(
   "/api/catalog/variant/:sku",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const sku = req.params.sku?.trim();
@@ -853,6 +951,7 @@ app.put(
       return res.status(200).json({ ok: true, sku });
     } catch (error: any) {
       console.error("PUT /api/catalog/variant/:sku failed:", error);
+      tryLogError(req, "update_variant", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to update variant",
@@ -864,6 +963,7 @@ app.put(
 app.delete(
   "/api/catalog/variant/:sku",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const sku = req.params.sku?.trim();
@@ -885,6 +985,7 @@ app.delete(
       return res.status(200).json({ ok: true, sku, ...result });
     } catch (error: any) {
       console.error("DELETE /api/catalog/variant/:sku failed:", error);
+      tryLogError(req, "delete_variant", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to delete variant",
@@ -896,6 +997,7 @@ app.delete(
 app.post(
   "/api/catalog/product/:sku/variants",
   requireAuth,
+  requireCanEdit,
   async (req: Request, res: Response) => {
     try {
       const parentSku = req.params.sku?.trim();
@@ -919,9 +1021,13 @@ app.post(
       if (!productId)
         return res.status(400).json({ ok: false, error: "Missing productId" });
 
-      const colors = Array.isArray(body.colors) ? body.colors.filter(Boolean) : [];
+      const colors = Array.isArray(body.colors)
+        ? body.colors.filter(Boolean)
+        : [];
       const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
-      const dimensions = Array.isArray(body.dimensions) ? body.dimensions.filter(Boolean) : [];
+      const dimensions = Array.isArray(body.dimensions)
+        ? body.dimensions.filter(Boolean)
+        : [];
 
       if (!colors.length && !sizes.length && !dimensions.length) {
         return res.status(400).json({
@@ -936,14 +1042,23 @@ app.post(
         priceVariant: body.priceVariant || undefined,
         weightOzVariant: body.weightOzVariant || undefined,
         descriptionVariant: body.descriptionVariant || undefined,
-        stockQty: body.stockQty !== undefined ? Number(body.stockQty) : undefined,
+        stockQty:
+          body.stockQty !== undefined ? Number(body.stockQty) : undefined,
       };
 
       // Build N-dimensional cartesian product across whichever axes are selected
-      let combos: Array<{ color?: string; size?: string; dimension?: string }> = [{}];
-      if (colors.length) combos = combos.flatMap((c) => colors.map((color) => ({ ...c, color })));
-      if (sizes.length) combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
-      if (dimensions.length) combos = combos.flatMap((c) => dimensions.map((dimension) => ({ ...c, dimension })));
+      let combos: Array<{ color?: string; size?: string; dimension?: string }> =
+        [{}];
+      if (colors.length)
+        combos = combos.flatMap((c) =>
+          colors.map((color) => ({ ...c, color })),
+        );
+      if (sizes.length)
+        combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
+      if (dimensions.length)
+        combos = combos.flatMap((c) =>
+          dimensions.map((dimension) => ({ ...c, dimension })),
+        );
       const variants = combos.map((c) => ({ ...c, ...shared }));
 
       const { sheets, spreadsheetId } = getSheets();
@@ -966,6 +1081,7 @@ app.post(
       return res.status(201).json({ ok: true, skus: result.skus });
     } catch (error: any) {
       console.error("POST /api/catalog/product/:sku/variants failed:", error);
+      tryLogError(req, "create_variants", error);
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to create variants",

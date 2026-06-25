@@ -19,6 +19,7 @@ export function MerchShell({ children }: MerchShellProps) {
   const matches = useMatches();
   const { user } = useAuth();
   const userInitials = `${user?.givenName?.slice(0, 1) || "G"}${user?.familyName?.slice(0, 1) || ""}`;
+  const canEdit = user?.canEdit;
 
   const [showProfile, setShowProfile] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -80,7 +81,7 @@ export function MerchShell({ children }: MerchShellProps) {
   };
 
   return (
-    <div className="merch-page">
+    <div className="merch-page" data-role={user?.role}>
       <header className="merch-topbar surface-primary ">
         <div
           className="wrapper grid gap-2 padding-i-default padding-b-2"

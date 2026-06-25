@@ -209,6 +209,61 @@ export async function appendRefEntry(
   return { value, code: normalizedCode };
 }
 
+/**
+ * Ensures a dimension entry exists in the dimensions tab.
+ * If value or code already exists, does nothing. Otherwise appends a new row.
+ * value format: `3"x5"` — code format: `3X5`
+ */
+export async function ensureDimensionExists(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  value: string,
+  code: string,
+): Promise<void> {
+  const response = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: ["dimensionsList", "dimensionsCode"],
+  });
+
+  const vrs = response.data.valueRanges ?? [];
+  const existingValues = (vrs[0]?.values ?? []).flat().map(String).filter(Boolean);
+  const existingCodes = (vrs[1]?.values ?? []).flat().map(String).filter(Boolean);
+
+  const codeUpper = code.toUpperCase();
+
+  if (
+    existingValues.some((v) => v.toLowerCase() === value.toLowerCase()) ||
+    existingCodes.some((c) => c.toUpperCase() === codeUpper)
+  ) {
+    return;
+  }
+
+  const vr0 = vrs[0];
+  const vr1 = vrs[1];
+  if (!vr0?.range || !vr1?.range) return;
+
+  const valueMeta = parseA1(vr0.range);
+  const codeMeta = parseA1(vr1.range);
+  const nextRow = valueMeta.startRow + existingValues.length;
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "RAW",
+      data: [
+        {
+          range: `'${valueMeta.sheet}'!${valueMeta.col}${nextRow}`,
+          values: [[value]],
+        },
+        {
+          range: `'${codeMeta.sheet}'!${codeMeta.col}${nextRow}`,
+          values: [[codeUpper]],
+        },
+      ],
+    },
+  });
+}
+
 export async function createWooCategory(
   name: string,
   parentWooId: number | null,
@@ -410,12 +465,6 @@ export async function createProductRow(
     ...(fields.dimensionsDepth
       ? [cell("dimensions_depth", fields.dimensionsDepth)]
       : []),
-    ...(fields.primaryDescription
-      ? [cell("primary_description", fields.primaryDescription)]
-      : []),
-    ...(fields.shortDescription
-      ? [cell("short_description", fields.shortDescription)]
-      : []),
     ...(fields.salePriceDollars
       ? [cell("sale_price_dollars", fields.salePriceDollars)]
       : []),
@@ -501,12 +550,6 @@ export async function updateProduct(
     ...(fields.weightOz !== undefined
       ? [cell("weight_oz", fields.weightOz)]
       : []),
-    ...(fields.primaryDescription !== undefined
-      ? [cell("primary_description", fields.primaryDescription)]
-      : []),
-    ...(fields.shortDescription !== undefined
-      ? [cell("short_description", fields.shortDescription)]
-      : []),
     ...(fields.dimensionsWidth !== undefined
       ? [cell("dimensions_width", fields.dimensionsWidth)]
       : []),
@@ -518,15 +561,31 @@ export async function updateProduct(
       : []),
   ];
 
-  if (!writes.length) return;
+  const descFields = {
+    ...(fields.primaryDescription !== undefined
+      ? { primaryDescription: fields.primaryDescription }
+      : {}),
+    ...(fields.shortDescription !== undefined
+      ? { shortDescription: fields.shortDescription }
+      : {}),
+  };
 
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: "USER_ENTERED",
-      data: writes,
-    },
-  });
+  const hasProductWrites = writes.length > 0;
+  const hasDescWrites = Object.keys(descFields).length > 0;
+
+  if (!hasProductWrites && !hasDescWrites) return;
+
+  await Promise.all([
+    hasProductWrites
+      ? sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: { valueInputOption: "USER_ENTERED", data: writes },
+        })
+      : Promise.resolve(),
+    hasDescWrites
+      ? updateDescriptionFields(sheets, spreadsheetId, sku, descFields)
+      : Promise.resolve(),
+  ]);
 }
 
 export interface UpdateVariantFields {
@@ -583,10 +642,96 @@ export async function updateVariant(
     ...(fields.weightOzVariant !== undefined
       ? [cell("weight_oz_variant", fields.weightOzVariant)]
       : []),
-    ...(fields.descriptionVariant !== undefined
-      ? [cell("description_variant", fields.descriptionVariant)]
-      : []),
   ];
+
+  const hasVariantWrites = writes.length > 0;
+  const hasDescWrite = fields.descriptionVariant !== undefined;
+
+  if (!hasVariantWrites && !hasDescWrite) return;
+
+  await Promise.all([
+    hasVariantWrites
+      ? sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: { valueInputOption: "USER_ENTERED", data: writes },
+        })
+      : Promise.resolve(),
+    hasDescWrite
+      ? updateDescriptionFields(sheets, spreadsheetId, sku, {
+          descriptionVariant: fields.descriptionVariant,
+        })
+      : Promise.resolve(),
+  ]);
+}
+
+export async function updateDescriptionFields(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+  fields: {
+    primaryDescription?: string;
+    shortDescription?: string;
+    descriptionVariant?: string;
+  },
+): Promise<void> {
+  const sheetRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "descriptions",
+  });
+
+  const values = (sheetRes.data.values ?? []) as string[][];
+  const headers = (values[0] ?? []).map((h) => String(h).trim());
+  const skuIdx = headers.indexOf("sku");
+  if (skuIdx === -1) throw new Error('descriptions sheet missing "sku" column');
+
+  const colName: Record<string, string> = {
+    primaryDescription: "primary_description",
+    shortDescription: "short_description",
+    descriptionVariant: "description_variant",
+  };
+
+  let rowIdx = -1;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i]?.[skuIdx] ?? "").trim() === sku) {
+      rowIdx = i;
+      break;
+    }
+  }
+
+  if (rowIdx === -1) {
+    // Row doesn't exist — append with all provided fields
+    const newRow = new Array(headers.length).fill("");
+    newRow[skuIdx] = sku;
+    for (const [key, col] of Object.entries(colName)) {
+      const value = fields[key as keyof typeof fields];
+      if (value === undefined) continue;
+      const idx = headers.indexOf(col);
+      if (idx >= 0) newRow[idx] = value;
+    }
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: "descriptions",
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [newRow] },
+    });
+    return;
+  }
+
+  // Row exists — write only the provided fields
+  const sheetRow = rowIdx + 1;
+  const writes: Array<{ range: string; values: string[][] }> = [];
+  for (const [key, col] of Object.entries(colName)) {
+    const value = fields[key as keyof typeof fields];
+    if (value === undefined) continue;
+    const idx = headers.indexOf(col);
+    if (idx >= 0) {
+      writes.push({
+        range: `descriptions!${colLetter(idx)}${sheetRow}`,
+        values: [[value]],
+      });
+    }
+  }
 
   if (!writes.length) return;
 
@@ -596,46 +741,6 @@ export async function updateVariant(
       valueInputOption: "USER_ENTERED",
       data: writes,
     },
-  });
-}
-
-export async function ensureDescriptionsRow(
-  sheets: SheetsClient,
-  spreadsheetId: string,
-  sku: string,
-): Promise<void> {
-  const headerResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "descriptions!1:1",
-  });
-  const headers = ((headerResponse.data.values?.[0] ?? []) as string[]).map(
-    (h) => String(h).trim(),
-  );
-  const skuIdx = colByHeader(headers, "sku");
-  const skuCol = colLetter(skuIdx);
-
-  const skuColResponse = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `descriptions!${skuCol}:${skuCol}`,
-  });
-  const existingSkus = new Set(
-    ((skuColResponse.data.values ?? []) as string[][])
-      .slice(1)
-      .map((r) => String(r[0] ?? "").trim())
-      .filter(Boolean),
-  );
-
-  if (existingSkus.has(sku)) return;
-
-  const row = new Array(headers.length).fill("");
-  row[skuIdx] = sku;
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: "descriptions",
-    valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [row] },
   });
 }
 
@@ -813,7 +918,10 @@ export async function writeProductSyncHashes(
 
   for (const { sku, hash } of entries) {
     const sheetRow = rowBySku.get(sku);
-    if (!sheetRow) continue;
+    if (!sheetRow) {
+      console.warn(`writeProductSyncHashes: no writable row for SKU ${sku} — in protected row 2 or not found; hash not saved`);
+      continue;
+    }
     data.push(
       { range: `products!${colLetter(hashIdx)}${sheetRow}`, values: [[hash]] },
       {
@@ -1139,7 +1247,7 @@ export async function createVariantRows(
     throw new Error('variants sheet missing "select_product" column');
 
   const rowData: string[][] = variants.map(
-    ({ color, size, dimension, design, designVariant, descriptionVariant, priceVariant, weightOzVariant }) => {
+    ({ color, size, dimension, design, designVariant, priceVariant, weightOzVariant }) => {
       const row = new Array(headers.length).fill("");
       row[spIdx] = selectProductValue;
       const ci = colIdx("color");
@@ -1152,8 +1260,6 @@ export async function createVariantRows(
       if (desi >= 0 && design) row[desi] = design;
       const di = colIdx("design_variant");
       if (di >= 0 && designVariant) row[di] = designVariant;
-      const dvi = colIdx("description_variant");
-      if (dvi >= 0 && descriptionVariant) row[dvi] = descriptionVariant;
       const pi = colIdx("price_variant");
       if (pi >= 0 && priceVariant) row[pi] = priceVariant;
       const wi = colIdx("weight_oz_variant");
@@ -1188,7 +1294,11 @@ export async function createVariantRows(
   });
   await Promise.all([
     Promise.all(
-      skus.map((sku) => ensureDescriptionsRow(sheets, spreadsheetId, sku)),
+      skus.map((sku, i) =>
+        updateDescriptionFields(sheets, spreadsheetId, sku, {
+          descriptionVariant: variants[i].descriptionVariant,
+        }),
+      ),
     ),
     ensureInventoryIndexRowsExist(
       sheets,

@@ -253,8 +253,7 @@ export default function DialogEditVariant({
             >
               {submitting ? (
                 <>
-                  <span className="loader" aria-hidden="true" />
-                  <span>Saving…</span>
+                  <span className="render-loader">Saving…</span>
                 </>
               ) : (
                 <>

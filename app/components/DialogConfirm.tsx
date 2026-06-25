@@ -63,7 +63,7 @@ export default function DialogConfirm({
         )}
 
         {error && (
-          <p role="alert" className="small" data-tone="error">
+          <p role="alert" className="small status-line" data-tone="error">
             {error}
           </p>
         )}

@@ -543,6 +543,22 @@ export async function refreshWooStockForCatalog(
     sheets,
     spreadsheetId,
   );
+
+  // Extract warehouse stock_qty values BEFORE any writes, so we can
+  // patch catalog groups whose products sheet stock_qty is unpopulated.
+  const warehouseStockBySku = new Map<string, number | null>();
+  const stockQtyCol = inventoryIndexState.headerIndex["stock_qty"];
+  if (stockQtyCol != null) {
+    for (let i = 1; i < inventoryIndexState.rawValues.length; i++) {
+      const row = inventoryIndexState.rawValues[i];
+      const sku = String(row[inventoryIndexState.headerIndex.sku] ?? "").trim();
+      if (!sku) continue;
+      const raw = row[stockQtyCol];
+      const qty = raw === "" || raw == null ? null : Number(raw);
+      warehouseStockBySku.set(sku, isNaN(qty as number) ? null : qty);
+    }
+  }
+
   const now = new Date().toISOString();
 
   const updates = buildInventoryIndexUpdates(wooQtyBySku, now, options);
@@ -569,6 +585,7 @@ export async function refreshWooStockForCatalog(
     simpleCount,
     variationCount,
     wooQtyBySku,
+    warehouseStockBySku,
   };
 }
 
@@ -616,6 +633,15 @@ export function buildStockSyncPlan(
     if (variantMatch) {
       const { group, row } = variantMatch;
 
+      // No woo_id — nothing to sync regardless of published status
+      if (!group.wooId) {
+        skipped.push({
+          sku,
+          reason: group.publishedStatus === "draft" ? "draft_unpublished" : "no_woo_id",
+        });
+        continue;
+      }
+
       const existing = planByProductId.get(group.productId) ?? {
         productId: group.productId,
         parentSku: group.sku,
@@ -644,6 +670,15 @@ export function buildStockSyncPlan(
     const simpleMatch = productsBySimpleSku.get(sku);
 
     if (simpleMatch) {
+      // No woo_id — nothing to sync regardless of published status
+      if (!simpleMatch.wooId) {
+        skipped.push({
+          sku,
+          reason: simpleMatch.publishedStatus === "draft" ? "draft_unpublished" : "no_woo_id",
+        });
+        continue;
+      }
+
       const existing = planByProductId.get(simpleMatch.productId) ?? {
         productId: simpleMatch.productId,
         parentSku: simpleMatch.sku,
@@ -1033,6 +1068,38 @@ async function appendInventoryIndexRows(
 }
 
 /**
+ * Ensures a single SKU has a row in inventory_index. Used after product/variant creation
+ * so the SKU appears immediately without waiting for a stock sync to trigger the row.
+ */
+export async function ensureSkuInInventoryIndex(
+  sheets: any,
+  spreadsheetId: string,
+  sku: string,
+  productName: string,
+): Promise<void> {
+  const state = await loadInventoryIndexState(sheets, spreadsheetId);
+  if (state.skuToRowNumber.has(sku)) return;
+
+  // Re-check the live SKU column to guard against concurrent writes
+  const skuCol = colLetter(state.headerIndex.sku);
+  const freshResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${state.sheetName}!${skuCol}:${skuCol}`,
+  });
+  const freshSkus = new Set(
+    ((freshResponse.data.values ?? []) as string[][])
+      .slice(1)
+      .map((r) => String(r[0] ?? "").trim())
+      .filter(Boolean),
+  );
+  if (freshSkus.has(sku)) return;
+
+  await appendInventoryIndexRows(sheets, spreadsheetId, state, [
+    { sku, fields: { product_name: productName } },
+  ]);
+}
+
+/**
  * Ensures every SKU referenced by the pending updates exists in the inventory index sheet.
  * Appends missing rows with a best-available product name and then reloads sheet state.
  * Returns the original state when no rows need to be added.
@@ -1097,7 +1164,8 @@ function getPreferredCatalogName(
 
 /**
  * Builds a SKU-to-name lookup map from catalog groups and their variant rows.
- * Prefers readable names and falls back to product names for both parent products and variants.
+ * Products: display_name → product_name
+ * Variants: readable_name → product_name + variant_details
  */
 export function buildCatalogNameBySku(
   groups: CatalogGroup[],
@@ -1108,10 +1176,9 @@ export function buildCatalogNameBySku(
     const parentSku = String(group.sku || "").trim();
 
     if (parentSku) {
-      const parentName = getPreferredCatalogName(
-        group.readableName,
-        group.productName,
-      );
+      const parentName =
+        String(group.displayName || "").trim() ||
+        String(group.productName || "").trim();
       if (parentName) {
         map.set(parentSku, parentName);
       }
@@ -1121,10 +1188,16 @@ export function buildCatalogNameBySku(
       const sku = String(row.sku || "").trim();
       if (!sku) continue;
 
-      const variantName = getPreferredCatalogName(
-        row.readableName,
-        row.productName,
-      );
+      const readableName = String(row.readableName || "").trim();
+      const variantName =
+        readableName ||
+        [
+          String(row.productName || "").trim(),
+          String(row.variantDetails || "").trim(),
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
       if (variantName) {
         map.set(sku, variantName);
       }
