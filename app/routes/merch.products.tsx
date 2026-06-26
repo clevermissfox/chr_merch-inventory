@@ -336,17 +336,17 @@ export default function ProductsPage() {
             {statusMessage}
           </p>
 
-          {canEdit && (
-            <div className="row gap-1 fw-wrap ai-cen">
-              <button
-                type="button"
-                className="btn-secondary btn-lg row gap-half ai-cen"
-                onClick={() => loadCatalog()}
-                disabled={loading}
-              >
-                <RefreshCw aria-hidden="true" />
-                <span>Refresh</span>
-              </button>
+          <div className="row gap-1 fw-wrap ai-cen">
+            <button
+              type="button"
+              className="btn-secondary btn-lg row gap-half ai-cen"
+              onClick={() => loadCatalog()}
+              disabled={loading}
+            >
+              <RefreshCw aria-hidden="true" />
+              <span>Refresh</span>
+            </button>
+            {canEdit && (
               <button
                 type="button"
                 className="btn-primary btn-lg row gap-half ai-cen"
@@ -356,8 +356,8 @@ export default function ProductsPage() {
                 <Plus aria-hidden="true" />
                 <span>New Product</span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </section>
 

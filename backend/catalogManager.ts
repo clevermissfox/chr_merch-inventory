@@ -121,6 +121,24 @@ export type RefAddType =
   | "graphic"
   | "style";
 
+export const VALID_REF_TYPES = new Set<RefAddType>([
+  "color",
+  "size",
+  "dimension",
+  "graphicsVariant",
+  "graphic",
+  "style",
+]);
+
+export const CODED_REF_TYPES = new Set([
+  "color",
+  "size",
+  "dimension",
+  "graphicsVariant",
+  "category",
+  "subcategory",
+]);
+
 const REF_RANGE_MAP: Record<RefAddType, { value: string; code?: string }> = {
   color: { value: "colorsList", code: "colorsCode" },
   size: { value: "sizesList", code: "sizesCode" },
@@ -593,6 +611,98 @@ export interface UpdateVariantFields {
   salePriceVariant?: string;
   weightOzVariant?: string;
   descriptionVariant?: string;
+}
+
+export interface ParsedCreateVariants {
+  productId: string;
+  colors: string[];
+  sizes: string[];
+  dimensions: string[];
+  shared: VariantComboShared;
+}
+
+export function parseUpdateProductFields(body: Partial<UpdateProductFields>): UpdateProductFields {
+  const fields: UpdateProductFields = {};
+  if (typeof body.displayName === "string") fields.displayName = body.displayName.trim();
+  if (typeof body.basePriceDollars === "string") fields.basePriceDollars = body.basePriceDollars.trim();
+  if (typeof body.salePriceDollars === "string") fields.salePriceDollars = body.salePriceDollars.trim();
+  if (typeof body.publishedStatus === "string" && ["draft", "publish", "private"].includes(body.publishedStatus))
+    fields.publishedStatus = body.publishedStatus;
+  if (typeof body.weightOz === "string") fields.weightOz = body.weightOz.trim();
+  if (typeof body.primaryDescription === "string") fields.primaryDescription = body.primaryDescription.trim();
+  if (typeof body.shortDescription === "string") fields.shortDescription = body.shortDescription.trim();
+  if (typeof body.dimensionsWidth === "string") fields.dimensionsWidth = body.dimensionsWidth.trim();
+  if (typeof body.dimensionsHeight === "string") fields.dimensionsHeight = body.dimensionsHeight.trim();
+  if (typeof body.dimensionsDepth === "string") fields.dimensionsDepth = body.dimensionsDepth.trim();
+  return fields;
+}
+
+export function parseUpdateVariantFields(body: Record<string, unknown>): UpdateVariantFields {
+  const fields: UpdateVariantFields = {};
+  if (body.priceVariant !== undefined) fields.priceVariant = String(body.priceVariant).trim();
+  if (body.salePriceVariant !== undefined) fields.salePriceVariant = String(body.salePriceVariant).trim();
+  if (body.weightOzVariant !== undefined) fields.weightOzVariant = String(body.weightOzVariant).trim();
+  if (body.descriptionVariant !== undefined) fields.descriptionVariant = String(body.descriptionVariant).trim();
+  return fields;
+}
+
+export function parseNewProductFields(raw: unknown): NewProductFields | { error: string } {
+  const body = raw as Partial<NewProductFields>;
+  const { category, subcategory, basePriceDollars, weightOz } = body;
+  if (!category || !subcategory || !basePriceDollars || !weightOz) {
+    return { error: "Missing required fields: category, subcategory, basePriceDollars, weightOz" };
+  }
+  return {
+    category,
+    subcategory,
+    basePriceDollars,
+    weightOz,
+    displayName: body.displayName,
+    design: body.design,
+    styleModifier: body.styleModifier,
+    dimensionsWidth: body.dimensionsWidth,
+    dimensionsHeight: body.dimensionsHeight,
+    dimensionsDepth: body.dimensionsDepth,
+    primaryDescription: body.primaryDescription,
+    shortDescription: body.shortDescription,
+    salePriceDollars: body.salePriceDollars,
+    publishedStatus:
+      body.publishedStatus && ["draft", "publish", "private"].includes(body.publishedStatus)
+        ? body.publishedStatus
+        : "draft",
+  };
+}
+
+export function parseCreateVariantsBody(raw: unknown): ParsedCreateVariants | { error: string } {
+  const body = raw as {
+    productId?: string;
+    colors?: unknown;
+    sizes?: unknown;
+    dimensions?: unknown;
+    design?: string;
+    designVariant?: string;
+    priceVariant?: string;
+    weightOzVariant?: string;
+    descriptionVariant?: string;
+    stockQty?: number;
+  };
+  const productId = body.productId?.trim();
+  if (!productId) return { error: "Missing productId" };
+  const colors = Array.isArray(body.colors) ? body.colors.filter(Boolean) : [];
+  const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
+  const dimensions = Array.isArray(body.dimensions) ? body.dimensions.filter(Boolean) : [];
+  if (!colors.length && !sizes.length && !dimensions.length) {
+    return { error: "Must provide at least one color, size, or dimension" };
+  }
+  const shared: VariantComboShared = {
+    design: body.design || undefined,
+    designVariant: body.designVariant || undefined,
+    priceVariant: body.priceVariant || undefined,
+    weightOzVariant: body.weightOzVariant || undefined,
+    descriptionVariant: body.descriptionVariant || undefined,
+    stockQty: body.stockQty !== undefined ? Number(body.stockQty) : undefined,
+  };
+  return { productId, colors, sizes, dimensions, shared };
 }
 
 export async function updateVariant(
@@ -1205,6 +1315,28 @@ async function pollForVariantSkus(
   throw new Error(
     `Timeout waiting for variant SKU formulas at rows ${startSheetRow}–${endRow}`,
   );
+}
+
+export interface VariantComboShared {
+  design?: string;
+  designVariant?: string;
+  priceVariant?: string;
+  weightOzVariant?: string;
+  descriptionVariant?: string;
+  stockQty?: number;
+}
+
+export function buildVariantCombos(
+  colors: string[],
+  sizes: string[],
+  dimensions: string[],
+  shared: VariantComboShared,
+) {
+  let combos: Array<{ color?: string; size?: string; dimension?: string }> = [{}];
+  if (colors.length) combos = combos.flatMap((c) => colors.map((color) => ({ ...c, color })));
+  if (sizes.length) combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
+  if (dimensions.length) combos = combos.flatMap((c) => dimensions.map((dimension) => ({ ...c, dimension })));
+  return combos.map((c) => ({ ...c, ...shared }));
 }
 
 export async function createVariantRows(

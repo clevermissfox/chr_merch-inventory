@@ -51,7 +51,7 @@ export interface StockSyncPlan {
   products: StockSyncProductPlan[];
   skipped: Array<{
     sku: string;
-    reason: "missing_sku" | "not_found" | "variable_parent_not_editable";
+    reason: "missing_sku" | "not_found" | "variable_parent_not_editable" | "draft_unpublished" | "no_woo_id";
   }>;
   updatedSkus: string[];
 }

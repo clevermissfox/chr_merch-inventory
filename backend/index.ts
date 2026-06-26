@@ -6,9 +6,7 @@ import path from "path";
 import session from "express-session";
 import cors from "cors";
 import type {
-  CatalogGroup,
   CatalogPayload,
-  NewProductFields,
   ProductSheetRow,
   VariantSheetRow,
 } from "~/types/catalog";
@@ -17,6 +15,8 @@ import {
   appendCategoryEntry,
   appendRefEntry,
   buildConflictGroups,
+  buildVariantCombos,
+  CODED_REF_TYPES,
   computeProductSyncHash,
   createProductRow,
   createVariantRows,
@@ -24,6 +24,10 @@ import {
   deleteProduct,
   deleteVariant,
   ensureDimensionExists,
+  parseCreateVariantsBody,
+  parseNewProductFields,
+  parseUpdateProductFields,
+  parseUpdateVariantFields,
   updateDescriptionFields,
   pollForProductSku,
   readRefData,
@@ -31,15 +35,12 @@ import {
   shapeToCatalogPayload,
   updateProduct,
   updateVariant,
-  writeProductSyncHash,
+  VALID_REF_TYPES,
   writeProductSyncHashes,
   writeSheetLog,
 } from "./catalogManager";
-import type {
-  RefAddType,
-  UpdateProductFields,
-  UpdateVariantFields,
-} from "./catalogManager";
+import type { RefAddType, UpdateProductFields } from "./catalogManager";
+
 import {
   applyWooStockMapToCatalogGroups,
   buildStockSyncChangesFromCatalog,
@@ -66,6 +67,8 @@ const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const API_URL = process.env.VITE_API_URL || `http://localhost:${PORT}`;
 const TARGET_ENV = process.env.TARGET_ENV || "unknown";
+const manualGuardProducts = false;
+const guardProducts = TARGET_ENV === "production" ? true : manualGuardProducts;
 
 // Add CORS middleware
 app.use(
@@ -159,7 +162,9 @@ function requireAuth(req: Request, res: Response, next: any) {
 
 function requireCanEdit(req: Request, res: Response, next: any) {
   if (!req.session?.user?.canEdit) {
-    return res.status(403).json({ ok: false, error: "Edit permission required" });
+    return res
+      .status(403)
+      .json({ ok: false, error: "Edit permission required" });
   }
   next();
 }
@@ -532,16 +537,18 @@ app.post(
       const actor = req.session?.user;
 
       if (hashEntries.length) {
-        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch((e) => {
-          console.error("hash write failed:", e);
-          writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
-            new Date().toISOString(),
-            actor?.email ?? "",
-            "inventory_sync_hash_write_failed",
-            `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
-            TARGET_ENV,
-          ]).catch(() => {});
-        });
+        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch(
+          (e) => {
+            console.error("hash write failed:", e);
+            writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+              new Date().toISOString(),
+              actor?.email ?? "",
+              "inventory_sync_hash_write_failed",
+              `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
+              TARGET_ENV,
+            ]).catch(() => {});
+          },
+        );
       }
 
       const skuQtyLog = wooResult.updatedSkus
@@ -593,15 +600,6 @@ app.get("/api/catalog/get_meta", async (req: Request, res: Response) => {
   }
 });
 
-const VALID_REF_TYPES = new Set<RefAddType>([
-  "color",
-  "size",
-  "dimension",
-  "graphicsVariant",
-  "graphic",
-  "style",
-]);
-
 app.post(
   "/api/catalog/ref/add",
   requireAuth,
@@ -620,15 +618,7 @@ app.post(
         return res.status(400).json({ ok: false, error: "Value is required" });
       }
 
-      const CODED_TYPES = new Set([
-        "color",
-        "size",
-        "dimension",
-        "graphicsVariant",
-        "category",
-        "subcategory",
-      ]);
-      if (CODED_TYPES.has(type ?? "") && !code?.trim()) {
+      if (CODED_REF_TYPES.has(type ?? "") && !code?.trim()) {
         return res.status(400).json({ ok: false, error: "Code is required" });
       }
       const safeCode = code?.trim() ?? "";
@@ -713,38 +703,17 @@ app.post(
   requireAuth,
   requireCanEdit,
   async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
     try {
-      const body = req.body as Partial<NewProductFields>;
-      const { category, subcategory, basePriceDollars, weightOz } = body;
-
-      if (!category || !subcategory || !basePriceDollars || !weightOz) {
-        return res.status(400).json({
-          ok: false,
-          error:
-            "Missing required fields: category, subcategory, basePriceDollars, weightOz",
-        });
-      }
-
-      const fields: NewProductFields = {
-        category,
-        subcategory,
-        basePriceDollars,
-        weightOz,
-        displayName: body.displayName,
-        design: body.design,
-        styleModifier: body.styleModifier,
-        dimensionsWidth: body.dimensionsWidth,
-        dimensionsHeight: body.dimensionsHeight,
-        dimensionsDepth: body.dimensionsDepth,
-        primaryDescription: body.primaryDescription,
-        shortDescription: body.shortDescription,
-        salePriceDollars: body.salePriceDollars,
-        publishedStatus:
-          body.publishedStatus &&
-          ["draft", "publish", "private"].includes(body.publishedStatus)
-            ? body.publishedStatus
-            : "draft",
-      };
+      const parsed = parseNewProductFields(req.body);
+      if ("error" in parsed)
+        return res.status(400).json({ ok: false, error: parsed.error });
+      const fields = parsed;
 
       const { sheets, spreadsheetId } = getSheets();
       const { sheetRow, rowId } = await createProductRow(
@@ -762,7 +731,10 @@ app.post(
           `${w}"x${h}"`,
           `${w}x${h}`,
         ).catch((e) =>
-          console.warn("create_product: could not ensure dimension:", e?.message),
+          console.warn(
+            "create_product: could not ensure dimension:",
+            e?.message,
+          ),
         );
       }
 
@@ -784,7 +756,10 @@ app.post(
         sku,
         fields.displayName || sku,
       ).catch((e) =>
-        console.warn("create_product: could not add to inventory_index:", e?.message),
+        console.warn(
+          "create_product: could not add to inventory_index:",
+          e?.message,
+        ),
       );
 
       const actor = req.session.user!;
@@ -815,37 +790,20 @@ app.put(
   requireAuth,
   requireCanEdit,
   async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
     try {
       const sku = req.params.sku?.trim();
       if (!sku)
         return res.status(400).json({ ok: false, error: "Missing sku" });
 
-      const body = req.body as Partial<UpdateProductFields>;
-      const fields: UpdateProductFields = {};
-
-      if (typeof body.displayName === "string")
-        fields.displayName = body.displayName.trim();
-      if (typeof body.basePriceDollars === "string")
-        fields.basePriceDollars = body.basePriceDollars.trim();
-      if (typeof body.salePriceDollars === "string")
-        fields.salePriceDollars = body.salePriceDollars.trim();
-      if (
-        typeof body.publishedStatus === "string" &&
-        ["draft", "publish", "private"].includes(body.publishedStatus)
-      )
-        fields.publishedStatus = body.publishedStatus;
-      if (typeof body.weightOz === "string")
-        fields.weightOz = body.weightOz.trim();
-      if (typeof body.primaryDescription === "string")
-        fields.primaryDescription = body.primaryDescription.trim();
-      if (typeof body.shortDescription === "string")
-        fields.shortDescription = body.shortDescription.trim();
-      if (typeof body.dimensionsWidth === "string")
-        fields.dimensionsWidth = body.dimensionsWidth.trim();
-      if (typeof body.dimensionsHeight === "string")
-        fields.dimensionsHeight = body.dimensionsHeight.trim();
-      if (typeof body.dimensionsDepth === "string")
-        fields.dimensionsDepth = body.dimensionsDepth.trim();
+      const fields = parseUpdateProductFields(
+        req.body as Partial<UpdateProductFields>,
+      );
 
       if (!Object.keys(fields).length)
         return res
@@ -881,6 +839,12 @@ app.delete(
   requireAuth,
   requireCanEdit,
   async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
     try {
       const sku = req.params.sku?.trim();
       if (!sku)
@@ -910,26 +874,74 @@ app.delete(
   },
 );
 
+app.post(
+  "/api/catalog/product/:sku/variants",
+  requireAuth,
+  requireCanEdit,
+  async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
+    try {
+      const parentSku = req.params.sku?.trim();
+      if (!parentSku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const parsedVariants = parseCreateVariantsBody(req.body);
+      if ("error" in parsedVariants)
+        return res.status(400).json({ ok: false, error: parsedVariants.error });
+      const { productId, colors, sizes, dimensions, shared } = parsedVariants;
+      const variants = buildVariantCombos(colors, sizes, dimensions, shared);
+
+      const { sheets, spreadsheetId } = getSheets();
+      const result = await createVariantRows(
+        sheets,
+        spreadsheetId,
+        productId,
+        variants,
+      );
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "create_variants",
+        `parentSku=${parentSku} count=${result.skus.length} skus=${result.skus.join(",")}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(201).json({ ok: true, skus: result.skus });
+    } catch (error: any) {
+      console.error("POST /api/catalog/product/:sku/variants failed:", error);
+      tryLogError(req, "create_variants", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to create variants",
+      });
+    }
+  },
+);
+
 app.put(
   "/api/catalog/variant/:sku",
   requireAuth,
   requireCanEdit,
   async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
     try {
       const sku = req.params.sku?.trim();
       if (!sku)
         return res.status(400).json({ ok: false, error: "Missing sku" });
 
-      const body = req.body ?? {};
-      const fields: UpdateVariantFields = {};
-      if (body.priceVariant !== undefined)
-        fields.priceVariant = String(body.priceVariant).trim();
-      if (body.salePriceVariant !== undefined)
-        fields.salePriceVariant = String(body.salePriceVariant).trim();
-      if (body.weightOzVariant !== undefined)
-        fields.weightOzVariant = String(body.weightOzVariant).trim();
-      if (body.descriptionVariant !== undefined)
-        fields.descriptionVariant = String(body.descriptionVariant).trim();
+      const fields = parseUpdateVariantFields(req.body ?? {});
 
       if (!Object.keys(fields).length)
         return res
@@ -965,6 +977,12 @@ app.delete(
   requireAuth,
   requireCanEdit,
   async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
     try {
       const sku = req.params.sku?.trim();
       if (!sku)
@@ -989,102 +1007,6 @@ app.delete(
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to delete variant",
-      });
-    }
-  },
-);
-
-app.post(
-  "/api/catalog/product/:sku/variants",
-  requireAuth,
-  requireCanEdit,
-  async (req: Request, res: Response) => {
-    try {
-      const parentSku = req.params.sku?.trim();
-      if (!parentSku)
-        return res.status(400).json({ ok: false, error: "Missing sku" });
-
-      const body = req.body as {
-        productId?: string;
-        colors?: string[];
-        sizes?: string[];
-        dimensions?: string[];
-        design?: string;
-        designVariant?: string;
-        priceVariant?: string;
-        weightOzVariant?: string;
-        descriptionVariant?: string;
-        stockQty?: number;
-      };
-
-      const productId = body.productId?.trim();
-      if (!productId)
-        return res.status(400).json({ ok: false, error: "Missing productId" });
-
-      const colors = Array.isArray(body.colors)
-        ? body.colors.filter(Boolean)
-        : [];
-      const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
-      const dimensions = Array.isArray(body.dimensions)
-        ? body.dimensions.filter(Boolean)
-        : [];
-
-      if (!colors.length && !sizes.length && !dimensions.length) {
-        return res.status(400).json({
-          ok: false,
-          error: "Must provide at least one color, size, or dimension",
-        });
-      }
-
-      const shared = {
-        design: body.design || undefined,
-        designVariant: body.designVariant || undefined,
-        priceVariant: body.priceVariant || undefined,
-        weightOzVariant: body.weightOzVariant || undefined,
-        descriptionVariant: body.descriptionVariant || undefined,
-        stockQty:
-          body.stockQty !== undefined ? Number(body.stockQty) : undefined,
-      };
-
-      // Build N-dimensional cartesian product across whichever axes are selected
-      let combos: Array<{ color?: string; size?: string; dimension?: string }> =
-        [{}];
-      if (colors.length)
-        combos = combos.flatMap((c) =>
-          colors.map((color) => ({ ...c, color })),
-        );
-      if (sizes.length)
-        combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
-      if (dimensions.length)
-        combos = combos.flatMap((c) =>
-          dimensions.map((dimension) => ({ ...c, dimension })),
-        );
-      const variants = combos.map((c) => ({ ...c, ...shared }));
-
-      const { sheets, spreadsheetId } = getSheets();
-      const result = await createVariantRows(
-        sheets,
-        spreadsheetId,
-        productId,
-        variants,
-      );
-
-      const actor = req.session.user!;
-      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
-        new Date().toISOString(),
-        actor.email,
-        "create_variants",
-        `parentSku=${parentSku} count=${result.skus.length} skus=${result.skus.join(",")}`,
-        TARGET_ENV,
-      ]).catch((e) => console.error("log failed:", e));
-
-      return res.status(201).json({ ok: true, skus: result.skus });
-    } catch (error: any) {
-      console.error("POST /api/catalog/product/:sku/variants failed:", error);
-      tryLogError(req, "create_variants", error);
-      return res.status(500).json({
-        ok: false,
-        error: error?.message || "Failed to create variants",
       });
     }
   },

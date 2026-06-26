@@ -135,6 +135,14 @@
   border-radius: 0;
 }
 
+:is(html, body)::-webkit-scrollbar-track {
+  background-color: color-mix(
+    in oklch,
+    var(--clr-neutral-900),
+    var(--clr-neutral-0) 10%
+  );
+}
+
 ::placeholder {
   color: inherit;
   opacity: 0.6;
