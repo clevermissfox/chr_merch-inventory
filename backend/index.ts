@@ -813,6 +813,22 @@ app.put(
       const { sheets, spreadsheetId } = getSheets();
       await updateProduct(sheets, spreadsheetId, sku, fields);
 
+      if (fields.dimensionsWidth && fields.dimensionsHeight) {
+        const w = fields.dimensionsWidth.trim();
+        const h = fields.dimensionsHeight.trim();
+        await ensureDimensionExists(
+          sheets,
+          spreadsheetId,
+          `${w}"x${h}"`,
+          `${w}x${h}`,
+        ).catch((e) =>
+          console.warn(
+            "update_product: could not ensure dimension:",
+            e?.message,
+          ),
+        );
+      }
+
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),

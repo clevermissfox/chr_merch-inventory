@@ -93,6 +93,37 @@ export default function DialogCreateVariant({
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitError(null);
+
+    const norm = (v: string | null | undefined) =>
+      (v ?? "").toLowerCase().trim();
+    const existingKeys = new Set(
+      group.rows.map((r) =>
+        [r.color, r.size, r.dimensions, r.designVariant].map(norm).join("|"),
+      ),
+    );
+    const colorOpts = selectedColors.size ? [...selectedColors] : [""];
+    const sizeOpts = selectedSizes.size ? [...selectedSizes] : [""];
+    const dimOpts = selectedDimensions.size ? [...selectedDimensions] : [""];
+    const dupes: string[] = [];
+    for (const c of colorOpts) {
+      for (const s of sizeOpts) {
+        for (const d of dimOpts) {
+          if (existingKeys.has([c, s, d, designVariant].map(norm).join("|"))) {
+            dupes.push(
+              [c, s, d, designVariant].filter(Boolean).join(" / ") ||
+                "base variant",
+            );
+          }
+        }
+      }
+    }
+    if (dupes.length) {
+      setSubmitError(
+        `${dupes.length === 1 ? "Variant already exists" : "Variants already exist"}: ${dupes.join(", ")}`,
+      );
+      return;
+    }
+
     setSubmitting(true);
 
     try {
