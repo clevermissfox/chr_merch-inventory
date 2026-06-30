@@ -123,6 +123,11 @@ export default function DialogCreateProduct({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
         credentials: "include",
+        // Backstop so a dropped/hung connection (server restart mid-request,
+        // network blip) surfaces an error instead of leaving the dialog
+        // stuck on "Waiting for SKU…" forever with no way out. Server's own
+        // sku-polling timeout is 60s; give it a bit of headroom.
+        signal: AbortSignal.timeout(75_000),
       });
 
       const data = await res.json();
@@ -130,7 +135,13 @@ export default function DialogCreateProduct({
 
       onCreated(data.sku);
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Unknown error");
+      setSubmitError(
+        err instanceof Error
+          ? err.name === "TimeoutError" || err.name === "AbortError"
+            ? "Request timed out — the product may or may not have been created. Refresh the catalog to check before trying again."
+            : err.message
+          : "Unknown error",
+      );
       setSubmitting(false);
     }
   };
@@ -222,7 +233,13 @@ export default function DialogCreateProduct({
               <select
                 id="cp-category"
                 value={form.category}
-                onChange={set("category")}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    category: e.target.value,
+                    subcategory: "",
+                  }))
+                }
                 required
                 disabled={submitting || subcatFormOpen}
               >
@@ -250,9 +267,13 @@ export default function DialogCreateProduct({
                 refData.categories.find((c) => c.value === form.category)
                   ?.wooId ?? null
               }
+              parentCode={
+                refData.categories.find((c) => c.value === form.category)
+                  ?.code ?? null
+              }
               parentDisplayName={form.category || undefined}
               onExpandedChange={setSubcatFormOpen}
-              onAdded={({ value, code, wooId, label }) => {
+              onAdded={({ value, code, wooId, label, parentCode }) => {
                 setRefData((prev) =>
                   prev
                     ? {
@@ -264,6 +285,7 @@ export default function DialogCreateProduct({
                             code,
                             label: label ?? value,
                             wooId: wooId ?? null,
+                            parentCode: parentCode ?? "",
                           },
                         ],
                       }
@@ -278,10 +300,18 @@ export default function DialogCreateProduct({
                 value={form.subcategory}
                 onChange={set("subcategory")}
                 required
-                disabled={submitting}
+                disabled={submitting || !form.category}
               >
                 <option value="">— select —</option>
                 {[...refData.subcategories]
+                  .filter((s) => {
+                    const selectedCat = refData.categories.find(
+                      (c) => c.value === form.category,
+                    );
+                    return (
+                      !!selectedCat && s.parentCode === selectedCat.code
+                    );
+                  })
                   .sort((a, b) =>
                     (a.label ?? a.value).localeCompare(b.label ?? b.value),
                   )

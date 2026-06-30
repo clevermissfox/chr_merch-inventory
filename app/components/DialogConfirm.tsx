@@ -7,6 +7,7 @@ interface DialogConfirmProps {
   children: React.ReactNode;
   confirmIcon?: React.ReactNode;
   confirmLabel: string;
+  confirmingIcon?: React.ReactNode;
   confirmingLabel?: string;
   confirmVariant?: "danger" | "primary";
   status: DialogConfirmStatus;
@@ -21,6 +22,7 @@ export default function DialogConfirm({
   children,
   confirmIcon,
   confirmLabel,
+  confirmingIcon,
   confirmingLabel,
   confirmVariant = "primary",
   status,
@@ -75,7 +77,11 @@ export default function DialogConfirm({
             onClick={onConfirm}
             disabled={inFlight}
           >
-            {status !== "confirming" && confirmIcon}
+            {status !== "confirming"
+              ? confirmIcon
+              : confirmingIcon
+                ? confirmingIcon
+                : confirmIcon}
             <span>
               {status === "confirming" && confirmingLabel
                 ? confirmingLabel

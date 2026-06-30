@@ -21,7 +21,7 @@ import type {
 
 type SheetsClient = sheets_v4.Sheets;
 
-function colByHeader(headers: string[], name: string): number {
+export function colByHeader(headers: string[], name: string): number {
   const idx = headers.indexOf(name);
   if (idx === -1) throw new Error(`Sheet missing required column "${name}"`);
   return idx;
@@ -39,6 +39,7 @@ export async function readRefData(
     "subCatCode",
     "subCatLabel",
     "subCatId",
+    "subCatParentCode",
     "graphicsList",
     "graphicsVariantList",
     "graphicsVariantCode",
@@ -68,6 +69,7 @@ export async function readRefData(
     subCatCode,
     subCatLabel,
     subCatId,
+    subCatParentCode,
     graphicsList,
     graphicsVariantList,
     graphicsVariantCode,
@@ -91,6 +93,7 @@ export async function readRefData(
       code: subCatCode[i] ?? "",
       label: subCatLabel[i] ?? value,
       wooId: subCatId[i] ? Number(subCatId[i]) : null,
+      parentCode: subCatParentCode[i] ?? "",
     })),
     graphics: graphicsList,
     graphicsVariants: graphicsVariantList.map((value, i) => ({
@@ -244,8 +247,14 @@ export async function ensureDimensionExists(
   });
 
   const vrs = response.data.valueRanges ?? [];
-  const existingValues = (vrs[0]?.values ?? []).flat().map(String).filter(Boolean);
-  const existingCodes = (vrs[1]?.values ?? []).flat().map(String).filter(Boolean);
+  const existingValues = (vrs[0]?.values ?? [])
+    .flat()
+    .map(String)
+    .filter(Boolean);
+  const existingCodes = (vrs[1]?.values ?? [])
+    .flat()
+    .map(String)
+    .filter(Boolean);
 
   const codeUpper = code.toUpperCase();
 
@@ -306,7 +315,10 @@ export async function createWooCategory(
   });
 
   const responseText = await res.text();
-  console.log(`[createWooCategory] HTTP ${res.status}:`, responseText);
+  console.log(
+    `[createWooCategory] HTTP ${res.status}:`,
+    responseText.slice(0, 30),
+  );
 
   if (!res.ok) {
     throw new Error(
@@ -348,6 +360,46 @@ export async function createWooCategory(
   return data.id;
 }
 
+/**
+ * Resolves a category's Woo term ID by its code, creating the category in
+ * Woo and writing the ID back into its existing sheet row if it's missing.
+ * Used so a subcategory can be created even when its parent category was
+ * never synced to Woo (e.g. after a staging recopy invalidated the old ID).
+ */
+export async function ensureCategoryWooId(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  categoryCode: string,
+): Promise<number> {
+  const response = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: ["catList", "catCode", "catId"],
+  });
+
+  const vrs = response.data.valueRanges ?? [];
+  const catList = (vrs[0]?.values ?? []).flat().map(String);
+  const catCode = (vrs[1]?.values ?? []).flat().map(String);
+  const catId = (vrs[2]?.values ?? []).flat().map(String);
+
+  const codeUpper = categoryCode.toUpperCase();
+  const i = catCode.findIndex((c) => c.toUpperCase() === codeUpper);
+  if (i === -1) throw new Error(`Category code "${categoryCode}" not found`);
+
+  if (catId[i]) return Number(catId[i]);
+
+  const wooId = await createWooCategory(catList[i], null, "default");
+
+  const catIdMeta = parseA1(vrs[2]?.range ?? "");
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${catIdMeta.sheet}'!${catIdMeta.col}${catIdMeta.startRow + i}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[String(wooId)]] },
+  });
+
+  return wooId;
+}
+
 export async function appendCategoryEntry(
   sheets: SheetsClient,
   spreadsheetId: string,
@@ -356,17 +408,20 @@ export async function appendCategoryEntry(
   code: string,
   wooId: number,
   label?: string,
+  parentCode?: string,
 ): Promise<void> {
   const valueRange = type === "category" ? "catList" : "subCatList";
   const codeRange = type === "category" ? "catCode" : "subCatCode";
   const wooIdRange = type === "category" ? "catId" : "subCatId";
   const labelRange = type === "subcategory" ? "subCatLabel" : null;
+  const parentCodeRange = type === "subcategory" ? "subCatParentCode" : null;
 
   const rangesToRead = [
     valueRange,
     codeRange,
     wooIdRange,
     ...(labelRange ? [labelRange] : []),
+    ...(parentCodeRange ? [parentCodeRange] : []),
   ];
 
   const response = await sheets.spreadsheets.values.batchGet({
@@ -420,6 +475,14 @@ export async function appendCategoryEntry(
     });
   }
 
+  if (parentCodeRange && vrs[4]) {
+    const parentCodeMeta = parseA1(vrs[4]?.range ?? "");
+    data.push({
+      range: `'${parentCodeMeta.sheet}'!${parentCodeMeta.col}${nextRow}`,
+      values: [[(parentCode ?? "").toUpperCase()]],
+    });
+  }
+
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: { valueInputOption: "USER_ENTERED", data },
@@ -427,7 +490,7 @@ export async function appendCategoryEntry(
 }
 
 // Convert 0-based column index to A1 column letter (A, B, ..., Z, AA, AB, ...)
-function colLetter(idx: number): string {
+export function colLetter(idx: number): string {
   let s = "";
   let n = idx;
   do {
@@ -541,10 +604,6 @@ export async function updateProduct(
     }
   }
   if (rowIdx === -1) throw new Error(`Product SKU "${sku}" not found`);
-  if (rowIdx === 1)
-    throw new Error(
-      `Product SKU "${sku}" is in the protected row 2 and cannot be edited`,
-    );
 
   const sheetRow = rowIdx + 1;
   const cell = (name: string, value: string) => ({
@@ -621,36 +680,60 @@ export interface ParsedCreateVariants {
   shared: VariantComboShared;
 }
 
-export function parseUpdateProductFields(body: Partial<UpdateProductFields>): UpdateProductFields {
+export function parseUpdateProductFields(
+  body: Partial<UpdateProductFields>,
+): UpdateProductFields {
   const fields: UpdateProductFields = {};
-  if (typeof body.displayName === "string") fields.displayName = body.displayName.trim();
-  if (typeof body.basePriceDollars === "string") fields.basePriceDollars = body.basePriceDollars.trim();
-  if (typeof body.salePriceDollars === "string") fields.salePriceDollars = body.salePriceDollars.trim();
-  if (typeof body.publishedStatus === "string" && ["draft", "publish", "private"].includes(body.publishedStatus))
+  if (typeof body.displayName === "string")
+    fields.displayName = body.displayName.trim();
+  if (typeof body.basePriceDollars === "string")
+    fields.basePriceDollars = body.basePriceDollars.trim();
+  if (typeof body.salePriceDollars === "string")
+    fields.salePriceDollars = body.salePriceDollars.trim();
+  if (
+    typeof body.publishedStatus === "string" &&
+    ["draft", "publish", "private"].includes(body.publishedStatus)
+  )
     fields.publishedStatus = body.publishedStatus;
   if (typeof body.weightOz === "string") fields.weightOz = body.weightOz.trim();
-  if (typeof body.primaryDescription === "string") fields.primaryDescription = body.primaryDescription.trim();
-  if (typeof body.shortDescription === "string") fields.shortDescription = body.shortDescription.trim();
-  if (typeof body.dimensionsWidth === "string") fields.dimensionsWidth = body.dimensionsWidth.trim();
-  if (typeof body.dimensionsHeight === "string") fields.dimensionsHeight = body.dimensionsHeight.trim();
-  if (typeof body.dimensionsDepth === "string") fields.dimensionsDepth = body.dimensionsDepth.trim();
+  if (typeof body.primaryDescription === "string")
+    fields.primaryDescription = body.primaryDescription.trim();
+  if (typeof body.shortDescription === "string")
+    fields.shortDescription = body.shortDescription.trim();
+  if (typeof body.dimensionsWidth === "string")
+    fields.dimensionsWidth = body.dimensionsWidth.trim();
+  if (typeof body.dimensionsHeight === "string")
+    fields.dimensionsHeight = body.dimensionsHeight.trim();
+  if (typeof body.dimensionsDepth === "string")
+    fields.dimensionsDepth = body.dimensionsDepth.trim();
   return fields;
 }
 
-export function parseUpdateVariantFields(body: Record<string, unknown>): UpdateVariantFields {
+export function parseUpdateVariantFields(
+  body: Record<string, unknown>,
+): UpdateVariantFields {
   const fields: UpdateVariantFields = {};
-  if (body.priceVariant !== undefined) fields.priceVariant = String(body.priceVariant).trim();
-  if (body.salePriceVariant !== undefined) fields.salePriceVariant = String(body.salePriceVariant).trim();
-  if (body.weightOzVariant !== undefined) fields.weightOzVariant = String(body.weightOzVariant).trim();
-  if (body.descriptionVariant !== undefined) fields.descriptionVariant = String(body.descriptionVariant).trim();
+  if (body.priceVariant !== undefined)
+    fields.priceVariant = String(body.priceVariant).trim();
+  if (body.salePriceVariant !== undefined)
+    fields.salePriceVariant = String(body.salePriceVariant).trim();
+  if (body.weightOzVariant !== undefined)
+    fields.weightOzVariant = String(body.weightOzVariant).trim();
+  if (body.descriptionVariant !== undefined)
+    fields.descriptionVariant = String(body.descriptionVariant).trim();
   return fields;
 }
 
-export function parseNewProductFields(raw: unknown): NewProductFields | { error: string } {
+export function parseNewProductFields(
+  raw: unknown,
+): NewProductFields | { error: string } {
   const body = raw as Partial<NewProductFields>;
   const { category, subcategory, basePriceDollars, weightOz } = body;
   if (!category || !subcategory || !basePriceDollars || !weightOz) {
-    return { error: "Missing required fields: category, subcategory, basePriceDollars, weightOz" };
+    return {
+      error:
+        "Missing required fields: category, subcategory, basePriceDollars, weightOz",
+    };
   }
   return {
     category,
@@ -667,13 +750,16 @@ export function parseNewProductFields(raw: unknown): NewProductFields | { error:
     shortDescription: body.shortDescription,
     salePriceDollars: body.salePriceDollars,
     publishedStatus:
-      body.publishedStatus && ["draft", "publish", "private"].includes(body.publishedStatus)
+      body.publishedStatus &&
+      ["draft", "publish", "private"].includes(body.publishedStatus)
         ? body.publishedStatus
         : "draft",
   };
 }
 
-export function parseCreateVariantsBody(raw: unknown): ParsedCreateVariants | { error: string } {
+export function parseCreateVariantsBody(
+  raw: unknown,
+): ParsedCreateVariants | { error: string } {
   const body = raw as {
     productId?: string;
     colors?: unknown;
@@ -690,7 +776,9 @@ export function parseCreateVariantsBody(raw: unknown): ParsedCreateVariants | { 
   if (!productId) return { error: "Missing productId" };
   const colors = Array.isArray(body.colors) ? body.colors.filter(Boolean) : [];
   const sizes = Array.isArray(body.sizes) ? body.sizes.filter(Boolean) : [];
-  const dimensions = Array.isArray(body.dimensions) ? body.dimensions.filter(Boolean) : [];
+  const dimensions = Array.isArray(body.dimensions)
+    ? body.dimensions.filter(Boolean)
+    : [];
   if (!colors.length && !sizes.length && !dimensions.length) {
     return { error: "Must provide at least one color, size, or dimension" };
   }
@@ -731,10 +819,6 @@ export async function updateVariant(
     }
   }
   if (rowIdx === -1) throw new Error(`Variant SKU "${sku}" not found`);
-  if (rowIdx === 1)
-    throw new Error(
-      `Variant SKU "${sku}" is in the protected row 2 and cannot be edited`,
-    );
 
   const sheetRow = rowIdx + 1;
   const cell = (name: string, value: string) => ({
@@ -854,6 +938,54 @@ export async function updateDescriptionFields(
   });
 }
 
+// Self-heal safety net: ensures every known catalog SKU has a row in
+// descriptions, blank if missing. Catches SKUs that never got a row written
+// — e.g. a create_product request that wrote its product row but died
+// before reaching updateDescriptionFields. Cheap to call on every catalog
+// load: one read, one batched append only for what's actually missing.
+export async function ensureDescriptionRowsExist(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  skus: string[],
+): Promise<{ appended: number }> {
+  const wanted = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+  if (!wanted.length) return { appended: 0 };
+
+  const sheetRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "descriptions",
+  });
+  const values = (sheetRes.data.values ?? []) as string[][];
+  const headers = (values[0] ?? []).map((h) => String(h).trim());
+  const skuIdx = headers.indexOf("sku");
+  if (skuIdx === -1) throw new Error('descriptions sheet missing "sku" column');
+
+  const existing = new Set<string>();
+  for (let i = 1; i < values.length; i++) {
+    const sku = String(values[i]?.[skuIdx] ?? "").trim();
+    if (sku) existing.add(sku);
+  }
+
+  const missing = wanted.filter((sku) => !existing.has(sku));
+  if (!missing.length) return { appended: 0 };
+
+  const rows = missing.map((sku) => {
+    const row = new Array(headers.length).fill("");
+    row[skuIdx] = sku;
+    return row;
+  });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: "descriptions",
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: rows },
+  });
+
+  return { appended: missing.length };
+}
+
 export async function pollForProductSku(
   sheets: SheetsClient,
   spreadsheetId: string,
@@ -914,6 +1046,10 @@ function stableStringify(val: unknown): string {
   );
 }
 
+// Fingerprint of full current product state (content + stock), used to skip
+// re-pushing a product to Woo when nothing has changed since last_hash was
+// written. Any successful Woo write (content sync or stock sync) recomputes
+// and re-stores this, so it always reflects the latest known-synced state.
 export function computeProductSyncHash(group: CatalogGroup): string {
   const uniqueColors = [
     ...new Set(group.rows.map((r) => r.color).filter(Boolean)),
@@ -927,7 +1063,12 @@ export function computeProductSyncHash(group: CatalogGroup): string {
     name: group.displayName || "",
     description: group.primaryDescription || "",
     short_description: group.shortDescription || "",
-    category: group.subcategoryCode || group.subcategory || "",
+    status: group.publishedStatus || "",
+    category: group.categoryCode || group.category || "",
+    subcategory: group.subcategoryCode || group.subcategory || "",
+    regular_price: group.basePriceDollars || "",
+    sale_price: group.salePriceDollars || "",
+    stock_qty: group.rows.length === 0 ? (group.stockQty ?? 0) : null,
     shipping: {
       weight: group.weightOz || "",
       width: group.dimensionsWidth || "",
@@ -949,9 +1090,10 @@ export function computeProductSyncHash(group: CatalogGroup): string {
           ...(v.size ? [{ name: "Size", option: v.size }] : []),
         ],
         description: v.descriptionVariant || "",
-        regular_price: v.priceDollars || "",
+        regular_price: v.priceVariant || group.basePriceDollars || "",
+        sale_price: v.salePriceVariant || group.salePriceDollars || "",
         sku: v.sku,
-        stock_quantity: v.stockQty ?? 0,
+        stock_qty: v.stockQty ?? 0,
         weight: v.weightOzVariant || v.baseWeightOz || "",
       }))
       .sort((a, b) => a.sku.localeCompare(b.sku)),
@@ -1029,7 +1171,9 @@ export async function writeProductSyncHashes(
   for (const { sku, hash } of entries) {
     const sheetRow = rowBySku.get(sku);
     if (!sheetRow) {
-      console.warn(`writeProductSyncHashes: no writable row for SKU ${sku} — in protected row 2 or not found; hash not saved`);
+      console.warn(
+        `writeProductSyncHashes: no writable row for SKU ${sku} — in protected row 2 or not found; hash not saved`,
+      );
       continue;
     }
     data.push(
@@ -1332,10 +1476,17 @@ export function buildVariantCombos(
   dimensions: string[],
   shared: VariantComboShared,
 ) {
-  let combos: Array<{ color?: string; size?: string; dimension?: string }> = [{}];
-  if (colors.length) combos = combos.flatMap((c) => colors.map((color) => ({ ...c, color })));
-  if (sizes.length) combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
-  if (dimensions.length) combos = combos.flatMap((c) => dimensions.map((dimension) => ({ ...c, dimension })));
+  let combos: Array<{ color?: string; size?: string; dimension?: string }> = [
+    {},
+  ];
+  if (colors.length)
+    combos = combos.flatMap((c) => colors.map((color) => ({ ...c, color })));
+  if (sizes.length)
+    combos = combos.flatMap((c) => sizes.map((size) => ({ ...c, size })));
+  if (dimensions.length)
+    combos = combos.flatMap((c) =>
+      dimensions.map((dimension) => ({ ...c, dimension })),
+    );
   return combos.map((c) => ({ ...c, ...shared }));
 }
 
@@ -1379,7 +1530,15 @@ export async function createVariantRows(
     throw new Error('variants sheet missing "select_product" column');
 
   const rowData: string[][] = variants.map(
-    ({ color, size, dimension, design, designVariant, priceVariant, weightOzVariant }) => {
+    ({
+      color,
+      size,
+      dimension,
+      design,
+      designVariant,
+      priceVariant,
+      weightOzVariant,
+    }) => {
       const row = new Array(headers.length).fill("");
       row[spIdx] = selectProductValue;
       const ci = colIdx("color");

@@ -246,7 +246,7 @@ export default function DialogEditProduct({
 
           <fieldset className="form-fieldset grid gap-half">
             <legend className="bold">Dimensions (optional)</legend>
-            <div className="row gap-1 fw-wrap">
+            <div className="row gap-1 fw-wrap ai-end">
               <div className="form-group flex-1">
                 <label htmlFor="ep-dim-w" className="bold">
                   Width (in)

@@ -60,19 +60,26 @@ function ProductGroup({
     <details className="toggle-group card">
       <summary>
         <div className="summary-title">
-          <strong>{group.displayName}</strong>
-          <p className="summary-count">
-            {isSimple
-              ? "Simple product"
-              : `${group.rowCount} SKU${group.rowCount !== 1 ? "s" : ""}`}
+          <p className="row gap-half ai-cen fw-wrap">
+            <strong>{group.displayName}</strong>
+            <span className="summary-count">
+              {isSimple
+                ? "Simple product"
+                : `${group.rowCount} SKU${group.rowCount !== 1 ? "s" : ""}`}
+            </span>
+            {!group.wooId || !group.lastHash ? (
+              <span className="published-status-badge">Unpublished</span>
+            ) : group.publishedStatus === "draft" ? (
+              <span className="published-status-badge">Draft</span>
+            ) : null}
           </p>
         </div>
         <span className="toggle-label">Toggle</span>
       </summary>
 
       <div className="product-body row fw-wrap gap-1">
-        <div className="product-info flex-1 padding-b-three-forths padding-i-1quarter">
-          <dl className="product-meta">
+        <div className="product-info flex-1 padding-b-three-forths padding-i-1quarter grid gap-1quarter">
+          <dl className="product-meta row fw-wrap">
             <div>
               <dt>SKU</dt>
               <dd>{group.sku}</dd>
@@ -99,19 +106,37 @@ function ProductGroup({
                 <dd>{group.design}</dd>
               </div>
             )}
+            {group.dimensionsWidth && group.dimensionsHeight && (
+              <div>
+                <dt>Dimensions</dt>
+                <dd>{group.dimensionsWidth + "x" + group.dimensionsHeight}</dd>
+              </div>
+            )}
+            <div>
+              <dt>Last synced</dt>
+              <dd>
+                {group.lastSyncedAt
+                  ? new Date(group.lastSyncedAt).toLocaleString()
+                  : "Never"}
+              </dd>
+            </div>
           </dl>
 
-          {group.primaryDescription && (
-            <div className="product-desc">
-              <span className="product-desc__label">Description</span>
-              <p>{truncate(group.primaryDescription, 120)}</p>
-            </div>
-          )}
-          {group.shortDescription && (
-            <div className="product-desc">
-              <span className="product-desc__label">Short Description</span>
-              <p>{truncate(group.shortDescription, 120)}</p>
-            </div>
+          {(group.primaryDescription || group.shortDescription) && (
+            <dl className="product-meta product-desc col">
+              {group.primaryDescription && (
+                <div>
+                  <dt>Description</dt>
+                  <dd>{truncate(group.primaryDescription, 120)}</dd>
+                </div>
+              )}
+              {group.shortDescription && (
+                <div>
+                  <dt>Short Description</dt>
+                  <dd>{truncate(group.shortDescription, 120)}</dd>
+                </div>
+              )}
+            </dl>
           )}
         </div>
 
@@ -253,9 +278,13 @@ export default function ProductsPage() {
     row: CatalogRow;
     group: CatalogGroup;
   } | null>(null);
-  const [publishPending, setPublishPending] = useState<CatalogGroup | null>(
-    null,
-  );
+  type SyncRequest = { type: "single"; group: CatalogGroup } | { type: "all" };
+  const [syncRequest, setSyncRequest] = useState<SyncRequest | null>(null);
+  const [publishDrafts, setPublishDrafts] = useState(false);
+  const [publishStatus, setPublishStatus] =
+    useState<DialogConfirmStatus>("idle");
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState<CatalogGroup | null>(null);
   const [lastEdited, setLastEdited] = useState<string | null>(null);
 
@@ -300,16 +329,85 @@ export default function ProductsPage() {
     }
   };
 
+  const handlePublishConfirm = async () => {
+    if (!syncRequest) return;
+    setPublishStatus("confirming");
+    setPublishError(null);
+    try {
+      const body =
+        syncRequest.type === "single"
+          ? {
+              mode: "selected" as const,
+              productIds: [syncRequest.group.productId],
+              publish: syncRequest.group.publishedStatus === "draft",
+            }
+          : { mode: "sync_all" as const, publish: publishDrafts };
+
+      const res = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Sync failed");
+
+      let summary: string;
+      if (syncRequest.type === "single") {
+        const result = data.results?.[0];
+        if (!result || result.status === "failed") {
+          throw new Error(result?.error || "Sync failed");
+        }
+        summary = `Synced to site — ${syncRequest.group.sku}`;
+      } else {
+        const parts = [`${data.syncedCount} synced`];
+        if (data.skippedUnchangedCount)
+          parts.push(`${data.skippedUnchangedCount} unchanged`);
+        if (data.skippedDraftCount)
+          parts.push(`${data.skippedDraftCount} drafts skipped`);
+        if (data.failedCount) parts.push(`${data.failedCount} failed`);
+        summary = `Sync all complete — ${parts.join(", ")}`;
+        if (data.failedCount) {
+          const firstFailure = (
+            data.results as Array<{
+              status: string;
+              sku: string;
+              error?: string;
+            }>
+          ).find((r) => r.status === "failed");
+          if (firstFailure) {
+            throw new Error(
+              `${summary}. First failure (${firstFailure.sku}): ${firstFailure.error}`,
+            );
+          }
+        }
+      }
+
+      setPublishStatus("success");
+      setLastSynced(summary);
+      setLastCreated(null);
+      setLastDeleted(null);
+      setLastEdited(null);
+      await loadCatalog();
+      setSyncRequest(null);
+      setPublishStatus("idle");
+      setPublishDrafts(false);
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : "Unknown error");
+      setPublishStatus("idle");
+    }
+  };
+
   const statusMessage = loading
     ? "Loading catalog…"
     : lastCreated
       ? `Created — new SKU: ${lastCreated}`
       : lastDeleted
         ? `Deleted — SKU: ${lastDeleted}`
-        : lastEdited
-          ? `Saved — ${lastEdited}`
-          : publishPending
-            ? `WooCommerce push coming soon — ${publishPending.displayName}`
+        : lastSynced
+          ? lastSynced
+          : lastEdited
+            ? `Saved — ${lastEdited}`
             : error
               ? error
               : catalog
@@ -318,11 +416,9 @@ export default function ProductsPage() {
 
   const statusTone = error
     ? "error"
-    : publishPending
-      ? "warning"
-      : lastCreated || lastEdited
-        ? "success"
-        : undefined;
+    : lastCreated || lastEdited || lastSynced
+      ? "success"
+      : undefined;
 
   return (
     <>
@@ -349,12 +445,31 @@ export default function ProductsPage() {
             {canEdit && (
               <button
                 type="button"
-                className="btn-primary btn-lg row gap-half ai-cen"
+                className="btn-secondary btn-lg row gap-half ai-cen"
                 onClick={() => setShowCreate(true)}
                 disabled={loading}
               >
                 <Plus aria-hidden="true" />
                 <span>New Product</span>
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                className="btn-primary btn-lg row gap-half ai-cen"
+                onClick={() => {
+                  setSyncRequest({ type: "all" });
+                  setPublishDrafts(false);
+                  setPublishStatus("idle");
+                  setPublishError(null);
+                  setLastCreated(null);
+                  setLastDeleted(null);
+                  setLastEdited(null);
+                }}
+                disabled={loading || !catalog?.groups.length}
+              >
+                <Globe aria-hidden="true" />
+                <span>Sync All</span>
               </button>
             )}
           </div>
@@ -377,9 +492,12 @@ export default function ProductsPage() {
                 setPendingEditVariant({ row, group: grp })
               }
               onPublishRequest={(grp) => {
-                setPublishPending(grp);
+                setSyncRequest({ type: "single", group: grp });
+                setPublishStatus("idle");
+                setPublishError(null);
                 setLastCreated(null);
                 setLastDeleted(null);
+                setLastSynced(null);
               }}
               onEditRequest={setPendingEdit}
             />
@@ -487,6 +605,147 @@ export default function ProductsPage() {
           </p>
         </DialogConfirm>
       )}
+
+      {syncRequest?.type === "single" &&
+        (() => {
+          const isDraft = syncRequest.group.publishedStatus === "draft";
+          const isLive = Boolean(syncRequest.group.wooId);
+          // Never-published draft -> "publish". Already-live product flipped
+          // back to draft -> "unpublish" (takes it off the live site).
+          // Anything else -> routine content sync.
+          const mode = !isDraft ? "sync" : isLive ? "unpublish" : "publish";
+
+          return (
+            <DialogConfirm
+              title={
+                mode === "publish"
+                  ? "Publish this product?"
+                  : mode === "unpublish"
+                    ? "Take this product offline?"
+                    : "Sync changes to the site?"
+              }
+              confirmIcon={<Globe aria-hidden="true" />}
+              confirmLabel={
+                mode === "publish"
+                  ? "Publish & sync"
+                  : mode === "unpublish"
+                    ? "Unpublish"
+                    : "Sync now"
+              }
+              confirmingLabel="Syncing…"
+              confirmingIcon={<span className="loader" />}
+              confirmVariant={mode === "unpublish" ? "danger" : "primary"}
+              status={publishStatus}
+              successMessage="Synced — reloading catalog…"
+              error={publishError}
+              onConfirm={() => void handlePublishConfirm()}
+              onCancel={() => setSyncRequest(null)}
+            >
+              <p className="small">
+                <strong>{syncRequest.group.displayName}</strong>
+                <span className="clr-muted"> · {syncRequest.group.sku}</span>
+              </p>
+              {mode === "publish" && (
+                <>
+                  <p className="small clr-warning">
+                    This product is currently a draft. Publishing will make it
+                    live on the site.
+                  </p>
+                  <p className="small clr-muted">
+                    {syncRequest.group.rowCount === 0 ? (
+                      <>
+                        Initial stock will be set to{" "}
+                        <strong>{syncRequest.group.stockQty ?? 0}</strong> from
+                        the sheet
+                        {(syncRequest.group.stockQty ?? 0) === 0
+                          ? " — it will publish as out of stock"
+                          : ""}
+                        . After this, stock is only updated by the inventory
+                        sync.
+                      </>
+                    ) : (
+                      <>
+                        Each variant's initial stock will be set from its
+                        current sheet value (
+                        {syncRequest.group.rows
+                          .map((r) => `${r.label}: ${r.stockQty ?? 0}`)
+                          .join(", ")}
+                        ). After this, stock is only updated by the inventory
+                        sync.
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
+              {mode === "unpublish" && (
+                <p className="small clr-warning">
+                  This product is currently live. Taking it offline will hide it
+                  from the site immediately.
+                </p>
+              )}
+              {mode === "sync" && (
+                <p className="small clr-muted">
+                  Pushes current name, description, price, sale price, category,
+                  and variant details to WooCommerce. Stock is not affected.
+                </p>
+              )}
+            </DialogConfirm>
+          );
+        })()}
+
+      {syncRequest?.type === "all" &&
+        catalog &&
+        (() => {
+          const totalCount = catalog.groups.length;
+          const draftGroups = catalog.groups.filter(
+            (g) => g.publishedStatus === "draft",
+          );
+          const draftCount = draftGroups.filter((g) => !g.wooId).length;
+          const unpublishCount = draftGroups.filter((g) => g.wooId).length;
+          return (
+            <DialogConfirm
+              title="Sync all products to the site?"
+              confirmIcon={<Globe aria-hidden="true" />}
+              confirmLabel="Sync all"
+              confirmingLabel="Syncing…"
+              confirmVariant="primary"
+              status={publishStatus}
+              successMessage="Synced — reloading catalog…"
+              error={publishError}
+              onConfirm={() => void handlePublishConfirm()}
+              onCancel={() => setSyncRequest(null)}
+            >
+              <p className="small">
+                Checks all <strong>{totalCount}</strong> product
+                {totalCount !== 1 ? "s" : ""} for changes and pushes anything
+                that's changed since its last sync. Unchanged products are
+                skipped automatically. Stock is not affected.
+              </p>
+              {draftCount > 0 && (
+                <label className="row gap-half ai-cen small">
+                  <input
+                    type="checkbox"
+                    checked={publishDrafts}
+                    onChange={(e) => setPublishDrafts(e.target.checked)}
+                  />
+                  <span>
+                    Also publish {draftCount} draft
+                    {draftCount !== 1 ? "s" : ""} that{" "}
+                    {draftCount !== 1 ? "haven't" : "hasn't"} gone live yet
+                  </span>
+                </label>
+              )}
+              {unpublishCount > 0 && (
+                <p className="small clr-warning">
+                  {unpublishCount} product{unpublishCount !== 1 ? "s" : ""}{" "}
+                  {unpublishCount !== 1 ? "are" : "is"} live but now marked
+                  draft — {unpublishCount !== 1 ? "they" : "it"} will be taken
+                  offline.
+                </p>
+              )}
+            </DialogConfirm>
+          );
+        })()}
     </>
   );
 }

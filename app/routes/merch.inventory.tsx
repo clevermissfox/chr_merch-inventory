@@ -424,8 +424,13 @@ export default function InventoryPage() {
                   )}
                   <div className="summary-title">
                     <strong>{group.displayName}</strong>
-                    <p className="summary-count">
+                    <p className="summary-count row gap-half ai-cen">
                       {group.rowCount === 0 ? "Simple product" : `${group.rowCount} SKU${group.rowCount === 1 ? "" : "s"}`}
+                      {!group.wooId || !group.lastHash ? (
+                        <span className="published-status-badge">Unpublished</span>
+                      ) : group.publishedStatus === "draft" ? (
+                        <span className="published-status-badge">Draft</span>
+                      ) : null}
                     </p>
                   </div>
                 </div>
@@ -484,24 +489,7 @@ export default function InventoryPage() {
                             </td>
                           )}
                           <td className="sku-cell">{sku}</td>
-                          <td className="variant-cell">
-                            <span className="row gap-half ai-cen fw-wrap">
-                              <span>{group.displayName}</span>
-                              {!group.wooId && (
-                                <span
-                                  className="search-result-row__context"
-                                  style={{ "--_clr-badge": "var(--clr-text-muted)" } as React.CSSProperties}
-                                  title="Not yet published to WooCommerce — no site stock to compare"
-                                >
-                                  {group.publishedStatus === "draft"
-                                    ? "Draft"
-                                    : group.publishedStatus === "private"
-                                      ? "Private"
-                                      : "Unpublished"}
-                                </span>
-                              )}
-                            </span>
-                          </td>
+                          <td className="variant-cell">{group.displayName}</td>
                           <td>
                             {canEdit ? (
                               <input

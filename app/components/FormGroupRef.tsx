@@ -16,6 +16,7 @@ interface FormGroupRefProps {
   existingCodes?: string[];
   onAdded?: (entry: RefAddedEntry) => void;
   parentWooId?: number | null;
+  parentCode?: string | null;
   parentDisplayName?: string;
   /** Called when the add-new form opens or closes */
   onExpandedChange?: (expanded: boolean) => void;
@@ -34,6 +35,7 @@ export default function FormGroupRef({
   existingCodes,
   onAdded,
   parentWooId,
+  parentCode,
   parentDisplayName,
   onExpandedChange,
   disabled,
@@ -46,10 +48,10 @@ export default function FormGroupRef({
     onExpandedChange?.(next);
   };
 
-  const subcatMissingParent = refType === "subcategory" && parentWooId == null;
+  const subcatMissingParent = refType === "subcategory" && !parentCode?.trim();
   const triggerDisabled = disabled || subcatMissingParent;
   const triggerTitle = subcatMissingParent
-    ? "Select a category with a Woo ID before adding a subcategory"
+    ? "Select a category before adding a subcategory"
     : undefined;
 
   const labelRow = (
@@ -97,6 +99,7 @@ export default function FormGroupRef({
             onAdded?.(entry);
           }}
           parentWooId={parentWooId}
+          parentCode={parentCode}
           parentDisplayName={parentDisplayName}
           onExpandedChange={(v) => {
             if (!v) handleExpandedChange(false);

@@ -112,7 +112,7 @@ export interface SyncResult {
 
 export interface RefData {
   categories: Array<{ value: string; code: string; wooId: number | null }>;
-  subcategories: Array<{ value: string; code: string; label: string; wooId: number | null }>;
+  subcategories: Array<{ value: string; code: string; label: string; wooId: number | null; parentCode: string }>;
   graphics: string[];
   graphicsVariants: Array<{ value: string; code: string }>;
   styles: string[];

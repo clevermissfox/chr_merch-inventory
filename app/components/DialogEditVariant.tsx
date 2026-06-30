@@ -115,7 +115,7 @@ export default function DialogEditVariant({
           </button>
         </div>
 
-        <dl className="product-meta">
+        <dl className="product-meta row fw-wrap">
           <div>
             <dt>Product</dt>
             <dd>{group.displayName}</dd>
@@ -245,7 +245,7 @@ export default function DialogEditVariant({
             </p>
           )}
 
-          <div className="row gap-half">
+          <div className="row gap-half fw-wrap">
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"

@@ -23,6 +23,8 @@ import {
   createWooCategory,
   deleteProduct,
   deleteVariant,
+  ensureCategoryWooId,
+  ensureDescriptionRowsExist,
   ensureDimensionExists,
   parseCreateVariantsBody,
   parseNewProductFields,
@@ -40,12 +42,16 @@ import {
   writeSheetLog,
 } from "./catalogManager";
 import type { RefAddType, UpdateProductFields } from "./catalogManager";
+import { syncCatalogGroupsToWoo } from "./wooSyncManager";
 
 import {
   applyWooStockMapToCatalogGroups,
+  buildCatalogNameBySku,
   buildStockSyncChangesFromCatalog,
   buildStockSyncPlan,
+  ensureInventoryIndexRowsExist,
   ensureSkuInInventoryIndex,
+  loadInventoryIndexState,
   refreshWooStockForCatalog,
   syncStockSyncPlanToWoo,
 } from "./inventoryManager";
@@ -401,6 +407,31 @@ app.get(
         variantRows,
       );
 
+      // Self-heal: make sure every known SKU (product + variant) has a row
+      // in descriptions and inventory_index, regardless of how it might
+      // have gone missing (e.g. a create_product request that wrote its
+      // product row but died before reaching the rest of the chain). Runs
+      // on every inventory page load — cheap when nothing's actually
+      // missing, since each is one read + a batched append only for gaps.
+      const allCatalogSkus = payload.groups.flatMap((g) => [
+        g.sku,
+        ...g.rows.map((r) => r.sku),
+      ]);
+      await ensureDescriptionRowsExist(sheets, spreadsheetId, allCatalogSkus).catch(
+        (e) => tryLogError(req, "get_stock_description_audit", e),
+      );
+      await loadInventoryIndexState(sheets, spreadsheetId)
+        .then((invAuditState) =>
+          ensureInventoryIndexRowsExist(
+            sheets,
+            spreadsheetId,
+            invAuditState,
+            allCatalogSkus.map((sku) => ({ sku, fields: {} })),
+            buildCatalogNameBySku(payload.groups),
+          ),
+        )
+        .catch((e) => tryLogError(req, "get_stock_inventory_index_audit", e));
+
       const refreshResult = await refreshWooStockForCatalog(
         sheets,
         spreadsheetId,
@@ -524,7 +555,10 @@ app.post(
         },
       );
 
-      // Write last_hash + last_synced_at for every product that had SKUs pushed
+      // last_hash is content-only (no stock_quantity in it — see
+      // computeProductSyncHash), but last_synced_at should reflect *any*
+      // successful Woo write, stock included. Re-writing an unchanged hash
+      // here is harmless and keeps the timestamp honest.
       const pushedSkuSet = new Set(wooResult.updatedSkus);
       const hashEntries = catalog.groups
         .filter(
@@ -606,12 +640,13 @@ app.post(
   requireCanEdit,
   async (req: Request, res: Response) => {
     try {
-      const { type, value, code, label, parentWooId } = req.body as {
+      const { type, value, code, label, parentWooId, parentCode } = req.body as {
         type?: string;
         value?: string;
         code?: string;
         label?: string;
         parentWooId?: number;
+        parentCode?: string;
       };
 
       if (!value?.trim()) {
@@ -629,20 +664,41 @@ app.post(
       const actorEmail = actor?.email ?? "unknown";
 
       if (type === "category" || type === "subcategory") {
-        if (type === "subcategory" && parentWooId == null) {
+        if (type === "subcategory" && !parentCode?.trim()) {
           return res.status(400).json({
             ok: false,
-            error: "parentWooId is required for subcategory",
+            error: "parentCode is required for subcategory",
           });
         }
-        const normalizedValue = value.trim().toLowerCase();
+        // value is the slug-like internal identifier — symbols stripped entirely
+        // (no space substitution, e.g. "S-Shirt" -> "sshirt"); the human-readable
+        // form with symbols/casing lives in `label` (subcategory only) or is
+        // reconstructed for display elsewhere.
+        const normalizedValue = value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9 ]/g, "");
         // label is the sheet display name for subcategories (user-provided, may include capitals/symbols)
         // Woo name + slug are always the lowercase normalizedValue
         const sheetLabel = label?.trim() || normalizedValue;
         const display = type === "category" ? "default" : "subcategories";
+
+        // Parent category may not have a Woo ID yet (never synced, or stale
+        // after a staging recopy) — create it in Woo and backfill the sheet
+        // rather than blocking subcategory creation on it.
+        const resolvedParentWooId =
+          type === "subcategory"
+            ? (parentWooId ??
+              (await ensureCategoryWooId(
+                sheets,
+                spreadsheetId,
+                parentCode!.trim(),
+              )))
+            : null;
+
         const wooId = await createWooCategory(
           normalizedValue,
-          type === "subcategory" ? (parentWooId ?? null) : null,
+          resolvedParentWooId,
           display,
         );
         await appendCategoryEntry(
@@ -653,12 +709,13 @@ app.post(
           safeCode,
           wooId,
           sheetLabel,
+          type === "subcategory" ? parentCode!.trim() : undefined,
         );
         writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
           new Date().toISOString(),
           actorEmail,
           `ref_add_${type}`,
-          `value=${normalizedValue} label=${sheetLabel} code=${safeCode.toUpperCase()} wooId=${wooId}${type === "subcategory" ? ` parentWooId=${parentWooId}` : ""}`,
+          `value=${normalizedValue} label=${sheetLabel} code=${safeCode.toUpperCase()} wooId=${wooId}${type === "subcategory" ? ` parentWooId=${resolvedParentWooId} parentCode=${parentCode!.trim().toUpperCase()}` : ""}`,
           TARGET_ENV,
         ]).catch((e) => console.error("log failed:", e));
         return res.status(200).json({
@@ -667,6 +724,7 @@ app.post(
           code: safeCode.toUpperCase(),
           wooId,
           label: sheetLabel,
+          parentCode: type === "subcategory" ? parentCode!.trim().toUpperCase() : undefined,
         });
       }
 
@@ -1023,6 +1081,104 @@ app.delete(
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to delete variant",
+      });
+    }
+  },
+);
+
+/**
+ * Pushes product content (name, description, price, sale price, category,
+ * attributes) to WooCommerce. Never touches stock — that's the
+ * inventory_sync_stock route's job. Drafts are skipped unless `publish: true`
+ * is sent, in which case they're created/published in Woo. Sheet edits are
+ * always saved before this runs (separate endpoints), so a failure here only
+ * means that product's last_hash/last_synced_at doesn't advance — nothing
+ * the user already saved is at risk.
+ *
+ * mode: "selected" (default) syncs exactly the given productIds, always
+ * pushing regardless of hash. mode: "sync_all" ignores productIds, runs
+ * against every product in the sheet, and skips any whose content hash
+ * hasn't changed since last_hash was written — same skip-unchanged pattern
+ * inventory_sync_stock's mode flag already uses for its own modes.
+ */
+app.post(
+  "/api/catalog/sync_to_site",
+  requireAuth,
+  requireCanEdit,
+  async (req: Request, res: Response) => {
+    if (guardProducts)
+      return res.status(503).json({
+        ok: false,
+        error:
+          "Product management is still in progress - inventory changes only for now",
+      });
+    try {
+      const { productIds, publish, mode } = req.body as {
+        productIds?: string[];
+        publish?: boolean;
+        mode?: "selected" | "sync_all";
+      };
+      const syncMode = mode === "sync_all" ? "sync_all" : "selected";
+
+      if (
+        syncMode === "selected" &&
+        (!Array.isArray(productIds) || !productIds.length)
+      ) {
+        return res
+          .status(400)
+          .json({ ok: false, error: "Missing productIds" });
+      }
+
+      const { sheets, spreadsheetId } = getSheets();
+
+      const response = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: ["products_values", "variants_values"],
+      });
+      const valueRanges = response.data.valueRanges ?? [];
+      const productRows = rowsToObjects<ProductSheetRow>(
+        valueRanges[0]?.values ?? [],
+      );
+      const variantRows = rowsToObjects<VariantSheetRow>(
+        valueRanges[1]?.values ?? [],
+      );
+      const { groups } = shapeToCatalogPayload(productRows, variantRows);
+
+      let targetGroups = groups;
+      let missing: string[] = [];
+
+      if (syncMode === "selected") {
+        const idSet = new Set(productIds);
+        targetGroups = groups.filter((g) => idSet.has(g.productId));
+        missing = productIds!.filter(
+          (id) => !targetGroups.some((g) => g.productId === id),
+        );
+      }
+
+      const summary = await syncCatalogGroupsToWoo(
+        sheets,
+        spreadsheetId,
+        targetGroups,
+        Boolean(publish),
+        { skipUnchanged: syncMode === "sync_all" },
+      );
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "sync_to_site",
+        `mode=${syncMode} publish=${Boolean(publish)} synced=${summary.syncedCount} skipped_draft=${summary.skippedDraftCount} skipped_unchanged=${summary.skippedUnchangedCount} failed=${summary.failedCount} missing=${missing.join(",")}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.status(200).json({ ok: true, ...summary, missing });
+    } catch (error: any) {
+      console.error("POST /api/catalog/sync_to_site failed:", error);
+      tryLogError(req, "sync_to_site", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to sync to site",
       });
     }
   },

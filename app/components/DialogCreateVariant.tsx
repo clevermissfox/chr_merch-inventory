@@ -73,12 +73,13 @@ export default function DialogCreateVariant({
       return next;
     });
 
-  const toggleDimension = (value: string) =>
-    setSelectedDimensions((prev) => {
-      const next = new Set(prev);
-      next.has(value) ? next.delete(value) : next.add(value);
-      return next;
-    });
+  // Dimensions are single-select (a variant has one physical size, unlike
+  // color/size which can fan out into multiple variants at once). Clicking
+  // the already-selected option clears it, since dimension is optional.
+  const selectDimension = (value: string) =>
+    setSelectedDimensions((prev) =>
+      prev.has(value) ? new Set() : new Set([value]),
+    );
 
   const axes = [
     selectedColors.size,
@@ -268,9 +269,11 @@ export default function DialogCreateVariant({
                     .map((d) => (
                       <label key={d.value} className="check-label">
                         <input
-                          type="checkbox"
+                          type="radio"
+                          name="variant-dimension"
                           checked={selectedDimensions.has(d.value)}
-                          onChange={() => toggleDimension(d.value)}
+                          onClick={() => selectDimension(d.value)}
+                          onChange={() => {}}
                           disabled={submitting}
                         />
                         <span>{d.value}</span>

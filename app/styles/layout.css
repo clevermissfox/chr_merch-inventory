@@ -148,6 +148,10 @@
   gap: var(--spacing-150, 1.5em);
 }
 
+.gap-1quarter {
+  gap: var(--spacing-125, 1.25em);
+}
+
 .gap-1 {
   gap: var(--spacing-100, 1em);
 }

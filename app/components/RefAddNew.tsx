@@ -18,6 +18,7 @@ export interface RefAddedEntry {
   code: string;
   wooId?: number;
   label?: string;
+  parentCode?: string;
 }
 
 const CODED_TYPES = new Set<RefAddType>([
@@ -61,6 +62,7 @@ interface RefAddNewProps {
   existingCodes: string[];
   onAdded: (entry: RefAddedEntry) => void;
   parentWooId?: number | null;
+  parentCode?: string | null;
   parentDisplayName?: string;
   onExpandedChange?: (expanded: boolean) => void;
   disabled?: boolean;
@@ -73,6 +75,7 @@ export default function RefAddNew({
   existingCodes,
   onAdded,
   parentWooId,
+  parentCode,
   parentDisplayName,
   onExpandedChange,
   disabled,
@@ -168,7 +171,7 @@ export default function RefAddNew({
     code.length >= minCodeLen &&
     existingCodes.map((c) => c.toUpperCase()).includes(code.toUpperCase());
 
-  const subcatMissingParent = isSubcategory && parentWooId == null;
+  const subcatMissingParent = isSubcategory && !parentCode?.trim();
 
   const canSubmit =
     value.trim().length > 0 &&
@@ -188,9 +191,10 @@ export default function RefAddNew({
         value: normalizedValue,
         code: code || undefined,
       };
-      if (isSubcategory) body.parentWooId = parentWooId;
-      // Always send label for subcategory; fallback to title-cased value
       if (isSubcategory) {
+        body.parentWooId = parentWooId;
+        body.parentCode = parentCode;
+        // Always send label for subcategory; fallback to title-cased value
         body.label = label.trim() || toTitleCase(normalizedValue);
       }
 
@@ -208,6 +212,7 @@ export default function RefAddNew({
         code: (data.code as string) ?? "",
         wooId: isCategoryType ? (data.wooId as number) : undefined,
         label: isCategoryType ? (data.label as string) : undefined,
+        parentCode: isSubcategory ? (data.parentCode as string) : undefined,
       });
       collapse();
     } catch (err) {
@@ -218,7 +223,7 @@ export default function RefAddNew({
 
   const triggerDisabled = disabled || subcatMissingParent;
   const triggerTitle = subcatMissingParent
-    ? "Select a category with a Woo ID before adding a subcategory"
+    ? "Select a category before adding a subcategory"
     : undefined;
 
   if (!expanded) {
@@ -355,7 +360,7 @@ export default function RefAddNew({
         </p>
       )}
 
-      <div className="row gap-half ai-cen margin-bs-half">
+      <div className="row gap-half ai-cen fw-wrap margin-bs-half">
         <button
           type="button"
           className="btn-primary row gap-quarter jc-cen ai-cen"
