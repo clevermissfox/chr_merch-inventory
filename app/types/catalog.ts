@@ -66,6 +66,7 @@ export interface CatalogGroup {
   rowId: string | null;
   lastHash: string | null;
   lastSyncedAt: string | null;
+  contentUnsynced: boolean;
 
   rowCount: number;
   rows: CatalogRow[];
@@ -76,8 +77,10 @@ export interface CatalogSummary {
   groupCount: number;
   rowCount: number;
   unsyncedCount: number;
+  contentUnsyncedCount: number;
   conflictGroups: CatalogConflictGroup[];
   wooSiteUrl?: string;
+  devEmail?: string;
 }
 
 export interface CatalogPayload {

@@ -1,11 +1,23 @@
 import { CircleQuestionMark, X, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+
+function readAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 import type { NewProductFields, RefData } from "~/types/catalog";
 import FormGroupRef from "./FormGroupRef";
+import RichTextEditor from "./RichTextEditor";
 
 interface DialogCreateProductProps {
   onClose: () => void;
   onCreated: (sku: string) => void;
+  onPending: () => void;
+  onFailed: (error: string) => void;
 }
 
 interface FormState {
@@ -45,27 +57,23 @@ const empty: FormState = {
 export default function DialogCreateProduct({
   onClose,
   onCreated,
+  onPending,
+  onFailed,
 }: DialogCreateProductProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const [refData, setRefData] = useState<RefData | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(empty);
-  const [submitting, setSubmitting] = useState(false);
-  const [slowCreate, setSlowCreate] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
+  const [imageMode, setImageMode] = useState<"file" | "url">("file");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageUrl, setImageUrl] = useState("");
+  const imageFileRef = useRef<HTMLInputElement>(null);
   const [showCatHelp, setShowCatHelp] = useState(false);
   const [showPrimaryDescHelp, setShowPrimaryDescHelp] = useState(false);
   const [showShortDescHelp, setShowShortDescHelp] = useState(false);
   const [subcatFormOpen, setSubcatFormOpen] = useState(false);
-
-  useEffect(() => {
-    if (!submitting) {
-      setSlowCreate(false);
-      return;
-    }
-    const t = setTimeout(() => setSlowCreate(true), 10_000);
-    return () => clearTimeout(t);
-  }, [submitting]);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -95,59 +103,84 @@ export default function DialogCreateProduct({
       setForm((prev) => ({ ...prev, [field]: stripped }));
     };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
-    setSubmitting(true);
 
-    try {
-      const fields: NewProductFields = {
-        category: form.category,
-        subcategory: form.subcategory,
-        basePriceDollars: form.basePriceDollars,
-        salePriceDollars: form.salePriceDollars || undefined,
-        publishedStatus: form.publishedStatus,
-        weightOz: form.weightOz,
-        displayName: form.displayName || undefined,
-        design: form.design || undefined,
-        styleModifier: form.styleModifier || undefined,
-        dimensionsWidth: form.dimensionsWidth || undefined,
-        dimensionsHeight: form.dimensionsHeight || undefined,
-        dimensionsDepth: form.dimensionsDepth || undefined,
-        primaryDescription: form.primaryDescription || undefined,
-        shortDescription: form.shortDescription || undefined,
-      };
+    const fields: NewProductFields = {
+      category: form.category,
+      subcategory: form.subcategory,
+      basePriceDollars: form.basePriceDollars,
+      salePriceDollars: form.salePriceDollars || undefined,
+      publishedStatus: form.publishedStatus,
+      weightOz: form.weightOz,
+      displayName: form.displayName || undefined,
+      design: form.design || undefined,
+      styleModifier: form.styleModifier || undefined,
+      dimensionsWidth: form.dimensionsWidth || undefined,
+      dimensionsHeight: form.dimensionsHeight || undefined,
+      dimensionsDepth: form.dimensionsDepth || undefined,
+      primaryDescription: form.primaryDescription || undefined,
+      shortDescription: form.shortDescription || undefined,
+    };
 
-      const res = await fetch("/api/catalog/create_product", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-        credentials: "include",
-        // Backstop so a dropped/hung connection (server restart mid-request,
-        // network blip) surfaces an error instead of leaving the dialog
-        // stuck on "Waiting for SKU…" forever with no way out. Server's own
-        // sku-polling timeout is 60s; give it a bit of headroom.
-        signal: AbortSignal.timeout(75_000),
+    // Capture image data before closing — we'll need it after the SKU arrives
+    const capturedFile = imageFile;
+    const capturedUrl = imageUrl.trim();
+    const capturedName = form.displayName || form.design || "";
+
+    // Close the dialog immediately — the sheet formulas can take up to 3
+    // minutes to settle. The fetch runs in the background; the parent shows
+    // a pending indicator and a success/error toast when it resolves.
+    onPending();
+
+    fetch("/api/catalog/create_product", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+      credentials: "include",
+    })
+      .then((res) => res.json())
+      .then(async (data) => {
+        if (!data.ok) throw new Error(data.error || "Failed to create product");
+        const sku: string = data.sku;
+
+        // Upload image if the user selected/pasted one — best-effort, non-fatal
+        if (capturedFile || capturedUrl) {
+          try {
+            let imgBody: Record<string, unknown>;
+            if (capturedFile) {
+              imgBody = {
+                productName: capturedName || sku,
+                file: {
+                  fileName: capturedFile.name,
+                  fileData: await readAsBase64(capturedFile),
+                  mimeType: capturedFile.type,
+                },
+              };
+            } else {
+              imgBody = { productName: capturedName || sku, pastedUrl: capturedUrl };
+            }
+            await fetch(`/api/catalog/product/${encodeURIComponent(sku)}/image`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify(imgBody),
+            });
+          } catch {
+            // Image failure is non-fatal — product was created, image can be added via Edit
+          }
+        }
+
+        onCreated(sku);
+      })
+      .catch((err: unknown) => {
+        onFailed(err instanceof Error ? err.message : "Failed to create product");
       });
-
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to create product");
-
-      onCreated(data.sku);
-    } catch (err) {
-      setSubmitError(
-        err instanceof Error
-          ? err.name === "TimeoutError" || err.name === "AbortError"
-            ? "Request timed out — the product may or may not have been created. Refresh the catalog to check before trying again."
-            : err.message
-          : "Unknown error",
-      );
-      setSubmitting(false);
-    }
   };
 
   const canSubmit =
-    form.category && form.subcategory && form.basePriceDollars && form.weightOz;
+    form.category && form.subcategory && form.basePriceDollars && form.weightOz && !shortDescOverLimit;
 
   return (
     <dialog ref={ref} className="dialog dialog-product card" onCancel={onClose}>
@@ -158,7 +191,6 @@ export default function DialogCreateProduct({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            disabled={submitting}
           >
             <X aria-hidden="true" />
           </button>
@@ -228,7 +260,7 @@ export default function DialogCreateProduct({
                 );
                 setForm((f) => ({ ...f, category: value }));
               }}
-              disabled={submitting || subcatFormOpen}
+              disabled={subcatFormOpen}
             >
               <select
                 id="cp-category"
@@ -241,7 +273,7 @@ export default function DialogCreateProduct({
                   }))
                 }
                 required
-                disabled={submitting || subcatFormOpen}
+                disabled={subcatFormOpen}
               >
                 <option value="">— select —</option>
                 {[...refData.categories]
@@ -293,14 +325,13 @@ export default function DialogCreateProduct({
                 );
                 setForm((f) => ({ ...f, subcategory: value }));
               }}
-              disabled={submitting}
             >
               <select
                 id="cp-subcategory"
                 value={form.subcategory}
                 onChange={set("subcategory")}
                 required
-                disabled={submitting || !form.category}
+                disabled={!form.category}
               >
                 <option value="">— select —</option>
                 {[...refData.subcategories]
@@ -341,7 +372,6 @@ export default function DialogCreateProduct({
                   }
                   placeholder="0.00"
                   required
-                  disabled={submitting}
                 />
               </div>
 
@@ -362,7 +392,6 @@ export default function DialogCreateProduct({
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
                   placeholder="0.00"
-                  disabled={submitting}
                 />
               </div>
 
@@ -383,7 +412,6 @@ export default function DialogCreateProduct({
                   }
                   placeholder="0.0"
                   required
-                  disabled={submitting}
                 />
               </div>
             </div>
@@ -399,7 +427,6 @@ export default function DialogCreateProduct({
                 id="cp-published-status"
                 value={form.publishedStatus}
                 onChange={set("publishedStatus")}
-                disabled={submitting}
               >
                 <option value="draft">Draft</option>
                 <option value="publish">Published</option>
@@ -418,7 +445,6 @@ export default function DialogCreateProduct({
                 value={form.displayName}
                 onChange={set("displayName")}
                 placeholder="e.g. Classic Logo T-Shirt"
-                disabled={submitting}
               />
             </div>
 
@@ -440,13 +466,11 @@ export default function DialogCreateProduct({
                 );
                 setForm((f) => ({ ...f, design: value }));
               }}
-              disabled={submitting}
             >
               <select
                 id="cp-design"
                 value={form.design}
                 onChange={set("design")}
-                disabled={submitting}
               >
                 <option value="">— none —</option>
                 {[...refData.graphics]
@@ -476,13 +500,11 @@ export default function DialogCreateProduct({
                 );
                 setForm((f) => ({ ...f, styleModifier: value }));
               }}
-              disabled={submitting}
             >
               <select
                 id="cp-style"
                 value={form.styleModifier}
                 onChange={set("styleModifier")}
-                disabled={submitting}
               >
                 <option value="">— none —</option>
                 {[...refData.styles]
@@ -511,7 +533,6 @@ export default function DialogCreateProduct({
                     step="0.01"
                     value={form.dimensionsWidth}
                     onChange={set("dimensionsWidth")}
-                    disabled={submitting}
                   />
                 </div>
                 <div className="form-group flex-1">
@@ -525,7 +546,6 @@ export default function DialogCreateProduct({
                     step="0.01"
                     value={form.dimensionsHeight}
                     onChange={set("dimensionsHeight")}
-                    disabled={submitting}
                   />
                 </div>
                 <div className="form-group flex-1">
@@ -539,7 +559,6 @@ export default function DialogCreateProduct({
                     step="0.01"
                     value={form.dimensionsDepth}
                     onChange={set("dimensionsDepth")}
-                    disabled={submitting}
                   />
                 </div>
               </div>
@@ -547,7 +566,7 @@ export default function DialogCreateProduct({
 
             <div className="form-group">
               <div className="row ai-cen gap-half">
-                <label htmlFor="cp-primary-desc" className="bold">
+                <label className="bold">
                   Primary description{" "}
                   <span className="clr-muted xsmall">(optional)</span>
                 </label>
@@ -568,18 +587,19 @@ export default function DialogCreateProduct({
                   body of content.
                 </p>
               )}
-              <textarea
-                id="cp-primary-desc"
-                rows={4}
+              <RichTextEditor
                 value={form.primaryDescription}
-                onChange={set("primaryDescription")}
-                disabled={submitting}
+                onChange={(html) =>
+                  setForm((prev) => ({ ...prev, primaryDescription: html }))
+                }
+                placeholder="Full product description…"
+                variant="full"
               />
             </div>
 
             <div className="form-group">
               <div className="row ai-cen gap-half">
-                <label htmlFor="cp-short-desc" className="bold">
+                <label className="bold">
                   Short description{" "}
                   <span className="clr-muted xsmall">(optional)</span>
                 </label>
@@ -600,18 +620,73 @@ export default function DialogCreateProduct({
                   characters.
                 </p>
               )}
-              <textarea
-                id="cp-short-desc"
-                rows={2}
-                maxLength={100}
+              <RichTextEditor
                 value={form.shortDescription}
-                onChange={set("shortDescription")}
-                disabled={submitting}
+                onChange={(html) =>
+                  setForm((prev) => ({ ...prev, shortDescription: html }))
+                }
+                onOverLimit={setShortDescOverLimit}
+                placeholder="One or two sentences shown in the shop listing…"
+                variant="simple"
               />
-              <p className="xsmall clr-muted" aria-live="polite">
-                {form.shortDescription.length}/100
-              </p>
             </div>
+
+            <fieldset className="form-fieldset">
+              <legend className="bold">
+                Image <span className="clr-muted xsmall">(optional)</span>
+              </legend>
+              <div className="grid gap-half">
+                <div className="row gap-1">
+                  <label className="row gap-half ai-cen bold">
+                    <input
+                      type="radio"
+                      name="cp-img-mode"
+                      checked={imageMode === "file"}
+                      onChange={() => {
+                        setImageMode("file");
+                        setImageUrl("");
+                        setImageFile(null);
+                        if (imageFileRef.current) imageFileRef.current.value = "";
+                      }}
+                    />
+                    Upload file
+                  </label>
+                  <label className="row gap-half ai-cen bold">
+                    <input
+                      type="radio"
+                      name="cp-img-mode"
+                      checked={imageMode === "url"}
+                      onChange={() => {
+                        setImageMode("url");
+                        setImageFile(null);
+                        if (imageFileRef.current) imageFileRef.current.value = "";
+                      }}
+                    />
+                    Paste Drive link
+                  </label>
+                </div>
+                {imageMode === "file" ? (
+                  <input
+                    ref={imageFileRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+                  />
+                ) : (
+                  <input
+                    type="url"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://drive.google.com/…"
+                  />
+                )}
+                {(imageFile || imageUrl.trim()) && (
+                  <p className="xsmall clr-muted">
+                    Image will be uploaded after the product is created.
+                  </p>
+                )}
+              </div>
+            </fieldset>
 
             {submitError && (
               <p role="alert" className="status-line" data-tone="error">
@@ -623,26 +698,15 @@ export default function DialogCreateProduct({
               <button
                 type="submit"
                 className="btn-primary row ai-cen jc-cen gap-half flex-1"
-                disabled={!canSubmit || submitting}
+                disabled={!canSubmit}
               >
-                {submitting ? (
-                  <>
-                    <span className="render-loader">
-                      {slowCreate ? "Waiting for SKU…" : "Creating…"}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Plus aria-hidden="true" />
-                    <span>Create Product</span>
-                  </>
-                )}
+                <Plus aria-hidden="true" />
+                <span>Create Product</span>
               </button>
               <button
                 type="button"
                 className="btn-secondary flex-1"
                 onClick={onClose}
-                disabled={submitting}
               >
                 Cancel
               </button>

@@ -12,7 +12,7 @@
   visibility: hidden;
 }
 
-.rotate {
+:is(.rotate, .spin) {
   animation: rotation 1s linear infinite;
 }
 
@@ -95,12 +95,16 @@
   border: var(--default-border);
 }
 
-:is(.border-block-start) {
+:is(.border-block-start, .border-bs) {
   border-block-start: var(--default-border);
 }
 
-:is(.border-block-end) {
+:is(.border-block-end, .border-be) {
   border-block-end: var(--default-border);
+}
+
+:is(.clr-border_soft, .border-soft) {
+  border-color: var(--clr-border-soft);
 }
 
 .hover-bg {
@@ -128,6 +132,10 @@
 
 .cursor-pointer {
   cursor: pointer;
+}
+
+.word-break-ba {
+  word-break: break-all;
 }
 
 [btn-close] {

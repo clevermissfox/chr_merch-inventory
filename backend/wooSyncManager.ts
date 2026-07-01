@@ -14,6 +14,51 @@ type SheetsClient = sheets_v4.Sheets;
 
 const STICKER_SUBCAT_CODE = "STK";
 
+// Parses a Woo REST API error response and returns a human-readable message
+// with a suggested action where the error code is recognizable.
+function humanizeWooError(
+  rawText: string,
+  status: number,
+  context: { sku: string; operation: string; isVariation?: boolean },
+): string {
+  let code = "";
+  let wooMessage = "";
+  try {
+    const parsed = JSON.parse(rawText) as { code?: string; message?: string };
+    code = parsed.code ?? "";
+    wooMessage = parsed.message ?? "";
+  } catch {
+    // not JSON — fall through to raw
+  }
+
+  const { sku, operation, isVariation } = context;
+
+  if (code === "woocommerce_rest_product_variation_invalid_id" || (status === 404 && isVariation)) {
+    return (
+      `Variation for SKU ${sku} not found in WooCommerce (it may have been deleted or moved to a different product). ` +
+      `Fix: in the variants sheet, clear the woo_variant_id cell for SKU ${sku}, then sync again to re-create it.`
+    );
+  }
+  if (code === "woocommerce_rest_product_invalid_id" || (status === 404 && !isVariation)) {
+    return (
+      `Product ${sku} not found in WooCommerce (it may have been deleted). ` +
+      `Fix: in the products sheet, clear the woo_id cell for SKU ${sku}, then sync again to re-create it.`
+    );
+  }
+  if (status === 401 || status === 403) {
+    return `WooCommerce API authentication failed during ${operation} for ${sku}. Check your WOO_CONSUMER_KEY and WOO_CONSUMER_SECRET.`;
+  }
+  if (status === 422 && wooMessage) {
+    return `WooCommerce rejected the ${operation} for ${sku}: ${wooMessage}`;
+  }
+  if (status >= 500) {
+    return `WooCommerce server error (HTTP ${status}) during ${operation} for ${sku}. Try again — if it persists, check the WooCommerce error log.`;
+  }
+  // Unknown — include the code if present so it's diagnosable
+  const codeHint = code ? ` [${code}]` : "";
+  return `Woo ${operation} failed for ${sku} (HTTP ${status})${codeHint}: ${(wooMessage || rawText).slice(0, 200)}`;
+}
+
 // --- Normalization helpers, ported from gas_legacy/utils.js ---
 
 export function normalizePriceCell(
@@ -180,6 +225,7 @@ export function buildWooParentPayload(
   group: CatalogGroup,
   categories: Array<{ id: number }>,
   isNew: boolean,
+  forceStock = false,
 ): WooParentPayload {
   const hasVariants = group.rows.length > 0;
   const isSticker = group.subcategoryCode === STICKER_SUBCAT_CODE;
@@ -241,11 +287,9 @@ export function buildWooParentPayload(
     const sale = normalizePriceCell(group.salePriceDollars);
     if (sale) payload.sale_price = sale;
 
-    // First-time creation only: snapshot current stock so the product never
-    // goes live unmanaged (Woo defaults to "always in stock" otherwise).
-    // Every later sync leaves stock untouched — that's inventory_sync_stock's
-    // job from here on.
-    if (isNew) {
+    // Set stock on first creation, or when an explicit override was provided
+    // (e.g. the user set an initial qty in the publish/sync confirm dialog).
+    if (isNew || forceStock) {
       const qty = group.stockQty ?? 0;
       payload.manage_stock = true;
       payload.stock_quantity = qty;
@@ -267,6 +311,7 @@ export function buildWooVariationPayload(
   row: CatalogRow,
   group: CatalogGroup,
   isNew: boolean,
+  forceStock = false,
 ): WooVariationPayload {
   const isSticker = group.subcategoryCode === STICKER_SUBCAT_CODE;
 
@@ -286,8 +331,7 @@ export function buildWooVariationPayload(
   const sale = normalizePriceCell(row.salePriceVariant || group.salePriceDollars);
   if (sale) payload.sale_price = sale;
 
-  // Same first-creation-only stock snapshot as the parent — see there for why.
-  if (isNew) {
+  if (isNew || forceStock) {
     const qty = row.stockQty ?? 0;
     payload.manage_stock = true;
     payload.stock_quantity = qty;
@@ -420,8 +464,9 @@ async function fetchAllWooVariationsBySku(
 export interface ProductSyncResult {
   productId: string;
   sku: string;
-  status: "synced" | "skipped_draft" | "skipped_unchanged" | "failed";
+  status: "synced" | "skipped_draft" | "skipped_unchanged" | "failed" | "sku_collision_trashed";
   wooId?: number;
+  trashedWooId?: number;
   variantWooIds?: Array<{ sku: string; wooVariantId: number }>;
   hash?: string;
   publishedStatus?: "draft" | "publish";
@@ -435,6 +480,7 @@ export async function syncProductGroupToWoo(
   group: CatalogGroup,
   categoryMaps: CategoryWooIdMaps,
   publish: boolean,
+  forceStockSkus: Set<string> = new Set(),
 ): Promise<ProductSyncResult> {
   const sheetWooId = group.wooId ? Number(group.wooId) : 0;
 
@@ -459,7 +505,8 @@ export async function syncProductGroupToWoo(
   }
   const isNewProduct = !wooId;
 
-  const parentPayload = buildWooParentPayload(group, categories, isNewProduct);
+  const forceGroupStock = forceStockSkus.has(group.sku);
+  const parentPayload = buildWooParentPayload(group, categories, isNewProduct, forceGroupStock);
 
   const url = wooId ? buildWooUrl(woo, `products/${wooId}`) : buildWooUrl(woo, "products");
   const res = await fetch(url, {
@@ -476,11 +523,13 @@ export async function syncProductGroupToWoo(
     if (!wooId && /sku/i.test(text) && /already|exist|lookup/i.test(text)) {
       const trashedMatch = await findWooProductIdBySkuAnyStatus(woo, group.sku);
       if (trashedMatch) {
-        throw new Error(
-          `SKU "${group.sku}" belongs to a ${trashedMatch.status} WooCommerce product (id ${trashedMatch.id}) that still exists, just not published. ` +
-            `To reuse it: put ${trashedMatch.id} into this product's woo_id cell in the sheet and sync again — that will update and restore it instead of creating a duplicate. ` +
-            `To start completely fresh instead: permanently delete it from the Trash in WooCommerce first, then sync again.`,
-        );
+        return {
+          productId: group.productId,
+          sku: group.sku,
+          status: "sku_collision_trashed",
+          trashedWooId: trashedMatch.id,
+          error: `A ${trashedMatch.status} WooCommerce product with this SKU already exists (id ${trashedMatch.id}). Relink to restore it, or permanently delete it from WooCommerce Trash first.`,
+        };
       }
       // No post exists under any status, yet Woo still rejects the SKU as a
       // duplicate — its internal product lookup table (wc_product_meta_lookup)
@@ -493,7 +542,11 @@ export async function syncProductGroupToWoo(
       );
     }
     throw new Error(
-      `Woo product ${wooId ? "update" : "create"} failed for ${group.sku} (HTTP ${res.status}): ${text.slice(0, 300)}`,
+      humanizeWooError(text, res.status, {
+        sku: group.sku,
+        operation: wooId ? "product update" : "product create",
+        isVariation: false,
+      }),
     );
   }
   const created = JSON.parse(text || "{}") as { id?: number };
@@ -510,7 +563,7 @@ export async function syncProductGroupToWoo(
       const existingId = row.wooVariantId
         ? Number(row.wooVariantId)
         : existingBySku.get(row.sku) ?? 0;
-      const variationPayload = buildWooVariationPayload(row, group, !existingId);
+      const variationPayload = buildWooVariationPayload(row, group, !existingId, forceStockSkus.has(row.sku));
       const vUrl = existingId
         ? buildWooUrl(woo, `products/${wooId}/variations/${existingId}`)
         : buildWooUrl(woo, `products/${wooId}/variations`);
@@ -522,7 +575,11 @@ export async function syncProductGroupToWoo(
       const vText = await vRes.text();
       if (!vRes.ok) {
         throw new Error(
-          `Woo variation ${existingId ? "update" : "create"} failed for SKU ${row.sku} (HTTP ${vRes.status}): ${vText.slice(0, 300)}`,
+          humanizeWooError(vText, vRes.status, {
+            sku: row.sku,
+            operation: existingId ? "variation update" : "variation create",
+            isVariation: true,
+          }),
         );
       }
       const vCreated = JSON.parse(vText || "{}") as { id?: number };
@@ -542,6 +599,45 @@ export async function syncProductGroupToWoo(
     hash: computeProductSyncHash(group),
     publishedStatus: parentPayload.status,
   };
+}
+
+// --- WooCommerce deletion ---
+
+// After deleting the last variation, the parent product must be converted to
+// type=simple and given manage_stock=true so WooCommerce doesn't leave it as
+// a variable product with zero variations (which breaks the storefront).
+export async function convertWooProductToSimple(wooId: number): Promise<void> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}`);
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ type: "simple", manage_stock: true }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo convert-to-simple failed (${res.status}): ${text}`);
+  }
+}
+
+export async function deleteProductFromWoo(wooId: number): Promise<void> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}`, { force: "true" });
+  const res = await fetch(url, { method: "DELETE", headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo product delete failed (${res.status}): ${text}`);
+  }
+}
+
+export async function deleteVariationFromWoo(wooProductId: number, wooVariationId: number): Promise<void> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooProductId}/variations/${wooVariationId}`, { force: "true" });
+  const res = await fetch(url, { method: "DELETE", headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo variation delete failed (${res.status}): ${text}`);
+  }
 }
 
 // --- Sheet write-back ---
@@ -655,7 +751,7 @@ export async function syncCatalogGroupsToWoo(
   spreadsheetId: string,
   groups: CatalogGroup[],
   publish: boolean,
-  opts: { skipUnchanged?: boolean } = {},
+  opts: { skipUnchanged?: boolean; forceStockSkus?: Set<string> } = {},
 ): Promise<CatalogSyncSummary> {
   assertNoVariationAttributeCollisions(groups);
 
@@ -676,7 +772,7 @@ export async function syncCatalogGroupsToWoo(
     }
 
     try {
-      results.push(await syncProductGroupToWoo(group, categoryMaps, publish));
+      results.push(await syncProductGroupToWoo(group, categoryMaps, publish, opts.forceStockSkus));
     } catch (err: any) {
       results.push({
         productId: group.productId,

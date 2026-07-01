@@ -21,6 +21,19 @@ import type {
 
 type SheetsClient = sheets_v4.Sheets;
 
+export interface DupeSkuConflict {
+  sku: string;
+  existing: { dataIndex: number; label: string };
+  new: { dataIndex: number; label: string };
+}
+
+export class DupeSkuError extends Error {
+  constructor(public dupes: DupeSkuConflict[]) {
+    super("Duplicate SKU detected");
+    this.name = "DupeSkuError";
+  }
+}
+
 export function colByHeader(headers: string[], name: string): number {
   const idx = headers.indexOf(name);
   if (idx === -1) throw new Error(`Sheet missing required column "${name}"`);
@@ -1193,6 +1206,74 @@ export async function writeProductSyncHashes(
   });
 }
 
+export async function writeProductWooId(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+  wooId: number,
+): Promise<void> {
+  const productData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+  const values = productData.data.values ?? [];
+  if (values.length < 2) throw new Error("products sheet is empty");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const skuIdx = colByHeader(headers, "sku");
+  const wooIdIdx = colByHeader(headers, "woo_id");
+
+  let sheetRow: number | null = null;
+  for (let i = 1; i < values.length; i++) {
+    if (String((values[i] as string[])[skuIdx] ?? "").trim() === sku) {
+      sheetRow = i + 1;
+      break;
+    }
+  }
+  if (!sheetRow) throw new Error(`SKU "${sku}" not found in products sheet`);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `products!${colLetter(wooIdIdx)}${sheetRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[String(wooId)]] },
+  });
+}
+
+export async function writeVariantImageUrl(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+  imageUrl: string,
+): Promise<void> {
+  const variantData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "variants_values",
+  });
+  const values = variantData.data.values ?? [];
+  if (values.length < 2) throw new Error("variants sheet is empty");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const skuIdx = colByHeader(headers, "sku");
+  const imgIdx = colByHeader(headers, "image_variant");
+
+  let sheetRow: number | null = null;
+  for (let i = 1; i < values.length; i++) {
+    if (String((values[i] as string[])[skuIdx] ?? "").trim() === sku) {
+      sheetRow = i + 1;
+      break;
+    }
+  }
+  if (!sheetRow) throw new Error(`SKU "${sku}" not found in variants sheet`);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `variants!${colLetter(imgIdx)}${sheetRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[imageUrl]] },
+  });
+}
+
 // Returns 0-based row indices (matching the values array) where the sku column matches any of the given SKUs.
 // Skips row 0 (headers). Used to build delete requests for descriptions and inventory_index.
 function findRowIndicesBySku(values: string[][], skus: Set<string>): number[] {
@@ -1253,6 +1334,7 @@ export async function deleteProduct(
   variantsDeleted: number;
   descriptionsDeleted: number;
   inventoryIndexDeleted: number;
+  wooId: number | null;
 }> {
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -1280,15 +1362,19 @@ export async function deleteProduct(
   );
   const pSkuIdx = colByHeader(productHeaders, "sku");
   const pProductIdIdx = colByHeader(productHeaders, "product_id");
+  const pWooIdIdx = colByHeader(productHeaders, "woo_id");
 
   let productRowIdx = -1;
   let productId = "";
+  let wooId: number | null = null;
   for (let i = 1; i < productValues.length; i++) {
     if (String((productValues[i] as string[])[pSkuIdx] ?? "").trim() === sku) {
       productRowIdx = i;
       productId = String(
         (productValues[i] as string[])[pProductIdIdx] ?? "",
       ).trim();
+      const rawWooId = String((productValues[i] as string[])[pWooIdIdx] ?? "").trim();
+      wooId = rawWooId ? Number(rawWooId) : null;
       break;
     }
   }
@@ -1338,6 +1424,7 @@ export async function deleteProduct(
     variantsDeleted: variantRowIndices.length,
     descriptionsDeleted: descRowIndices.length,
     inventoryIndexDeleted: invRowIndices.length,
+    wooId,
   };
 }
 
@@ -1345,9 +1432,13 @@ export async function deleteVariant(
   sheets: SheetsClient,
   spreadsheetId: string,
   sku: string,
+  dataIndex?: number,
 ): Promise<{
   descriptionsDeleted: number;
   inventoryIndexDeleted: number;
+  wooVariantId: number | null;
+  parentWooId: number | null;
+  wasLastVariant: boolean;
 }> {
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -1360,10 +1451,11 @@ export async function deleteVariant(
     ]),
   );
 
-  const [variantsRes, descRes, invRes] = await Promise.all([
+  const [variantsRes, descRes, invRes, productsRes] = await Promise.all([
     sheets.spreadsheets.values.get({ spreadsheetId, range: "variants_values" }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: "descriptions" }),
     sheets.spreadsheets.values.get({ spreadsheetId, range: "inventory_index" }),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "products_values" }),
   ]);
 
   const variantValues = variantsRes.data.values ?? [];
@@ -1372,19 +1464,63 @@ export async function deleteVariant(
     String(h).trim(),
   );
   const vSkuIdx = colByHeader(variantHeaders, "sku");
+  const vWooVariantIdIdx = colByHeader(variantHeaders, "woo_variant_id");
+  const vProductIdIdx = colByHeader(variantHeaders, "product_id");
 
   let variantRowIdx = -1;
+  let wooVariantId: number | null = null;
+  let variantProductId = "";
   for (let i = 1; i < variantValues.length; i++) {
-    if (String((variantValues[i] as string[])[vSkuIdx] ?? "").trim() === sku) {
-      variantRowIdx = i;
-      break;
-    }
+    if (String((variantValues[i] as string[])[vSkuIdx] ?? "").trim() !== sku) continue;
+    if (dataIndex !== undefined && i !== dataIndex) continue;
+    variantRowIdx = i;
+    const rawWooVariantId = String((variantValues[i] as string[])[vWooVariantIdIdx] ?? "").trim();
+    wooVariantId = rawWooVariantId ? Number(rawWooVariantId) : null;
+    variantProductId = String((variantValues[i] as string[])[vProductIdIdx] ?? "").trim();
+    break;
   }
-  if (variantRowIdx === -1) throw new Error(`Variant SKU "${sku}" not found`);
+  if (variantRowIdx === -1)
+    throw new Error(
+      dataIndex !== undefined
+        ? `Variant SKU "${sku}" at row ${dataIndex + 1} not found`
+        : `Variant SKU "${sku}" not found`,
+    );
   if (variantRowIdx === 1)
     throw new Error(
       `Variant SKU "${sku}" is in the protected row 2 and cannot be deleted through this tool`,
     );
+
+  // Look up parent product's woo_id so the caller can delete the variation from Woo
+  let parentWooId: number | null = null;
+  if (variantProductId) {
+    const productValues = productsRes.data.values ?? [];
+    if (productValues.length > 1) {
+      const productHeaders = (productValues[0] as string[]).map((h) => String(h).trim());
+      const pProductIdIdx = colByHeader(productHeaders, "product_id");
+      const pWooIdIdx = colByHeader(productHeaders, "woo_id");
+      for (let i = 1; i < productValues.length; i++) {
+        if (String((productValues[i] as string[])[pProductIdIdx] ?? "").trim() === variantProductId) {
+          const raw = String((productValues[i] as string[])[pWooIdIdx] ?? "").trim();
+          parentWooId = raw ? Number(raw) : null;
+          break;
+        }
+      }
+    }
+  }
+
+  // Count sibling variants (same product_id, excluding this row) to know if this is the last one
+  const siblingCount = variantProductId
+    ? (() => {
+        const pidIdx = colByHeader(variantHeaders, "product_id");
+        let count = 0;
+        for (let i = 1; i < variantValues.length; i++) {
+          if (i === variantRowIdx) continue;
+          if (String((variantValues[i] as string[])[pidIdx] ?? "").trim() === variantProductId) count++;
+        }
+        return count;
+      })()
+    : -1;
+  const wasLastVariant = siblingCount === 0;
 
   const skus = new Set([sku]);
   const descRowIndices = findRowIndicesBySku(descRes.data.values ?? [], skus);
@@ -1399,6 +1535,9 @@ export async function deleteVariant(
   return {
     descriptionsDeleted: descRowIndices.length,
     inventoryIndexDeleted: invRowIndices.length,
+    wooVariantId,
+    parentWooId,
+    wasLastVariant,
   };
 }
 
@@ -1529,6 +1668,41 @@ export async function createVariantRows(
   if (spIdx === -1)
     throw new Error('variants sheet missing "select_product" column');
 
+  // Pre-write dupe guard — check before touching the sheet.
+  // Key fields match the SKU formula: color + design_variant (graphicsVariant code column) +
+  // dimensions OR size. The 'design' field is the artwork name — it is NOT in the SKU formula.
+  {
+    // Normalize to catch variants where one stores "3\"x5\"" and another "3″x5″"
+    // (different quote chars that the sheet formula treats as equivalent via XLOOKUP).
+    const norm = (v: string | null | undefined) =>
+      (v ?? "").toLowerCase().trim().replace(/[''‛′]/g, "'").replace(/[""‟″]/g, '"');
+    const pidIdx = colByHeader(headers, "product_id");
+    const colIdx2 = colByHeader(headers, "color");
+    const dvIdx = colByHeader(headers, "design_variant");
+    const dimIdx = colByHeader(headers, "dimensions");
+    const sizeIdx = colByHeader(headers, "size");
+
+    const existingCombos = new Set<string>();
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] as string[];
+      if (norm(row[pidIdx]) !== productId.toLowerCase()) continue;
+      existingCombos.add(
+        [norm(row[colIdx2]), norm(row[dvIdx]), norm(row[dimIdx]), norm(row[sizeIdx])].join("|"),
+      );
+    }
+
+    const seen = new Set<string>();
+    for (const v of variants) {
+      const key = [norm(v.color), norm(v.designVariant), norm(v.dimension), norm(v.size)].join("|");
+      if (existingCombos.has(key) || seen.has(key)) {
+        throw new Error(
+          `Variant with this combination already exists: color="${v.color ?? ""}" designVariant="${v.designVariant ?? ""}" dimension="${v.dimension ?? ""}" size="${v.size ?? ""}". No rows were written.`,
+        );
+      }
+      seen.add(key);
+    }
+  }
+
   const rowData: string[][] = variants.map(
     ({
       color,
@@ -1575,6 +1749,81 @@ export async function createVariantRows(
     startSheetRow,
     variants.length,
   );
+
+  // Post-write safety net: the sheet formula resolved actual SKUs — check they're unique.
+  // If a collision is found, we locate the newly-written row BY SKU (not by position),
+  // confirm there are exactly 2 rows with that SKU, and delete the new one.
+  // If we cannot positively identify the duplicate, we leave the sheet intact and
+  // surface the conflict so a human can investigate.
+  {
+    const allVariantsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "variants_values",
+    });
+    const allRows = (allVariantsRes.data.values ?? []) as string[][];
+    if (allRows.length > 1) {
+      const hdr = allRows[0].map((h) => String(h).trim());
+      const skuCol = colByHeader(hdr, "sku");
+
+      // Build sku → [data indices] map for every row
+      const skuToIndices = new Map<string, number[]>();
+      for (let i = 1; i < allRows.length; i++) {
+        const s = String(allRows[i][skuCol] ?? "").trim();
+        if (!s) continue;
+        if (!skuToIndices.has(s)) skuToIndices.set(s, []);
+        skuToIndices.get(s)!.push(i);
+      }
+
+      const dupeSkus = skus.filter((s) => s && (skuToIndices.get(s)?.length ?? 0) > 1);
+      if (dupeSkus.length) {
+        const colorCol = hdr.indexOf("color");
+        const dvCol = hdr.indexOf("design_variant");
+        const dimCol = hdr.indexOf("dimensions");
+        const sizeCol = hdr.indexOf("size");
+
+        const rowLabel = (dataIdx: number) =>
+          [
+            String(allRows[dataIdx]?.[colorCol] ?? ""),
+            String(allRows[dataIdx]?.[dvCol] ?? ""),
+            String(allRows[dataIdx]?.[dimCol] ?? ""),
+            String(allRows[dataIdx]?.[sizeCol] ?? ""),
+          ]
+            .filter(Boolean)
+            .join(" / ") || `row ${dataIdx + 1}`;
+
+        const conflicts: DupeSkuConflict[] = [];
+        const unresolvable: string[] = [];
+
+        for (const dupeSku of dupeSkus) {
+          const indices = skuToIndices.get(dupeSku)!;
+          const newIndices = indices.filter(
+            (i) => i + 1 >= startSheetRow && i + 1 < startSheetRow + skus.length,
+          );
+          if (newIndices.length === 1 && indices.length === 2) {
+            const newIdx = newIndices[0];
+            const existingIdx = indices.find((i) => i !== newIdx)!;
+            conflicts.push({
+              sku: dupeSku,
+              existing: { dataIndex: existingIdx, label: rowLabel(existingIdx) },
+              new: { dataIndex: newIdx, label: rowLabel(newIdx) },
+            });
+          } else {
+            unresolvable.push(dupeSku);
+          }
+        }
+
+        if (unresolvable.length) {
+          const allDupes = [...new Set(dupeSkus)];
+          throw new Error(
+            `Variant SKU collision (${allDupes.join(", ")}): the sheet formula produced an SKU that already exists. Could not safely identify duplicate rows — check the variants sheet for duplicate rows and remove the extra one manually.`,
+          );
+        }
+        if (conflicts.length) {
+          throw new DupeSkuError(conflicts);
+        }
+      }
+    }
+  }
 
   const invState = await loadInventoryIndexState(sheets, spreadsheetId);
   const invUpdates = skus.map((sku, i) => {
@@ -1726,6 +1975,7 @@ function buildCatalogGroup(product: ProductSheetRow): CatalogGroup {
     rowId: product.row_id,
     lastHash: toNullableString(product.last_hash),
     lastSyncedAt: toNullableString(product.last_synced_at),
+    contentUnsynced: false,
 
     rowCount: 0,
     rows: [],
@@ -1789,6 +2039,16 @@ export function shapeToCatalogPayload(
     );
   }, 0);
 
+  let contentUnsyncedCount = 0;
+  for (const group of groups) {
+    const unsynced =
+      !!group.wooId &&
+      !!group.lastHash &&
+      computeProductSyncHash(group) !== group.lastHash;
+    group.contentUnsynced = unsynced;
+    if (unsynced) contentUnsyncedCount++;
+  }
+
   return {
     ok: true,
     generatedAt: new Date().toISOString(),
@@ -1797,6 +2057,7 @@ export function shapeToCatalogPayload(
       groupCount: groups.length,
       rowCount: groups.reduce((total, group) => total + group.rowCount, 0),
       unsyncedCount,
+      contentUnsyncedCount,
       conflictGroups,
     },
     groups,

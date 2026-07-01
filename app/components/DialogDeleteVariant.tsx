@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
 
 interface Props {
@@ -74,9 +74,19 @@ export default function DialogDeleteVariant({
       onCancel={handleNativeCancel}
     >
       <div className="dialog-inner dialog-confirm-inner grid gap-1">
-        <h2 className="dialog-confirm-title">
-          {isLast ? "Last variant" : "Delete variant?"}
-        </h2>
+        <div className="row jc-sb gap-1 fw-wrap-reverse">
+          <h2 className="dialog-confirm-title">
+            {isLast ? "Last variant" : "Delete variant?"}
+          </h2>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onClose}
+            disabled={inFlight}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
 
         <div className="grid gap-1">
           <p className="small">
@@ -99,10 +109,12 @@ export default function DialogDeleteVariant({
             </p>
           )}
 
-          <p className="small clr-warning">
-            This does not remove anything from WooCommerce. Update the site
-            separately.
-          </p>
+          {row.wooVariantId && (
+            <p className="small clr-warning">
+              This variant is live on the site — it will also be permanently
+              deleted from WooCommerce.
+            </p>
+          )}
         </div>
 
         {error && (
@@ -114,12 +126,14 @@ export default function DialogDeleteVariant({
         <div className="dialog-confirm-actions">
           <button
             type="button"
-            className="btn-primary btn-danger row ai-cen gap-half"
+            className="btn-secondary row ai-cen gap-half"
             onClick={() => void doDeleteVariant()}
             disabled={inFlight}
           >
             {status !== "deleting-variant" && <Trash2 aria-hidden="true" />}
-            <span className={status === "deleting-variant" ? "render-loader" : ""}>
+            <span
+              className={status === "deleting-variant" ? "render-loader" : ""}
+            >
               {isLast ? "Convert to simple product" : "Delete variant"}
             </span>
           </button>
@@ -132,19 +146,23 @@ export default function DialogDeleteVariant({
               disabled={inFlight}
             >
               {status !== "deleting-product" && <Trash2 aria-hidden="true" />}
-              <span className={status === "deleting-product" ? "render-loader" : ""}>
-                {status === "deleting-product" ? "Deleting…" : "Delete entire product"}
+              <span
+                className={status === "deleting-product" ? "render-loader" : ""}
+              >
+                {status === "deleting-product"
+                  ? "Deleting…"
+                  : "Delete entire product"}
               </span>
             </button>
           )}
-          <button
+          {/* <button
             type="button"
             className="btn-ghost"
             onClick={onClose}
             disabled={inFlight}
           >
             Cancel
-          </button>
+          </button> */}
         </div>
       </div>
     </dialog>

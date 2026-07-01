@@ -1,6 +1,8 @@
 import { CircleQuestionMark, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
+import ImageUploadSection from "./ImageUploadSection";
+import RichTextEditor from "./RichTextEditor";
 
 interface DialogEditVariantProps {
   row: CatalogRow;
@@ -37,6 +39,9 @@ export default function DialogEditVariant({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showPriceHelp, setShowPriceHelp] = useState(false);
+  const [showWeightHelp, setShowWeightHelp] = useState(false);
+  const [descOverLimit, setDescOverLimit] = useState(false);
+  const [imageIsPending, setImageIsPending] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -129,7 +134,7 @@ export default function DialogEditVariant({
         </dl>
 
         <form className="grid gap-1" onSubmit={handleSubmit}>
-          <div className="row gap-1 fw-wrap">
+          <div className="row gap-1 ai-end fw-wrap">
             <div className="form-group flex-1">
               <div className="row ai-cen gap-half">
                 <label htmlFor="ev-price" className="bold">
@@ -148,9 +153,9 @@ export default function DialogEditVariant({
               </div>
               {showPriceHelp && (
                 <p id="ev-price-help" className="xsmall clr-warning">
-                  This value <strong>replaces</strong> the base price for this
-                  variant — it is not a surcharge. Leave blank to use the
-                  product's base price (${basePriceDollars || "—"}).
+                  This value <strong>overrides</strong> the base price. Leave
+                  blank to use the product's base price ($
+                  {basePriceDollars || "—"}).
                 </p>
               )}
               <input
@@ -172,6 +177,7 @@ export default function DialogEditVariant({
                 Sale price override ($){" "}
                 <span className="clr-muted xsmall">(optional)</span>
               </label>
+
               <input
                 id="ev-sale-price"
                 type="number"
@@ -196,10 +202,27 @@ export default function DialogEditVariant({
               )}
             </div>
             <div className="form-group flex-1">
-              <label htmlFor="ev-weight" className="bold">
-                Weight override (oz){" "}
-                <span className="clr-muted xsmall">(optional)</span>
-              </label>
+              <div className="row ai-cen gap-half">
+                <label htmlFor="ev-weight" className="bold">
+                  Weight override (oz){" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn-icon btn-help"
+                  onClick={() => setShowWeightHelp((v) => !v)}
+                  aria-expanded={showWeightHelp}
+                  aria-controls="ev-weight-help"
+                >
+                  <CircleQuestionMark aria-hidden="true" />
+                </button>
+              </div>
+              {showWeightHelp && group.weightOz && (
+                <p id="ev-weight-help" className="xsmall clr-warning">
+                  This value <strong>overrides</strong> the base weight. Leave
+                  blank to use the product's base weight ({group.weightOz}oz).
+                </p>
+              )}
               <input
                 id="ev-weight"
                 type="number"
@@ -213,30 +236,40 @@ export default function DialogEditVariant({
                 placeholder={group.weightOz ?? "0.0"}
                 disabled={submitting}
               />
-              {group.weightOz && (
-                <p className="xsmall clr-muted">
-                  Base weight: {group.weightOz}oz. Leave blank to use base.
-                </p>
-              )}
             </div>
           </div>
 
           <div className="form-group">
-            <label htmlFor="ev-desc" className="bold">
+            <label className="bold">
               Description <span className="clr-muted xsmall">(optional)</span>
             </label>
-            <textarea
-              id="ev-desc"
-              rows={3}
+            <RichTextEditor
               value={form.descriptionVariant}
-              onChange={set("descriptionVariant")}
+              onChange={(html) =>
+                setForm((prev) => ({ ...prev, descriptionVariant: html }))
+              }
+              onOverLimit={setDescOverLimit}
               disabled={submitting}
+              placeholder="What's unique about this variant…"
+              variant="simple"
+              maxChars={150}
             />
           </div>
-          <p className="xsmall ">
-            Note: Canot change color, graphic, size, or dimensions as it would
-            change the sku. If those changes need to be made, delete the current
-            variant and create a new one.
+
+          <ImageUploadSection
+            sku={row.sku}
+            productName={`${group.displayName} — ${row.label ?? row.sku}`}
+            disabled={submitting}
+            single
+            existingUrl={row.imageVariant ?? undefined}
+            endpoint={`/api/catalog/variant/${encodeURIComponent(row.sku)}/image`}
+            onPendingChange={setImageIsPending}
+          />
+
+          <p className="xsmall">
+            Note: Cannot change color, graphic, size, or dimensions as it would
+            change the SKU. Delete and recreate the variant if those need to
+            change.
           </p>
 
           {submitError && (
@@ -249,7 +282,7 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={!isDirty || submitting}
+              disabled={!isDirty || submitting || descOverLimit || imageIsPending}
             >
               {submitting ? (
                 <>

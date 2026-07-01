@@ -1,9 +1,16 @@
-import { Plus, X } from "lucide-react";
+import { AlertTriangle, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, RefData } from "~/types/catalog";
 import { sizeRank } from "~/utils/sizeUtils";
 import FormGroupRef from "./FormGroupRef";
 import RefAddNew from "./RefAddNew";
+import RichTextEditor from "./RichTextEditor";
+
+interface DupeSkuConflict {
+  sku: string;
+  existing: { dataIndex: number; label: string };
+  new: { dataIndex: number; label: string };
+}
 
 function parseDimCode(code: string): [number, number] {
   const parts = code.toUpperCase().split("X");
@@ -33,8 +40,13 @@ export default function DialogCreateVariant({
   const [designVariant, setDesignVariant] = useState("");
   const [weightOzVariant, setWeightOzVariant] = useState("");
   const [descriptionVariant, setDescriptionVariant] = useState("");
+  const [descOverLimit, setDescOverLimit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [pendingDupes, setPendingDupes] = useState<DupeSkuConflict[] | null>(null);
+  const [resolvedSkus, setResolvedSkus] = useState<string[]>([]);
+  const [resolvingDupeSku, setResolvingDupeSku] = useState<string | null>(null);
+  const [dupeResolveError, setDupeResolveError] = useState<string | null>(null);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -88,7 +100,7 @@ export default function DialogCreateVariant({
   ].filter((n) => n > 0);
   const variantCount = axes.length > 0 ? axes.reduce((a, b) => a * b, 1) : 0;
 
-  const canSubmit = variantCount > 0;
+  const canSubmit = variantCount > 0 && !descOverLimit;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,11 +159,42 @@ export default function DialogCreateVariant({
         },
       );
       const data = await res.json();
+      if (data.dupeSkus?.length) {
+        setPendingDupes(data.dupeSkus as DupeSkuConflict[]);
+        setSubmitting(false);
+        return;
+      }
       if (!data.ok) throw new Error(data.error || "Failed to create variants");
       onCreated(data.skus as string[]);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Unknown error");
       setSubmitting(false);
+    }
+  };
+
+  const resolveDupe = async (dupe: DupeSkuConflict, keep: "existing" | "new") => {
+    const deleteDataIndex = keep === "existing" ? dupe.new.dataIndex : dupe.existing.dataIndex;
+    setResolvingDupeSku(dupe.sku);
+    setDupeResolveError(null);
+    try {
+      const res = await fetch(
+        `/api/catalog/variant/${encodeURIComponent(dupe.sku)}?dataIndex=${deleteDataIndex}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Failed to resolve duplicate");
+
+      const remaining = (pendingDupes ?? []).filter((d) => d.sku !== dupe.sku);
+      const nowResolved = [...resolvedSkus, dupe.sku];
+      setPendingDupes(remaining);
+      setResolvedSkus(nowResolved);
+      if (remaining.length === 0) {
+        onCreated(nowResolved);
+      }
+    } catch (err) {
+      setDupeResolveError(err instanceof Error ? err.message : "Failed to resolve duplicate");
+    } finally {
+      setResolvingDupeSku(null);
     }
   };
 
@@ -402,17 +445,18 @@ export default function DialogCreateVariant({
               />
             </div>
             <div className="form-group">
-              <label htmlFor="cv-desc" className="bold">
+              <label className="bold">
                 Bulk Variant Description{" "}
                 <span className="clr-muted xsmall">(optional)</span>
               </label>
-              <textarea
-                id="cv-desc"
+              <RichTextEditor
                 value={descriptionVariant}
-                onChange={(e) => setDescriptionVariant(e.target.value)}
-                placeholder="Describe what's unique about this variant…"
-                rows={3}
+                onChange={setDescriptionVariant}
+                onOverLimit={setDescOverLimit}
                 disabled={submitting}
+                placeholder="Describe what's unique about this variant…"
+                variant="simple"
+                maxChars={150}
               />
             </div>
             {canSubmit && (
@@ -443,6 +487,51 @@ export default function DialogCreateVariant({
                 )}
               </p>
             )}
+            {pendingDupes && pendingDupes.length > 0 && (
+              <div className="grid gap-half">
+                <p role="alert" className="status-line" data-tone="warning">
+                  <AlertTriangle size={14} aria-hidden="true" />
+                  {" "}SKU collision — the sheet formula produced a SKU that already exists.
+                  Choose which variant to keep for each conflict:
+                </p>
+                {pendingDupes.map((dupe) => (
+                  <div key={dupe.sku} className="grid gap-quarter padding-half default-border">
+                    <p className="small bold">{dupe.sku}</p>
+                    <div className="row gap-half fw-wrap">
+                      <button
+                        type="button"
+                        className="btn-secondary small"
+                        onClick={() => void resolveDupe(dupe, "existing")}
+                        disabled={resolvingDupeSku !== null}
+                      >
+                        {resolvingDupeSku === dupe.sku ? (
+                          <span className="render-loader">Resolving…</span>
+                        ) : (
+                          <>Keep existing: <span className="clr-muted">{dupe.existing.label}</span></>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary small"
+                        onClick={() => void resolveDupe(dupe, "new")}
+                        disabled={resolvingDupeSku !== null}
+                      >
+                        {resolvingDupeSku === dupe.sku ? (
+                          <span className="render-loader">Resolving…</span>
+                        ) : (
+                          <>Keep new: <span className="clr-muted">{dupe.new.label}</span></>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {dupeResolveError && (
+                  <p role="alert" className="status-line" data-tone="error">
+                    {dupeResolveError}
+                  </p>
+                )}
+              </div>
+            )}
             {submitError && (
               <p role="alert" className="status-line" data-tone="error">
                 {submitError}
@@ -452,7 +541,7 @@ export default function DialogCreateVariant({
               <button
                 type="submit"
                 className="btn-primary row gap-half ai-cen"
-                disabled={!canSubmit || submitting}
+                disabled={!canSubmit || submitting || pendingDupes !== null}
               >
                 {submitting ? (
                   <>
@@ -472,7 +561,7 @@ export default function DialogCreateVariant({
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
-                disabled={submitting}
+                disabled={submitting || resolvingDupeSku !== null}
               >
                 Cancel
               </button>

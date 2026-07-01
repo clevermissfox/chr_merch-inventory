@@ -39,10 +39,14 @@ import {
   updateVariant,
   VALID_REF_TYPES,
   writeProductSyncHashes,
+  writeProductWooId,
+  writeVariantImageUrl,
   writeSheetLog,
 } from "./catalogManager";
 import type { RefAddType, UpdateProductFields } from "./catalogManager";
-import { syncCatalogGroupsToWoo } from "./wooSyncManager";
+import { DupeSkuError } from "./catalogManager";
+import { syncCatalogGroupsToWoo, deleteProductFromWoo, deleteVariationFromWoo, convertWooProductToSimple } from "./wooSyncManager";
+import { sendImageNotification } from "./mailer";
 
 import {
   applyWooStockMapToCatalogGroups,
@@ -54,11 +58,10 @@ import {
   loadInventoryIndexState,
   refreshWooStockForCatalog,
   syncStockSyncPlanToWoo,
+  writeInventoryIndexUpdates,
 } from "./inventoryManager";
 
-// dotenv.config();
 dotenv.config({ path: "./backend/.env" });
-dotenv.config({ path: "./app/.env" });
 
 declare module "express-session" {
   interface SessionData {
@@ -86,7 +89,7 @@ app.use(
 );
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 app.use(
   session({
     name: "chr-merch-session",
@@ -201,6 +204,7 @@ const serviceAuth = new google.auth.GoogleAuth({
   scopes: [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
   ],
 });
 
@@ -464,6 +468,7 @@ app.get(
           ...payload.summary,
           conflictGroups: buildConflictGroups(updatedGroups),
           wooSiteUrl: wooSiteUrl ?? undefined,
+          devEmail: process.env.DEV_EMAIL ?? undefined,
           unsyncedCount: updatedGroups.reduce(
             (total, group) =>
               total +
@@ -927,16 +932,26 @@ app.delete(
       const { sheets, spreadsheetId } = getSheets();
       const result = await deleteProduct(sheets, spreadsheetId, sku);
 
+      let wooDeleted = false;
+      if (result.wooId) {
+        try {
+          await deleteProductFromWoo(result.wooId);
+          wooDeleted = true;
+        } catch (e: any) {
+          console.error(`Woo product delete failed for ${sku}:`, e?.message);
+        }
+      }
+
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor.email,
         "delete_product",
-        `sku=${sku} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted}`,
+        `sku=${sku} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
-      return res.status(200).json({ ok: true, sku, ...result });
+      return res.status(200).json({ ok: true, sku, ...result, wooDeleted });
     } catch (error: any) {
       console.error("DELETE /api/catalog/product/:sku failed:", error);
       tryLogError(req, "delete_product", error);
@@ -990,6 +1005,9 @@ app.post(
       return res.status(201).json({ ok: true, skus: result.skus });
     } catch (error: any) {
       console.error("POST /api/catalog/product/:sku/variants failed:", error);
+      if (error instanceof DupeSkuError) {
+        return res.status(409).json({ ok: false, dupeSkus: error.dupes });
+      }
       tryLogError(req, "create_variants", error);
       return res.status(500).json({
         ok: false,
@@ -1062,19 +1080,41 @@ app.delete(
       if (!sku)
         return res.status(400).json({ ok: false, error: "Missing sku" });
 
+      const rawDataIndex = req.query.dataIndex;
+      const dataIndex =
+        rawDataIndex !== undefined ? parseInt(String(rawDataIndex), 10) : undefined;
+      if (dataIndex !== undefined && isNaN(dataIndex))
+        return res.status(400).json({ ok: false, error: "Invalid dataIndex" });
+
       const { sheets, spreadsheetId } = getSheets();
-      const result = await deleteVariant(sheets, spreadsheetId, sku);
+      const result = await deleteVariant(sheets, spreadsheetId, sku, dataIndex);
+
+      let wooDeleted = false;
+      if (result.wooVariantId && result.parentWooId) {
+        try {
+          await deleteVariationFromWoo(result.parentWooId, result.wooVariantId);
+          wooDeleted = true;
+          // If this was the last variant, convert the parent to a simple product
+          if (result.wasLastVariant) {
+            await convertWooProductToSimple(result.parentWooId).catch((e: any) =>
+              console.error(`Convert-to-simple failed for parent ${result.parentWooId}:`, e?.message),
+            );
+          }
+        } catch (e: any) {
+          console.error(`Woo variation delete failed for ${sku}:`, e?.message);
+        }
+      }
 
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor.email,
         "delete_variant",
-        `sku=${sku} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted}`,
+        `sku=${sku} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
-      return res.status(200).json({ ok: true, sku, ...result });
+      return res.status(200).json({ ok: true, sku, ...result, wooDeleted });
     } catch (error: any) {
       console.error("DELETE /api/catalog/variant/:sku failed:", error);
       tryLogError(req, "delete_variant", error);
@@ -1113,10 +1153,11 @@ app.post(
           "Product management is still in progress - inventory changes only for now",
       });
     try {
-      const { productIds, publish, mode } = req.body as {
+      const { productIds, publish, mode, stockOverrides } = req.body as {
         productIds?: string[];
         publish?: boolean;
         mode?: "selected" | "sync_all";
+        stockOverrides?: Record<string, number>;
       };
       const syncMode = mode === "sync_all" ? "sync_all" : "selected";
 
@@ -1155,12 +1196,48 @@ app.post(
         );
       }
 
+      // Apply any user-supplied stock overrides in-memory so WooCommerce
+      // receives the correct initial stock without waiting for sheet formula
+      // recalculation. Also persists to inventory_index for consistency.
+      if (stockOverrides && Object.keys(stockOverrides).length > 0) {
+        targetGroups = targetGroups.map((group) => {
+          if (group.rowCount === 0) {
+            const qty = stockOverrides[group.sku];
+            return qty !== undefined ? { ...group, stockQty: qty } : group;
+          }
+          const patchedRows = group.rows.map((row) => {
+            const qty = stockOverrides[row.sku];
+            return qty !== undefined ? { ...row, stockQty: qty } : row;
+          });
+          return { ...group, rows: patchedRows };
+        });
+
+        // Persist to inventory_index (best-effort)
+        loadInventoryIndexState(sheets, spreadsheetId)
+          .then((invState) =>
+            writeInventoryIndexUpdates(
+              sheets,
+              spreadsheetId,
+              invState,
+              Object.entries(stockOverrides).map(([sku, qty]) => ({
+                sku,
+                fields: { stock_qty: qty },
+              })),
+            ),
+          )
+          .catch((e) => console.error("stock override write failed:", e));
+      }
+
+      const forceStockSkus = stockOverrides
+        ? new Set(Object.keys(stockOverrides))
+        : undefined;
+
       const summary = await syncCatalogGroupsToWoo(
         sheets,
         spreadsheetId,
         targetGroups,
         Boolean(publish),
-        { skipUnchanged: syncMode === "sync_all" },
+        { skipUnchanged: syncMode === "sync_all", forceStockSkus },
       );
 
       const actor = req.session.user!;
@@ -1179,6 +1256,203 @@ app.post(
       return res.status(500).json({
         ok: false,
         error: error?.message || "Failed to sync to site",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/catalog/product/:sku/set_woo_id",
+  async (req: Request, res: Response) => {
+    if (!req.session?.user) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+    if (req.session.user.role !== "editor" && req.session.user.role !== "admin") {
+      return res.status(403).json({ ok: false, error: "Not authorized" });
+    }
+    try {
+      const sku = decodeURIComponent(req.params.sku);
+      const { wooId } = req.body as { wooId?: number };
+      if (!wooId || typeof wooId !== "number" || wooId <= 0) {
+        return res.status(400).json({ ok: false, error: "Invalid wooId" });
+      }
+      const { sheets, spreadsheetId } = getSheets();
+      await writeProductWooId(sheets, spreadsheetId, sku, wooId);
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        req.session.user.email,
+        "set_woo_id",
+        `sku=${sku} wooId=${wooId}`,
+        TARGET_ENV,
+      ]).catch(() => {});
+      return res.json({ ok: true });
+    } catch (error: unknown) {
+      console.error("POST /api/catalog/product/:sku/set_woo_id failed:", error);
+      tryLogError(req, "set_woo_id", error);
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to set woo_id",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/catalog/product/:sku/image",
+  async (req: Request, res: Response) => {
+    if (!req.session?.user) {
+      return res.status(401).json({ ok: false, error: "Not authenticated" });
+    }
+    if (req.session.user.role !== "editor" && req.session.user.role !== "admin") {
+      return res.status(403).json({ ok: false, error: "Not authorized" });
+    }
+    try {
+      const sku = decodeURIComponent(req.params.sku);
+      const { productName, pastedUrl, files } = req.body as {
+        productName?: string;
+        pastedUrl?: string;
+        files?: Array<{ fileName: string; fileData: string; mimeType: string }>;
+      };
+      if (!productName) {
+        return res.status(400).json({ ok: false, error: "productName is required" });
+      }
+      if (!pastedUrl && (!files || files.length === 0)) {
+        return res.status(400).json({ ok: false, error: "Provide an image URL or upload at least one file" });
+      }
+
+      const uploadedFiles: Array<{ name: string; link: string }> = [];
+
+      if (files && files.length > 0) {
+        const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
+        if (!folderId) throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
+
+        const drive = google.drive({ version: "v3", auth: serviceAuth });
+        const { Readable } = await import("stream");
+        const ts = Date.now();
+
+        for (let i = 0; i < files.length; i++) {
+          const { fileName, fileData, mimeType } = files[i];
+          const ext = fileName.split(".").pop() ?? "jpg";
+          const uploadedName = `${sku}-${ts}${files.length > 1 ? `-${i + 1}` : ""}.${ext}`;
+
+          const uploaded = await drive.files.create({
+            supportsAllDrives: true,
+            requestBody: { name: uploadedName, parents: [folderId] },
+            media: { mimeType, body: Readable.from(Buffer.from(fileData, "base64")) },
+            fields: "id,webViewLink",
+          });
+          uploadedFiles.push({
+            name: uploadedName,
+            link: uploaded.data.webViewLink ?? `https://drive.google.com/file/d/${uploaded.data.id}/view`,
+          });
+        }
+      }
+
+      await sendImageNotification({
+        sku,
+        productName,
+        uploaderEmail: req.session.user.email,
+        uploadedFiles,
+        pastedUrl,
+      });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const logDetail = uploadedFiles.length
+        ? `sku=${sku} drive:${uploadedFiles.map((f) => f.name).join(",")}`
+        : `sku=${sku} url:${pastedUrl}`;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        req.session.user.email,
+        "image_notification",
+        logDetail,
+        TARGET_ENV,
+      ]).catch(() => {});
+      return res.json({ ok: true });
+    } catch (error: unknown) {
+      console.error("POST /api/catalog/product/:sku/image failed:", error);
+      tryLogError(req, "image_notification", error);
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to send image notification",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/catalog/variant/:sku/image",
+  requireAuth,
+  requireCanEdit,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = decodeURIComponent(req.params.sku);
+      const { productName, pastedUrl, file } = req.body as {
+        productName?: string;
+        pastedUrl?: string;
+        file?: { fileName: string; fileData: string; mimeType: string };
+      };
+      if (!productName) {
+        return res.status(400).json({ ok: false, error: "productName is required" });
+      }
+      if (!pastedUrl && !file) {
+        return res.status(400).json({ ok: false, error: "Provide an image URL or upload a file" });
+      }
+
+      const { sheets, spreadsheetId } = getSheets();
+      let finalUrl: string;
+
+      if (file) {
+        const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
+        if (!folderId) throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
+
+        const drive = google.drive({ version: "v3", auth: serviceAuth });
+        const { Readable } = await import("stream");
+        const ts = Date.now();
+        const ext = file.fileName.split(".").pop() ?? "jpg";
+        const uploadedName = `${sku}-${ts}.${ext}`;
+
+        const uploaded = await drive.files.create({
+          supportsAllDrives: true,
+          requestBody: { name: uploadedName, parents: [folderId] },
+          media: { mimeType: file.mimeType, body: Readable.from(Buffer.from(file.fileData, "base64")) },
+          fields: "id,webViewLink",
+        });
+        finalUrl = uploaded.data.webViewLink ?? `https://drive.google.com/file/d/${uploaded.data.id}/view`;
+
+        await sendImageNotification({
+          sku,
+          productName,
+          uploaderEmail: req.session.user!.email,
+          uploadedFiles: [{ name: uploadedName, link: finalUrl }],
+        });
+      } else {
+        finalUrl = pastedUrl!;
+        await sendImageNotification({
+          sku,
+          productName,
+          uploaderEmail: req.session.user!.email,
+          uploadedFiles: [],
+          pastedUrl: finalUrl,
+        });
+      }
+
+      await writeVariantImageUrl(sheets, spreadsheetId, sku, finalUrl);
+
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        req.session.user!.email,
+        "variant_image",
+        `sku=${sku} url=${finalUrl}`,
+        TARGET_ENV,
+      ]).catch(() => {});
+
+      return res.json({ ok: true, imageUrl: finalUrl });
+    } catch (error: unknown) {
+      console.error("POST /api/catalog/variant/:sku/image failed:", error);
+      tryLogError(req, "variant_image", error);
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to save variant image",
       });
     }
   },

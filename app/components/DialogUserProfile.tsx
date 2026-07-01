@@ -18,6 +18,7 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
   const { user } = useAuth();
   const { state } = useCatalog();
   const wooSiteUrl = state.catalog?.summary.wooSiteUrl;
+  const devEmail = state.catalog?.summary.devEmail;
   const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
@@ -85,12 +86,14 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
           </a>
         )}
 
-        <p className="small clr-muted">
-          Need support?{" "}
-          <a href="mailto:dev@cochiseharmreduction.org" className="underline">
-            dev@cochiseharmreduction.org
-          </a>
-        </p>
+        {devEmail && (
+          <p className="small clr-muted">
+            Need support?{" "}
+            <a href={`mailto:${devEmail}`} className="underline">
+              {devEmail}
+            </a>
+          </p>
+        )}
       </div>
     </dialog>
   );

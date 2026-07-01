@@ -28,9 +28,17 @@ export const handle = {
   eyebrow: "Manage products",
 };
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function truncate(str: string | null | undefined, len: number): string | null {
   if (!str) return null;
-  return str.length > len ? str.slice(0, len) + "…" : str;
+  const plain = stripHtml(str);
+  return plain.length > len ? plain.slice(0, len) + "…" : plain || null;
 }
 
 interface ProductGroupProps {
@@ -57,8 +65,8 @@ function ProductGroup({
   const isSimple = group.rowCount === 0;
 
   return (
-    <details className="toggle-group card">
-      <summary>
+    <details className="toggle-group product-group card">
+      <summary data-unsynced={group.contentUnsynced || undefined}>
         <div className="summary-title">
           <p className="row gap-half ai-cen fw-wrap">
             <strong>{group.displayName}</strong>
@@ -72,6 +80,11 @@ function ProductGroup({
             ) : group.publishedStatus === "draft" ? (
               <span className="published-status-badge">Draft</span>
             ) : null}
+            {group.contentUnsynced && (
+              <span className="published-status-badge" data-tone="warning">
+                Content unsynced
+              </span>
+            )}
           </p>
         </div>
         <span className="toggle-label">Toggle</span>
@@ -263,6 +276,8 @@ export default function ProductsPage() {
   const canEdit = user?.canEdit ?? false;
 
   const [showCreate, setShowCreate] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [lastCreated, setLastCreated] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CatalogGroup | null>(null);
@@ -287,6 +302,15 @@ export default function ProductsPage() {
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState<CatalogGroup | null>(null);
   const [lastEdited, setLastEdited] = useState<string | null>(null);
+  const [stockOverrides, setStockOverrides] = useState<Record<string, string>>(
+    {},
+  );
+  const [pendingRelink, setPendingRelink] = useState<{
+    group: CatalogGroup;
+    trashedWooId: number;
+  } | null>(null);
+  const [relinkStatus, setRelinkStatus] = useState<DialogConfirmStatus>("idle");
+  const [relinkError, setRelinkError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!catalog && !loading) {
@@ -294,8 +318,23 @@ export default function ProductsPage() {
     }
   }, []);
 
-  const handleCreated = (sku: string) => {
+  const handlePending = () => {
     setShowCreate(false);
+    setPendingCreate(true);
+    setCreateError(null);
+    setLastCreated(null);
+    setLastDeleted(null);
+    setLastEdited(null);
+  };
+
+  const handleFailed = (error: string) => {
+    setPendingCreate(false);
+    setCreateError(error);
+  };
+
+  const handleCreated = (sku: string) => {
+    setPendingCreate(false);
+    setCreateError(null);
     setLastCreated(sku);
     setLastDeleted(null);
     setLastEdited(null);
@@ -334,12 +373,22 @@ export default function ProductsPage() {
     setPublishStatus("confirming");
     setPublishError(null);
     try {
+      // Convert string inputs to numbers, dropping blanks/zeros
+      const parsedOverrides = Object.fromEntries(
+        Object.entries(stockOverrides)
+          .map(([sku, v]) => [sku, parseInt(v, 10)])
+          .filter(([, n]) => Number.isFinite(n) && (n as number) > 0),
+      );
+
       const body =
         syncRequest.type === "single"
           ? {
               mode: "selected" as const,
               productIds: [syncRequest.group.productId],
               publish: syncRequest.group.publishedStatus === "draft",
+              ...(Object.keys(parsedOverrides).length
+                ? { stockOverrides: parsedOverrides }
+                : {}),
             }
           : { mode: "sync_all" as const, publish: publishDrafts };
 
@@ -357,6 +406,15 @@ export default function ProductsPage() {
         const result = data.results?.[0];
         if (!result || result.status === "failed") {
           throw new Error(result?.error || "Sync failed");
+        }
+        if (result.status === "sku_collision_trashed") {
+          setPendingRelink({
+            group: syncRequest.group,
+            trashedWooId: result.trashedWooId as number,
+          });
+          setSyncRequest(null);
+          setPublishStatus("idle");
+          return;
         }
         summary = `Synced to site — ${syncRequest.group.sku}`;
       } else {
@@ -398,39 +456,107 @@ export default function ProductsPage() {
     }
   };
 
+  const handleRelinkConfirm = async () => {
+    if (!pendingRelink) return;
+    setRelinkStatus("confirming");
+    setRelinkError(null);
+    try {
+      const { group, trashedWooId } = pendingRelink;
+      const setRes = await fetch(
+        `/api/catalog/product/${encodeURIComponent(group.sku)}/set_woo_id`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ wooId: trashedWooId }),
+        },
+      );
+      const setData = await setRes.json();
+      if (!setData.ok)
+        throw new Error(setData.error || "Failed to save woo_id");
+
+      const syncRes = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "selected",
+          productIds: [group.productId],
+          publish: group.publishedStatus !== "draft",
+        }),
+      });
+      const syncData = await syncRes.json();
+      if (!syncData.ok) throw new Error(syncData.error || "Sync failed");
+      const result = syncData.results?.[0];
+      if (!result || result.status === "failed") {
+        throw new Error(result?.error || "Sync failed after relink");
+      }
+
+      setRelinkStatus("success");
+      setLastSynced(`Relinked and synced — ${group.sku}`);
+      setLastCreated(null);
+      setLastDeleted(null);
+      setLastEdited(null);
+      await loadCatalog();
+      setPendingRelink(null);
+      setRelinkStatus("idle");
+    } catch (err) {
+      setRelinkError(err instanceof Error ? err.message : "Unknown error");
+      setRelinkStatus("idle");
+    }
+  };
+
   const statusMessage = loading
     ? "Loading catalog…"
-    : lastCreated
-      ? `Created — new SKU: ${lastCreated}`
-      : lastDeleted
-        ? `Deleted — SKU: ${lastDeleted}`
-        : lastSynced
-          ? lastSynced
-          : lastEdited
-            ? `Saved — ${lastEdited}`
-            : error
-              ? error
-              : catalog
-                ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
-                : "";
+    : pendingCreate
+      ? "Creating product… this may take a minute"
+      : createError
+        ? `Create failed — ${createError}`
+        : lastCreated
+          ? `Created — new SKU: ${lastCreated}`
+          : lastDeleted
+            ? `Deleted — SKU: ${lastDeleted}`
+            : lastSynced
+              ? lastSynced
+              : lastEdited
+                ? `Saved — ${lastEdited}`
+                : error
+                  ? error
+                  : catalog
+                    ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
+                    : "";
 
-  const statusTone = error
-    ? "error"
-    : lastCreated || lastEdited || lastSynced
-      ? "success"
-      : undefined;
+  const statusTone =
+    error || createError
+      ? "error"
+      : pendingCreate
+        ? "loading"
+        : lastCreated || lastEdited || lastSynced
+          ? "success"
+          : undefined;
 
   return (
     <>
       <section className="toolbar card">
         <div className="row gap-1 jc-sb ai-cen fw-wrap">
-          <p
-            className="status-line"
-            role={statusTone === "error" ? "alert" : "status"}
-            data-tone={statusTone ?? (loading ? "loading" : "")}
-          >
-            {statusMessage}
-          </p>
+          <div className="row gap-1 ai-cen fw-wrap">
+            <p
+              className="status-line"
+              role={statusTone === "error" ? "alert" : "status"}
+              data-tone={statusTone ?? (loading ? "loading" : "")}
+            >
+              {statusMessage}
+            </p>
+            {!loading &&
+              catalog &&
+              catalog.summary.contentUnsyncedCount > 0 && (
+                <p className="status-line" data-tone="warning">
+                  {catalog.summary.contentUnsyncedCount} product
+                  {catalog.summary.contentUnsyncedCount !== 1 ? "s" : ""} with
+                  unsynced content
+                </p>
+              )}
+          </div>
 
           <div className="row gap-1 fw-wrap ai-cen">
             <button
@@ -498,6 +624,7 @@ export default function ProductsPage() {
                 setLastCreated(null);
                 setLastDeleted(null);
                 setLastSynced(null);
+                setStockOverrides({});
               }}
               onEditRequest={setPendingEdit}
             />
@@ -540,6 +667,8 @@ export default function ProductsPage() {
         <DialogCreateProduct
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
+          onPending={handlePending}
+          onFailed={handleFailed}
         />
       )}
 
@@ -599,21 +728,32 @@ export default function ProductsPage() {
               : ","}{" "}
             its descriptions, and its inventory index entries from the sheet.
           </p>
-          <p className="small clr-warning">
-            This does not remove the product from the website. Archive or delete
-            it in WooCommerce separately.
-          </p>
+          {pendingDelete.wooId && (
+            <p className="small clr-warning">
+              This product is live on the site — it will also be permanently
+              deleted from WooCommerce.
+            </p>
+          )}
         </DialogConfirm>
       )}
 
       {syncRequest?.type === "single" &&
         (() => {
-          const isDraft = syncRequest.group.publishedStatus === "draft";
           const isLive = Boolean(syncRequest.group.wooId);
-          // Never-published draft -> "publish". Already-live product flipped
-          // back to draft -> "unpublish" (takes it off the live site).
-          // Anything else -> routine content sync.
-          const mode = !isDraft ? "sync" : isLive ? "unpublish" : "publish";
+          const isDraft =
+            !syncRequest.group.publishedStatus ||
+            syncRequest.group.publishedStatus === "draft";
+          // Has wooId + draft → unpublish (take it down).
+          // Has wooId + not draft → sync existing content.
+          // No wooId + not draft → publish for the first time.
+          // No wooId + draft → sync as draft (create on Woo as draft — do NOT force-publish).
+          const mode = isLive
+            ? isDraft
+              ? "unpublish"
+              : "sync"
+            : isDraft
+              ? "sync"
+              : "publish";
 
           return (
             <DialogConfirm
@@ -632,8 +772,8 @@ export default function ProductsPage() {
                     ? "Unpublish"
                     : "Sync now"
               }
+              confirmingIcon={<RefreshCw aria-hidden="true" className="spin" />}
               confirmingLabel="Syncing…"
-              confirmingIcon={<span className="loader" />}
               confirmVariant={mode === "unpublish" ? "danger" : "primary"}
               status={publishStatus}
               successMessage="Synced — reloading catalog…"
@@ -646,37 +786,100 @@ export default function ProductsPage() {
                 <span className="clr-muted"> · {syncRequest.group.sku}</span>
               </p>
               {mode === "publish" && (
-                <>
-                  <p className="small clr-warning">
-                    This product is currently a draft. Publishing will make it
-                    live on the site.
-                  </p>
-                  <p className="small clr-muted">
-                    {syncRequest.group.rowCount === 0 ? (
-                      <>
-                        Initial stock will be set to{" "}
-                        <strong>{syncRequest.group.stockQty ?? 0}</strong> from
-                        the sheet
-                        {(syncRequest.group.stockQty ?? 0) === 0
-                          ? " — it will publish as out of stock"
-                          : ""}
-                        . After this, stock is only updated by the inventory
-                        sync.
-                      </>
-                    ) : (
-                      <>
-                        Each variant's initial stock will be set from its
-                        current sheet value (
-                        {syncRequest.group.rows
-                          .map((r) => `${r.label}: ${r.stockQty ?? 0}`)
-                          .join(", ")}
-                        ). After this, stock is only updated by the inventory
-                        sync.
-                      </>
-                    )}
-                  </p>
-                </>
+                <p className="small clr-warning">
+                  This product is currently a draft. Publishing will make it
+                  live on the site.
+                </p>
               )}
+              {mode !== "unpublish" &&
+                (() => {
+                  const isSimple = syncRequest.group.rowCount === 0;
+                  const hasZeroStock = isSimple
+                    ? (syncRequest.group.stockQty ?? 0) === 0
+                    : syncRequest.group.rows.some(
+                        (r) => (r.stockQty ?? 0) === 0,
+                      );
+                  if (!hasZeroStock) return null;
+                  return isSimple ? (
+                    <div className="form-group">
+                      <label
+                        className="bold small"
+                        htmlFor="stock-patch-simple"
+                      >
+                        Initial stock
+                      </label>
+                      <p className="xsmall clr-warning">
+                        No stock set — will sync as out of stock unless you
+                        enter a quantity below.
+                      </p>
+                      <input
+                        id="stock-patch-simple"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={stockOverrides[syncRequest.group.sku] ?? "0"}
+                        onChange={(e) =>
+                          setStockOverrides((prev) => ({
+                            ...prev,
+                            [syncRequest.group.sku]: e.target.value,
+                          }))
+                        }
+                        onKeyDown={(e) =>
+                          (e.key === "-" || e.key === "e" || e.key === ".") &&
+                          e.preventDefault()
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="form-group">
+                      <p className="bold small">Stock per variant</p>
+                      <p className="xsmall clr-warning">
+                        Some variants have no stock — they'll sync as out of
+                        stock unless you set quantities below.
+                      </p>
+                      <ul
+                        className="grid gap-quarter stock-variant-list"
+                        role="list"
+                      >
+                        {syncRequest.group.rows
+                          .filter((r) => (r.stockQty ?? 0) === 0)
+                          .map((r) => (
+                            <li
+                              key={r.sku}
+                              className="row gap-1 ai-cen padding-b-half border-be  border-soft stock-variant-item"
+                            >
+                              <label
+                                className="flex-1"
+                                htmlFor={`stock-variant-${r.sku}`}
+                              >
+                                {r.label ?? r.sku}
+                              </label>
+                              <input
+                                id={`stock-variant-${r.sku}`}
+                                type="number"
+                                min="0"
+                                step="1"
+                                className="stock-variant-input"
+                                value={stockOverrides[r.sku] ?? "0"}
+                                onChange={(e) =>
+                                  setStockOverrides((prev) => ({
+                                    ...prev,
+                                    [r.sku]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) =>
+                                  (e.key === "-" ||
+                                    e.key === "e" ||
+                                    e.key === ".") &&
+                                  e.preventDefault()
+                                }
+                              />
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
               {mode === "unpublish" && (
                 <p className="small clr-warning">
                   This product is currently live. Taking it offline will hide it
@@ -686,12 +889,39 @@ export default function ProductsPage() {
               {mode === "sync" && (
                 <p className="small clr-muted">
                   Pushes current name, description, price, sale price, category,
-                  and variant details to WooCommerce. Stock is not affected.
+                  and variant details to WooCommerce.
                 </p>
               )}
             </DialogConfirm>
           );
         })()}
+
+      {pendingRelink && (
+        <DialogConfirm
+          title="Relink to existing WooCommerce product?"
+          confirmIcon={<Globe aria-hidden="true" />}
+          confirmLabel="Relink & sync"
+          confirmingLabel="Relinking…"
+          confirmVariant="primary"
+          status={relinkStatus}
+          successMessage="Relinked — reloading catalog…"
+          error={relinkError}
+          onConfirm={() => void handleRelinkConfirm()}
+          onCancel={() => setPendingRelink(null)}
+        >
+          <p className="small">
+            A <strong>{pendingRelink.group.displayName}</strong> product with
+            this SKU already exists in WooCommerce (id{" "}
+            <strong>{pendingRelink.trashedWooId}</strong>) but is trashed or not
+            published.
+          </p>
+          <p className="small clr-muted">
+            Relinking will restore it and overwrite it with the current sheet
+            data. To start completely fresh instead, permanently delete it from
+            WooCommerce Trash first, then sync again.
+          </p>
+        </DialogConfirm>
+      )}
 
       {syncRequest?.type === "all" &&
         catalog &&

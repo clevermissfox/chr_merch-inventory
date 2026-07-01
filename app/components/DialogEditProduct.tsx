@@ -1,6 +1,8 @@
-import { Save, X } from "lucide-react";
+import { Globe, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup } from "~/types/catalog";
+import RichTextEditor from "./RichTextEditor";
+import ImageUploadSection from "./ImageUploadSection";
 
 interface DialogEditProductProps {
   group: CatalogGroup;
@@ -46,6 +48,9 @@ export default function DialogEditProduct({
   const [form, setForm] = useState<FormState>(original.current);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
+  const [imageIsPending, setImageIsPending] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -64,73 +69,90 @@ export default function DialogEditProduct({
     (k) => form[k] !== original.current[k],
   );
 
+  const validate = (): string | null => {
+    const orig = original.current;
+    if (form.displayName !== orig.displayName && orig.displayName && !form.displayName.trim())
+      return "Display name cannot be cleared once set";
+    if (form.basePriceDollars !== orig.basePriceDollars && !form.basePriceDollars.trim())
+      return "Base price cannot be cleared";
+    if (form.weightOz !== orig.weightOz && !form.weightOz.trim())
+      return "Weight cannot be cleared";
+    return null;
+  };
+
+  const buildPayload = () => {
+    const orig = original.current;
+    const payload: Record<string, string> = {};
+    if (form.displayName !== orig.displayName) payload.displayName = form.displayName.trim();
+    if (form.basePriceDollars !== orig.basePriceDollars) payload.basePriceDollars = form.basePriceDollars.trim();
+    if (form.salePriceDollars !== orig.salePriceDollars) payload.salePriceDollars = form.salePriceDollars.trim();
+    if (form.publishedStatus !== orig.publishedStatus) payload.publishedStatus = form.publishedStatus;
+    if (form.weightOz !== orig.weightOz) payload.weightOz = form.weightOz.trim();
+    if (form.primaryDescription !== orig.primaryDescription) payload.primaryDescription = form.primaryDescription.trim();
+    if (form.shortDescription !== orig.shortDescription) payload.shortDescription = form.shortDescription.trim();
+    if (form.dimensionsWidth !== orig.dimensionsWidth) payload.dimensionsWidth = form.dimensionsWidth.trim();
+    if (form.dimensionsHeight !== orig.dimensionsHeight) payload.dimensionsHeight = form.dimensionsHeight.trim();
+    if (form.dimensionsDepth !== orig.dimensionsDepth) payload.dimensionsDepth = form.dimensionsDepth.trim();
+    return payload;
+  };
+
+  const saveToSheet = async (): Promise<void> => {
+    const res = await fetch(`/api/catalog/product/${encodeURIComponent(group.sku)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(buildPayload()),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to update product");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
-
-    const orig = original.current;
-    if (
-      form.displayName !== orig.displayName &&
-      orig.displayName &&
-      !form.displayName.trim()
-    ) {
-      setSubmitError("Display name cannot be cleared once set");
-      return;
-    }
-    if (
-      form.basePriceDollars !== orig.basePriceDollars &&
-      !form.basePriceDollars.trim()
-    ) {
-      setSubmitError("Base price cannot be cleared");
-      return;
-    }
-    if (form.weightOz !== orig.weightOz && !form.weightOz.trim()) {
-      setSubmitError("Weight cannot be cleared");
-      return;
-    }
-
+    const err = validate();
+    if (err) { setSubmitError(err); return; }
     setSubmitting(true);
     setSubmitError(null);
-
     try {
-      const payload: Record<string, string> = {};
-      if (form.displayName !== orig.displayName)
-        payload.displayName = form.displayName.trim();
-      if (form.basePriceDollars !== orig.basePriceDollars)
-        payload.basePriceDollars = form.basePriceDollars.trim();
-      if (form.salePriceDollars !== orig.salePriceDollars)
-        payload.salePriceDollars = form.salePriceDollars.trim();
-      if (form.publishedStatus !== orig.publishedStatus)
-        payload.publishedStatus = form.publishedStatus;
-      if (form.weightOz !== orig.weightOz)
-        payload.weightOz = form.weightOz.trim();
-      if (form.primaryDescription !== orig.primaryDescription)
-        payload.primaryDescription = form.primaryDescription.trim();
-      if (form.shortDescription !== orig.shortDescription)
-        payload.shortDescription = form.shortDescription.trim();
-      if (form.dimensionsWidth !== orig.dimensionsWidth)
-        payload.dimensionsWidth = form.dimensionsWidth.trim();
-      if (form.dimensionsHeight !== orig.dimensionsHeight)
-        payload.dimensionsHeight = form.dimensionsHeight.trim();
-      if (form.dimensionsDepth !== orig.dimensionsDepth)
-        payload.dimensionsDepth = form.dimensionsDepth.trim();
-
-      const res = await fetch(
-        `/api/catalog/product/${encodeURIComponent(group.sku)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify(payload),
-        },
-      );
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update product");
+      await saveToSheet();
       onSaved();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSaveAndSync = async () => {
+    if (!isDirty && !group.wooId) return;
+    const err = isDirty ? validate() : null;
+    if (err) { setSubmitError(err); return; }
+    setSyncing(true);
+    setSubmitError(null);
+    try {
+      if (isDirty) await saveToSheet();
+      const res = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "selected",
+          productIds: [group.productId],
+          publish: group.publishedStatus !== "draft",
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Sync failed");
+      const result: { status: string; error?: string } | undefined = data.results?.[0];
+      if (result?.status === "failed") throw new Error(result.error || "Sync failed");
+      if (result?.status === "sku_collision_trashed")
+        throw new Error(result.error || "A trashed WooCommerce product exists with this SKU");
+      onSaved();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Save & sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -293,32 +315,44 @@ export default function DialogEditProduct({
           </fieldset>
 
           <div className="form-group">
-            <label htmlFor="ep-primary-desc" className="bold">
+            <label className="bold">
               Primary description{" "}
               <span className="clr-muted xsmall">(optional)</span>
             </label>
-            <textarea
-              id="ep-primary-desc"
-              rows={4}
+            <RichTextEditor
               value={form.primaryDescription}
-              onChange={set("primaryDescription")}
+              onChange={(html) =>
+                setForm((prev) => ({ ...prev, primaryDescription: html }))
+              }
               disabled={submitting}
+              placeholder="Full product description…"
+              variant="full"
             />
           </div>
 
           <div className="form-group">
-            <label htmlFor="ep-short-desc" className="bold">
+            <label className="bold">
               Short description{" "}
               <span className="clr-muted xsmall">(optional)</span>
             </label>
-            <textarea
-              id="ep-short-desc"
-              rows={2}
+            <RichTextEditor
               value={form.shortDescription}
-              onChange={set("shortDescription")}
+              onChange={(html) =>
+                setForm((prev) => ({ ...prev, shortDescription: html }))
+              }
+              onOverLimit={setShortDescOverLimit}
               disabled={submitting}
+              placeholder="One or two sentences shown in the shop listing…"
+              variant="simple"
             />
           </div>
+
+          <ImageUploadSection
+            sku={group.sku}
+            productName={group.displayName}
+            disabled={submitting}
+            onPendingChange={setImageIsPending}
+          />
 
           {submitError && (
             <p role="alert" className="status-line" data-tone="error">
@@ -330,24 +364,39 @@ export default function DialogEditProduct({
             <button
               type="submit"
               className="btn-primary row gap-half jc-cen ai-cen flex-1"
-              disabled={!isDirty || submitting}
+              disabled={!isDirty || submitting || syncing || shortDescOverLimit || imageIsPending}
             >
               {submitting ? (
-                <>
-                  <span className="render-loader">Saving…</span>
-                </>
+                <span className="render-loader">Saving…</span>
               ) : (
                 <>
                   <Save aria-hidden="true" />
-                  <span>Save changes</span>
+                  <span>Save</span>
                 </>
               )}
             </button>
+            {group.wooId && (
+              <button
+                type="button"
+                className="btn-secondary row gap-half jc-cen ai-cen flex-1"
+                onClick={handleSaveAndSync}
+                disabled={!isDirty || submitting || syncing || shortDescOverLimit || imageIsPending}
+              >
+                {syncing ? (
+                  <span className="render-loader">Syncing…</span>
+                ) : (
+                  <>
+                    <Globe aria-hidden="true" />
+                    <span>Save &amp; Sync</span>
+                  </>
+                )}
+              </button>
+            )}
             <button
               type="button"
               className="btn-secondary flex-1"
               onClick={onClose}
-              disabled={submitting}
+              disabled={submitting || syncing}
             >
               Cancel
             </button>
