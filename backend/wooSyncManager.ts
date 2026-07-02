@@ -4,8 +4,8 @@ import type { InventoryIndexUpdate } from "~/types/inventory";
 import {
   getWooConfig,
   buildWooUrl,
-  loadInventoryIndexState,
-  writeInventoryIndexUpdates,
+  buildCatalogNameBySku,
+  upsertInventoryIndexFields,
 } from "./inventoryManager";
 import type { WooConfig } from "./inventoryManager";
 import { colByHeader, colLetter, computeProductSyncHash } from "./catalogManager";
@@ -116,16 +116,108 @@ export function variationSignature(attrs: WooVariantAttr[]): string {
     .join("|");
 }
 
-function buildVariantAttrs(row: CatalogRow, isSticker: boolean): WooVariantAttr[] {
+// Explicit stand-in for "this variant has no value for an attribute that a
+// sibling variant does use." Woo has no built-in "doesn't apply" concept —
+// omitting the attribute from a variation means "matches Any value," which
+// lets that variant silently absorb selections meant for a sibling (e.g.
+// picking a Design that's only real for one color would still match a color
+// that has no design at all, since it'd match "Any Design"). An explicit
+// value makes it a real, exclusive option so Woo's own cross-filtering
+// correctly rules this variant out when a customer picks a different value.
+const NO_ATTRIBUTE_VALUE = "—";
+
+type VariantAttrName = "Color" | "Size" | "Design";
+
+interface GroupAttrPlan {
+  // Used by some but not all variants — needs the NO_ATTRIBUTE_VALUE
+  // placeholder on rows that don't have it (see NO_ATTRIBUTE_VALUE above).
+  partialAttrNames: Set<VariantAttrName>;
+  // Used by every variant with the exact same value everywhere — not a real
+  // choice, so it's sent as a non-variation (non-selectable) spec on the
+  // parent and omitted from every variation's own attributes entirely
+  // (Woo variations can't declare a value for a non-variation attribute).
+  nonVariationAttrNames: Set<VariantAttrName>;
+  // Raw distinct values actually present per attribute, before any
+  // placeholder injection — the true set customers should see as options
+  // (with NO_ATTRIBUTE_VALUE appended separately for partial attributes).
+  rawValues: Record<VariantAttrName, Set<string>>;
+}
+
+// Single pass over a product's variant rows to classify each of
+// Color/Size/Design as: unused (excluded entirely), partial (needs a
+// placeholder), uniform (collapses to a non-selector spec), or a normal
+// multi-value variation attribute (no special handling needed).
+function computeGroupAttrPlan(
+  rows: CatalogRow[],
+  isSticker: boolean,
+): GroupAttrPlan {
+  const presence: Record<VariantAttrName, number> = { Color: 0, Size: 0, Design: 0 };
+  const rawValues: Record<VariantAttrName, Set<string>> = {
+    Color: new Set(),
+    Size: new Set(),
+    Design: new Set(),
+  };
+  for (const row of rows) {
+    for (const a of buildVariantAttrs(row, isSticker)) {
+      const name = a.name as VariantAttrName;
+      presence[name] += 1;
+      rawValues[name].add(a.option);
+    }
+  }
+
+  const partialAttrNames = new Set<VariantAttrName>();
+  const nonVariationAttrNames = new Set<VariantAttrName>();
+  (Object.keys(presence) as VariantAttrName[]).forEach((name) => {
+    if (presence[name] === 0) return;
+    if (presence[name] < rows.length) {
+      partialAttrNames.add(name);
+    } else if (rows.length > 1 && rawValues[name].size === 1) {
+      // Only collapse when there's more than one variant to compare — with
+      // a single variant, "every row shares this value" is trivially true
+      // and would incorrectly strip variation:true from every attribute,
+      // leaving Woo with no way to generate the actual Variation object
+      // (breaks Add to Cart entirely, not just the pointless dropdown UX
+      // this collapse is meant to avoid).
+      nonVariationAttrNames.add(name);
+    }
+  });
+
+  return { partialAttrNames, nonVariationAttrNames, rawValues };
+}
+
+function buildVariantAttrs(
+  row: CatalogRow,
+  isSticker: boolean,
+  plan: GroupAttrPlan = {
+    partialAttrNames: new Set(),
+    nonVariationAttrNames: new Set(),
+    rawValues: { Color: new Set(), Size: new Set(), Design: new Set() },
+  },
+): WooVariantAttr[] {
   const attrs: WooVariantAttr[] = [];
-  if (!isSticker && row.color) attrs.push({ name: "Color", option: row.color });
-  if (!isSticker && row.size && row.size !== "no size")
-    attrs.push({ name: "Size", option: row.size });
+  const { partialAttrNames, nonVariationAttrNames } = plan;
+  if (!isSticker) {
+    if (row.color && !nonVariationAttrNames.has("Color"))
+      attrs.push({ name: "Color", option: row.color });
+    else if (!row.color && partialAttrNames.has("Color"))
+      attrs.push({ name: "Color", option: NO_ATTRIBUTE_VALUE });
+
+    if (row.size && row.size !== "no size" && !nonVariationAttrNames.has("Size"))
+      attrs.push({ name: "Size", option: row.size });
+    else if (
+      (!row.size || row.size === "no size") &&
+      partialAttrNames.has("Size")
+    )
+      attrs.push({ name: "Size", option: NO_ATTRIBUTE_VALUE });
+  }
   const designLabel =
     row.design && row.designVariant
       ? `${row.design} – ${row.designVariant}`
       : row.design || row.designVariant || "";
-  if (designLabel) attrs.push({ name: "Design", option: designLabel });
+  if (designLabel && !nonVariationAttrNames.has("Design"))
+    attrs.push({ name: "Design", option: designLabel });
+  else if (!designLabel && partialAttrNames.has("Design"))
+    attrs.push({ name: "Design", option: NO_ATTRIBUTE_VALUE });
   return attrs;
 }
 
@@ -147,10 +239,11 @@ export function assertNoVariationAttributeCollisions(
   for (const group of groups) {
     if (!group.rows.length) continue;
     const isSticker = group.subcategoryCode === STICKER_SUBCAT_CODE;
+    const attrPlan = computeGroupAttrPlan(group.rows, isSticker);
     const seen = new Map<string, string[]>();
 
     for (const row of group.rows) {
-      const sig = variationSignature(buildVariantAttrs(row, isSticker));
+      const sig = variationSignature(buildVariantAttrs(row, isSticker, attrPlan));
       const list = seen.get(sig) ?? [];
       list.push(row.sku);
       seen.set(sig, list);
@@ -185,7 +278,12 @@ export function assertNoVariationAttributeCollisions(
 
 interface WooParentAttribute {
   name: string;
-  variation: true;
+  variation: boolean;
+  // Woo defaults this to false when omitted, hiding the attribute from the
+  // product page entirely (not just from the variation selector) — always
+  // send true so a collapsed (variation: false) attribute still shows as an
+  // info/spec line instead of disappearing outright.
+  visible: true;
   options: string[];
 }
 
@@ -199,6 +297,7 @@ export interface WooParentPayload {
   short_description: string;
   categories: Array<{ id: number }>;
   attributes: WooParentAttribute[];
+  default_attributes?: WooVariantAttr[];
   weight: string;
   dimensions: { length: string; width: string; height: string };
   regular_price?: string;
@@ -237,25 +336,25 @@ export function buildWooParentPayload(
   const status: "draft" | "publish" =
     group.publishedStatus === "draft" ? "draft" : "publish";
 
-  const attrValues: Record<"Color" | "Size" | "Design", Set<string>> = {
-    Color: new Set(),
-    Size: new Set(),
-    Design: new Set(),
-  };
-  for (const row of group.rows) {
-    for (const a of buildVariantAttrs(row, isSticker)) {
-      attrValues[a.name as "Color" | "Size" | "Design"]?.add(a.option);
-    }
-  }
+  const attrPlan = computeGroupAttrPlan(group.rows, isSticker);
   const attrOrder = (isSticker ? ["Design"] : ["Color", "Size", "Design"]) as Array<
     "Color" | "Size" | "Design"
   >;
+  // An attribute every variant shares the identical value for isn't a real
+  // choice — expose it as a plain (non-variation) spec instead of a
+  // pointless single-option dropdown customers have to click through. A
+  // partial attribute's option list needs NO_ATTRIBUTE_VALUE added so the
+  // rows that don't use it (see buildVariantAttrs) have a real, selectable
+  // option to point at.
   const attributes: WooParentAttribute[] = attrOrder
-    .filter((name) => attrValues[name].size > 0)
+    .filter((name) => attrPlan.rawValues[name].size > 0)
     .map((name) => ({
       name,
-      variation: true as const,
-      options: Array.from(attrValues[name]),
+      variation: !attrPlan.nonVariationAttrNames.has(name),
+      visible: true,
+      options: attrPlan.partialAttrNames.has(name)
+        ? [...attrPlan.rawValues[name], NO_ATTRIBUTE_VALUE]
+        : Array.from(attrPlan.rawValues[name]),
     }));
 
   const payload: WooParentPayload = {
@@ -274,6 +373,16 @@ export function buildWooParentPayload(
     short_description: group.shortDescription || "",
     categories,
     attributes,
+    // With exactly one variant, its attribute values are the only legitimate
+    // choice — but attributes still have to stay variation:true (see above)
+    // or Woo can't generate the Variation object at all. Without a default,
+    // the storefront shows "Choose an option" placeholders the customer has
+    // to click through despite there being nothing to actually choose.
+    // default_attributes is Woo's native pre-selection mechanism for this —
+    // it pre-fills the dropdowns to the matching variation on page load.
+    ...(group.rows.length === 1
+      ? { default_attributes: buildVariantAttrs(group.rows[0], isSticker, attrPlan) }
+      : {}),
     weight: normalizeWeightOzToLbs(group.weightOz),
     dimensions: {
       length: normalizeDimCell(group.dimensionsDepth),
@@ -314,12 +423,13 @@ export function buildWooVariationPayload(
   forceStock = false,
 ): WooVariationPayload {
   const isSticker = group.subcategoryCode === STICKER_SUBCAT_CODE;
+  const attrPlan = computeGroupAttrPlan(group.rows, isSticker);
 
   const payload: WooVariationPayload = {
     sku: row.sku,
     regular_price: normalizePriceCell(row.priceVariant || group.basePriceDollars),
     description: row.descriptionVariant || "",
-    attributes: buildVariantAttrs(row, isSticker),
+    attributes: buildVariantAttrs(row, isSticker, attrPlan),
     weight: normalizeWeightOzToLbs(row.weightOzVariant || group.weightOz),
     dimensions: {
       length: normalizeDimCell(group.dimensionsDepth),
@@ -410,6 +520,21 @@ async function findWooProductIdBySku(
   if (!res.ok) return null;
   const list = (await res.json()) as Array<{ id: number }>;
   return list[0]?.id ?? null;
+}
+
+// Confirms a Woo ID is actually a *product*, not a variation or garbage,
+// before it gets written into products.woo_id — the only column read to
+// decide which Woo object a product-level sync/delete targets. GET
+// /products/{id} only ever resolves post_type=product; a variation ID
+// (a different post, sharing the same numeric ID namespace) 404s here even
+// though it's a perfectly valid ID for other WooCommerce endpoints.
+export async function verifyWooProductId(wooId: number): Promise<boolean> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}`);
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) return false;
+  const product = (await res.json()) as { id?: number; type?: string };
+  return product.id === wooId;
 }
 
 // Default product list/lookup excludes trashed items — Woo still reserves
@@ -586,6 +711,28 @@ export async function syncProductGroupToWoo(
       const returnedId = vCreated.id ?? existingId;
       if (returnedId && String(row.wooVariantId ?? "") !== String(returnedId)) {
         variantWooIds.push({ sku: row.sku, wooVariantId: returnedId });
+      }
+    }
+
+    // default_attributes was already included on the parent payload above,
+    // but that request happens BEFORE the variation itself is guaranteed to
+    // exist (first-ever sync creates it in the loop above) — Woo doesn't
+    // reliably honor a default pointing at a variation combination that
+    // doesn't exist yet at save time. Re-send it now that the variation is
+    // confirmed created/updated.
+    if (parentPayload.default_attributes) {
+      const defaultRes = await fetch(buildWooUrl(woo, `products/${wooId}`), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          default_attributes: parentPayload.default_attributes,
+        }),
+      });
+      if (!defaultRes.ok) {
+        console.error(
+          `Failed to set default_attributes for ${group.sku}:`,
+          await defaultRes.text(),
+        );
       }
     }
   }
@@ -797,12 +944,16 @@ export async function syncCatalogGroupsToWoo(
     .filter((g) => g.rows.length > 0 && syncedSkus.has(g.sku))
     .map((g) => g.sku);
   if (parentSkusToClear.length) {
-    const invState = await loadInventoryIndexState(sheets, spreadsheetId);
     const clearUpdates: InventoryIndexUpdate[] = parentSkusToClear.map((sku) => ({
       sku,
-      fields: { stock_qty: "" },
+      fields: { stock_qty: "", woo_stock: "" },
     }));
-    await writeInventoryIndexUpdates(sheets, spreadsheetId, invState, clearUpdates);
+    await upsertInventoryIndexFields(
+      sheets,
+      spreadsheetId,
+      clearUpdates,
+      buildCatalogNameBySku(groups),
+    );
   }
 
   return {

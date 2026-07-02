@@ -1,6 +1,7 @@
-import { CircleQuestionMark, Save, X } from "lucide-react";
+import { CircleQuestionMark, Globe, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
+import { isSalePriceValid } from "~/utils/priceUtils";
 import ImageUploadSection from "./ImageUploadSection";
 import RichTextEditor from "./RichTextEditor";
 
@@ -37,6 +38,7 @@ export default function DialogEditVariant({
   const original = useRef<FormState>(initForm(row));
   const [form, setForm] = useState<FormState>(original.current);
   const [submitting, setSubmitting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showPriceHelp, setShowPriceHelp] = useState(false);
   const [showWeightHelp, setShowWeightHelp] = useState(false);
@@ -56,11 +58,26 @@ export default function DialogEditVariant({
     (k) => form[k] !== original.current[k],
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isDirty) return;
+  const basePriceDollars = (group.basePriceDollars ?? "").replace(
+    /[^0-9.]/g,
+    "",
+  );
+  // Variant price override wins over the parent base price when set —
+  // mirrors buildWooVariationPayload's own regular_price resolution.
+  const effectiveRegularPrice = form.priceVariant || basePriceDollars;
+  const salePriceValid = isSalePriceValid(
+    effectiveRegularPrice,
+    form.salePriceVariant,
+  );
 
-    setSubmitting(true);
+  // Shared by "Save" and "Save & Sync". Returns true on a successful sheet
+  // write; false means it already set submitError/blocked, so callers just
+  // bail out.
+  const saveToSheet = async (): Promise<boolean> => {
+    if (!salePriceValid) {
+      setSubmitError("Sale price must be less than the regular price.");
+      return false;
+    }
     setSubmitError(null);
 
     try {
@@ -86,24 +103,63 @@ export default function DialogEditVariant({
       );
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to update variant");
-      await onSaved();
+      return true;
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Save failed");
-      setSubmitting(false);
+      return false;
     }
   };
 
-  const basePriceDollars = (group.basePriceDollars ?? "").replace(
-    /[^0-9.]/g,
-    "",
-  );
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isDirty) return;
+    setSubmitting(true);
+    const ok = await saveToSheet();
+    setSubmitting(false);
+    if (ok) await onSaved();
+  };
+
+  const handleSaveAndSync = async () => {
+    if (!isDirty) return;
+    setSubmitting(true);
+    const ok = await saveToSheet();
+    setSubmitting(false);
+    if (!ok) return;
+
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "selected",
+          productIds: [group.productId],
+          publish: group.publishedStatus !== "draft",
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Sync failed");
+      const result: { status: string; error?: string } | undefined =
+        data.results?.[0];
+      if (result?.status === "failed")
+        throw new Error(result.error || "Sync failed");
+      setSyncing(false);
+      await onSaved();
+    } catch (err) {
+      // Sheet write already succeeded — leave the dialog open showing the
+      // sync error instead of closing it, same as DialogEditProduct and
+      // DialogCreateVariant's Save & Sync. Sync can be retried from the
+      // Products page.
+      setSyncing(false);
+      setSubmitError(
+        `Saved, but sync failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    }
+  };
 
   return (
-    <dialog
-      ref={ref}
-      className="dialog dialog-edit-variant card"
-      onCancel={onClose}
-    >
+    <dialog ref={ref} className="dialog-edit-variant card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner">
         <div className="row jc-sb ai-cen">
           <hgroup>
@@ -200,6 +256,12 @@ export default function DialogEditVariant({
                   to inherit.
                 </p>
               )}
+              {!salePriceValid && (
+                <p role="alert" className="xsmall clr-danger">
+                  Sale price must be less than the regular price ($
+                  {effectiveRegularPrice}).
+                </p>
+              )}
             </div>
             <div className="form-group flex-1">
               <div className="row ai-cen gap-half">
@@ -282,7 +344,13 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={!isDirty || submitting || descOverLimit || imageIsPending}
+              disabled={
+                !isDirty ||
+                submitting ||
+                syncing ||
+                descOverLimit ||
+                imageIsPending
+              }
             >
               {submitting ? (
                 <>
@@ -295,11 +363,34 @@ export default function DialogEditVariant({
                 </>
               )}
             </button>
+            {group.wooId && (
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => void handleSaveAndSync()}
+                disabled={
+                  !isDirty ||
+                  submitting ||
+                  syncing ||
+                  descOverLimit ||
+                  imageIsPending
+                }
+              >
+                {syncing ? (
+                  <span className="render-loader">Syncing…</span>
+                ) : (
+                  <>
+                    <Globe aria-hidden="true" />
+                    <span>Save &amp; Sync</span>
+                  </>
+                )}
+              </button>
+            )}
             <button
               type="button"
               className="btn-secondary"
               onClick={onClose}
-              disabled={submitting}
+              disabled={submitting || syncing}
             >
               Cancel
             </button>

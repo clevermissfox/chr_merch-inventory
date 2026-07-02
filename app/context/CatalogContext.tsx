@@ -221,7 +221,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   /**
    * Sends the current catalog snapshot to the backend stock sync route.
    * Includes current dirty rows so the backend can support delta-style syncs if needed.
-   * Reloads the catalog after a successful sync so the UI reflects confirmed Woo values.
+   * Uses the confirmed catalog the sync response itself returns to update state,
+   * instead of issuing a separate follow-up GET — a fresh read immediately
+   * after a write isn't guaranteed to see it, so trust this request's own
+   * confirmed result rather than re-reading a second time.
    */
   const syncCatalogStock = useCallback(
     async (
@@ -237,12 +240,16 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SAVE_START" });
 
       try {
-        await postCatalogStockSync({
+        const data = await postCatalogStockSync({
           catalog: state.catalog,
           dirtyBySku: state.dirtyBySku,
           mode,
         });
-        await loadCatalog({ withStock: true });
+        if (data?.catalog) {
+          dispatch({ type: "LOAD_SUCCESS", payload: data.catalog });
+        } else {
+          await loadCatalog({ withStock: true });
+        }
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to sync stock";
@@ -305,7 +312,11 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           mode: "standard_sync",
         });
 
-        await loadCatalog({ withStock: true });
+        if (data?.catalog) {
+          dispatch({ type: "LOAD_SUCCESS", payload: data.catalog });
+        } else {
+          await loadCatalog({ withStock: true });
+        }
 
         const updatedSkus: unknown[] = Array.isArray(data?.updatedSkus)
           ? data.updatedSkus

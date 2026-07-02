@@ -6,6 +6,7 @@ import path from "path";
 import session from "express-session";
 import cors from "cors";
 import type {
+  CatalogGroup,
   CatalogPayload,
   ProductSheetRow,
   VariantSheetRow,
@@ -58,7 +59,7 @@ import {
   loadInventoryIndexState,
   refreshWooStockForCatalog,
   syncStockSyncPlanToWoo,
-  writeInventoryIndexUpdates,
+  upsertInventoryIndexFields,
 } from "./inventoryManager";
 
 dotenv.config({ path: "./backend/.env" });
@@ -352,6 +353,75 @@ app.get("/api/auth/status", (req: Request, res: Response) => {
 });
 
 // Lightweight catalog load — sheets only, no Woo calls
+// products_values/variants_values derive stock_qty via a formula reading
+// inventory_index — Sheets doesn't guarantee that formula has recalculated
+// by the time a request reads it, especially moments after another request
+// just wrote a new value there (the read-after-write race isn't even limited
+// to formula recalculation — a fresh read immediately following a separate
+// request's write isn't guaranteed visible at all). Patches every row's
+// stockQty from a direct inventory_index read instead of trusting any
+// formula-derived or previously-cached value, and recomputes contentUnsynced
+// from that, so the result can't disagree with what's actually on the sheet.
+async function patchGroupsWithConfirmedStock(
+  sheets: any,
+  spreadsheetId: string,
+  groups: CatalogGroup[],
+): Promise<CatalogGroup[]> {
+  const invIndexState = await loadInventoryIndexState(sheets, spreadsheetId);
+  const stockQtyCol = invIndexState.headerIndex["stock_qty"];
+  const confirmedStockBySku = new Map<string, number | null>();
+  if (stockQtyCol != null) {
+    for (let i = 1; i < invIndexState.rawValues.length; i++) {
+      const row = invIndexState.rawValues[i];
+      const sku = String(row[invIndexState.headerIndex.sku] ?? "").trim();
+      if (!sku) continue;
+      const raw = row[stockQtyCol];
+      const qty = raw === "" || raw == null ? null : Number(raw);
+      confirmedStockBySku.set(sku, Number.isNaN(qty as number) ? null : qty);
+    }
+  }
+
+  return groups.map((group) => {
+    const patchedGroup = confirmedStockBySku.has(group.sku)
+      ? { ...group, stockQty: confirmedStockBySku.get(group.sku) ?? null }
+      : group;
+    const patchedRows = patchedGroup.rows.map((row) =>
+      confirmedStockBySku.has(row.sku)
+        ? { ...row, stockQty: confirmedStockBySku.get(row.sku) ?? null }
+        : row,
+    );
+    return { ...patchedGroup, rows: patchedRows };
+  });
+}
+
+// Pure (no I/O) — recomputes each group's contentUnsynced flag from its
+// current in-memory state. Callers that just wrote a new last_hash should
+// patch group.lastHash in memory first (no need to re-read it back).
+function computeContentUnsyncedFlags(groups: CatalogGroup[]): {
+  groups: CatalogGroup[];
+  contentUnsyncedCount: number;
+} {
+  let contentUnsyncedCount = 0;
+  for (const group of groups) {
+    const unsynced =
+      !!group.wooId &&
+      !!group.lastHash &&
+      computeProductSyncHash(group) !== group.lastHash;
+    group.contentUnsynced = unsynced;
+    if (unsynced) contentUnsyncedCount++;
+  }
+  return { groups, contentUnsyncedCount };
+}
+
+async function reconcileGroupsWithInventoryIndex(
+  sheets: any,
+  spreadsheetId: string,
+  groups: CatalogGroup[],
+): Promise<{ groups: CatalogGroup[]; contentUnsyncedCount: number }> {
+  const patched = await patchGroupsWithConfirmedStock(sheets, spreadsheetId, groups);
+  return computeContentUnsyncedFlags(patched);
+}
+
 app.get("/api/catalog", async (req: Request, res: Response) => {
   try {
     const { sheets, spreadsheetId } = getSheets();
@@ -369,9 +439,29 @@ app.get("/api/catalog", async (req: Request, res: Response) => {
       valueRanges[1]?.values ?? [],
     );
 
+    const wooSiteUrl =
+      TARGET_ENV === "production"
+        ? process.env.WOO_PRODUCTION_URL
+        : process.env.WOO_STAGING_URL;
+
+    const shaped = shapeToCatalogPayload(productRows, variantRows);
+    const { groups: confirmedGroups, contentUnsyncedCount } =
+      await reconcileGroupsWithInventoryIndex(
+        sheets,
+        spreadsheetId,
+        shaped.groups,
+      );
+
     const payload: CatalogPayload = {
-      ...shapeToCatalogPayload(productRows, variantRows),
+      ...shaped,
       generatedAt: new Date().toISOString(),
+      groups: confirmedGroups,
+      summary: {
+        ...shaped.summary,
+        contentUnsyncedCount,
+        wooSiteUrl: wooSiteUrl ?? undefined,
+        devEmail: process.env.DEV_EMAIL ?? undefined,
+      },
     };
 
     return res.json(payload);
@@ -425,15 +515,42 @@ app.get(
         (e) => tryLogError(req, "get_stock_description_audit", e),
       );
       await loadInventoryIndexState(sheets, spreadsheetId)
-        .then((invAuditState) =>
-          ensureInventoryIndexRowsExist(
+        .then(async (invAuditState) => {
+          const catalogNameBySku = buildCatalogNameBySku(payload.groups);
+          const ensuredState = await ensureInventoryIndexRowsExist(
             sheets,
             spreadsheetId,
             invAuditState,
             allCatalogSkus.map((sku) => ({ sku, fields: {} })),
-            buildCatalogNameBySku(payload.groups),
-          ),
-        )
+            catalogNameBySku,
+          );
+
+          // Repair pass: ensureInventoryIndexRowsExist only names rows it
+          // creates — it never touches rows that already existed with a
+          // blank product_name (e.g. from before this self-heal name
+          // plumbing existed, or a row created by another path that didn't
+          // pass a real name). Backfill those now that we know real names.
+          const nameCol = ensuredState.headerIndex["product_name"];
+          if (nameCol != null) {
+            const blankNameUpdates = allCatalogSkus.flatMap((sku) => {
+              const rowNumber = ensuredState.skuToRowNumber.get(sku);
+              if (rowNumber == null) return [];
+              const row = ensuredState.rawValues[rowNumber - 1];
+              const currentName = String(row?.[nameCol] ?? "").trim();
+              const knownName = catalogNameBySku.get(sku);
+              if (currentName || !knownName) return [];
+              return [{ sku, fields: { product_name: knownName } }];
+            });
+            if (blankNameUpdates.length) {
+              await upsertInventoryIndexFields(
+                sheets,
+                spreadsheetId,
+                blankNameUpdates,
+                catalogNameBySku,
+              );
+            }
+          }
+        })
         .catch((e) => tryLogError(req, "get_stock_inventory_index_audit", e));
 
       const refreshResult = await refreshWooStockForCatalog(
@@ -447,13 +564,16 @@ app.get(
         refreshResult.wooQtyBySku,
       );
 
-      // For simple products, the products sheet may not populate stock_qty via
-      // ARRAYFORMULA (it's keyed to variants). Merge from inventory_index directly.
-      const updatedGroups = wooPatched.map((group) => {
-        if (group.rowCount > 0 || group.stockQty != null) return group;
-        const qty = refreshResult.warehouseStockBySku.get(group.sku);
-        return qty !== undefined ? { ...group, stockQty: qty } : group;
-      });
+      // contentUnsynced was computed inside shapeToCatalogPayload's initial
+      // call above, using that request's very first (possibly-stale) sheet
+      // read — reconcile against inventory_index directly so it can't
+      // disagree with what's actually on screen.
+      const { groups: updatedGroups, contentUnsyncedCount } =
+        await reconcileGroupsWithInventoryIndex(
+          sheets,
+          spreadsheetId,
+          wooPatched,
+        );
 
       const wooSiteUrl =
         TARGET_ENV === "production"
@@ -466,6 +586,7 @@ app.get(
         groups: updatedGroups,
         summary: {
           ...payload.summary,
+          contentUnsyncedCount,
           conflictGroups: buildConflictGroups(updatedGroups),
           wooSiteUrl: wooSiteUrl ?? undefined,
           devEmail: process.env.DEV_EMAIL ?? undefined,
@@ -560,12 +681,37 @@ app.post(
         },
       );
 
-      // last_hash is content-only (no stock_quantity in it — see
-      // computeProductSyncHash), but last_synced_at should reflect *any*
-      // successful Woo write, stock included. Re-writing an unchanged hash
-      // here is harmless and keeps the timestamp honest.
+      // computeProductSyncHash includes stock_qty, so it must be recomputed
+      // from the post-sync catalog state (inventory_index already updated
+      // above) or contentUnsynced will falsely trip on next load. Reshape
+      // fresh from the sheet rather than reuse the client-submitted
+      // `catalog.groups` (a snapshot from whenever the frontend last
+      // loaded), and patch stock from a direct inventory_index read rather
+      // than the formula-derived stock_qty column, which isn't guaranteed
+      // to have recalculated yet.
+      const freshResponse = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: ["products_values", "variants_values"],
+      });
+      const freshValueRanges = freshResponse.data.valueRanges ?? [];
+      const freshProductRows = rowsToObjects<ProductSheetRow>(
+        freshValueRanges[0]?.values ?? [],
+      );
+      const freshVariantRows = rowsToObjects<VariantSheetRow>(
+        freshValueRanges[1]?.values ?? [],
+      );
+      const { groups: freshGroups, summary: freshSummary } = shapeToCatalogPayload(
+        freshProductRows,
+        freshVariantRows,
+      );
+      const stockPatchedGroups = await patchGroupsWithConfirmedStock(
+        sheets,
+        spreadsheetId,
+        freshGroups,
+      );
+
       const pushedSkuSet = new Set(wooResult.updatedSkus);
-      const hashEntries = catalog.groups
+      const hashEntries = stockPatchedGroups
         .filter(
           (g) =>
             (g.sku && pushedSkuSet.has(g.sku)) ||
@@ -576,19 +722,34 @@ app.post(
       const actor = req.session?.user;
 
       if (hashEntries.length) {
-        writeProductSyncHashes(sheets, spreadsheetId, hashEntries).catch(
-          (e) => {
-            console.error("hash write failed:", e);
-            writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
-              new Date().toISOString(),
-              actor?.email ?? "",
-              "inventory_sync_hash_write_failed",
-              `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
-              TARGET_ENV,
-            ]).catch(() => {});
-          },
-        );
+        // Must be awaited, not fire-and-forget — the frontend uses this
+        // request's own response as the confirmed catalog state (see below),
+        // so the hash has to actually be on the sheet before we read
+        // last_hash back into that response.
+        try {
+          await writeProductSyncHashes(sheets, spreadsheetId, hashEntries);
+        } catch (e: any) {
+          console.error("hash write failed:", e);
+          writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+            new Date().toISOString(),
+            actor?.email ?? "",
+            "inventory_sync_hash_write_failed",
+            `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
+            TARGET_ENV,
+          ]).catch(() => {});
+        }
       }
+
+      // Patch the just-written hash into the in-memory groups directly
+      // rather than reading last_hash back from the sheet — same principle
+      // as the stock patch above, applied to the value we just confirmed.
+      const hashBySku = new Map(hashEntries.map((h) => [h.sku, h.hash]));
+      for (const group of stockPatchedGroups) {
+        const newHash = hashBySku.get(group.sku);
+        if (newHash) group.lastHash = newHash;
+      }
+      const { groups: confirmedGroups, contentUnsyncedCount } =
+        computeContentUnsyncedFlags(stockPatchedGroups);
 
       const skuQtyLog = wooResult.updatedSkus
         .map((sku) => {
@@ -606,6 +767,27 @@ app.post(
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
+      const wooSiteUrl =
+        TARGET_ENV === "production"
+          ? process.env.WOO_PRODUCTION_URL
+          : process.env.WOO_STAGING_URL;
+
+      // Return the fully-confirmed catalog directly in this response — the
+      // frontend uses it to update state instead of issuing a separate
+      // follow-up GET, which would otherwise race this same read-after-write
+      // problem all over again from a different request.
+      const confirmedCatalog: CatalogPayload = {
+        generatedAt: new Date().toISOString(),
+        ok: true,
+        groups: confirmedGroups,
+        summary: {
+          ...freshSummary,
+          contentUnsyncedCount,
+          wooSiteUrl: wooSiteUrl ?? undefined,
+          devEmail: process.env.DEV_EMAIL ?? undefined,
+        },
+      };
+
       return res.status(200).json({
         ok: true,
         updatedProducts: wooResult.updatedProducts,
@@ -614,6 +796,7 @@ app.post(
         inventoryIndexUpdated: refreshResult.updated,
         simpleCount: refreshResult.simpleCount,
         variationCount: refreshResult.variationCount,
+        catalog: confirmedCatalog,
       });
     } catch (error: any) {
       console.error("POST /api/catalog/inventory/sync_stock failed:", error);
@@ -947,7 +1130,7 @@ app.delete(
         new Date().toISOString(),
         actor.email,
         "delete_product",
-        `sku=${sku} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
+        `sku=${sku} wooId=${result.wooId ?? "none"} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1110,7 +1293,7 @@ app.delete(
         new Date().toISOString(),
         actor.email,
         "delete_variant",
-        `sku=${sku} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
+        `sku=${sku} wooVariantId=${result.wooVariantId ?? "none"} parentWooId=${result.parentWooId ?? "none"} wasLastVariant=${result.wasLastVariant} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1212,20 +1395,26 @@ app.post(
           return { ...group, rows: patchedRows };
         });
 
-        // Persist to inventory_index (best-effort)
-        loadInventoryIndexState(sheets, spreadsheetId)
-          .then((invState) =>
-            writeInventoryIndexUpdates(
-              sheets,
-              spreadsheetId,
-              invState,
-              Object.entries(stockOverrides).map(([sku, qty]) => ({
-                sku,
-                fields: { stock_qty: qty },
-              })),
-            ),
-          )
-          .catch((e) => console.error("stock override write failed:", e));
+        // Persist to inventory_index before the Woo sync runs — awaited so
+        // it's confirmed written before the response returns (the frontend
+        // reloads the catalog immediately after), and sequenced ahead of
+        // syncCatalogGroupsToWoo's own inventory_index write (parent stock
+        // clearing) to avoid two concurrent writers racing on the same sheet.
+        // upsertInventoryIndexFields self-heals missing rows, so a variant
+        // created since the last self-heal pass still gets its override.
+        try {
+          const overrideUpdates = Object.entries(stockOverrides).map(
+            ([sku, qty]) => ({ sku, fields: { stock_qty: qty } }),
+          );
+          await upsertInventoryIndexFields(
+            sheets,
+            spreadsheetId,
+            overrideUpdates,
+            buildCatalogNameBySku(targetGroups),
+          );
+        } catch (e) {
+          console.error("stock override write failed:", e);
+        }
       }
 
       const forceStockSkus = stockOverrides
@@ -1239,6 +1428,29 @@ app.post(
         Boolean(publish),
         { skipUnchanged: syncMode === "sync_all", forceStockSkus },
       );
+
+      // Content sync never touches stock itself (see syncCatalogGroupsToWoo's
+      // doc comment) — but any group that just got synced may have had Woo
+      // set/confirm its own stock (new products/variants always get an
+      // initial stock write at creation; forceStockSkus pushes one too).
+      // Reuse the existing stock-sync confirm/write-back step so woo_stock
+      // (and the unsynced-stock indicator derived from it) reflect what Woo
+      // actually has, instead of drifting stale until the next inventory load.
+      const syncedGroupSkus = new Set(
+        summary.results.filter((r) => r.status === "synced").map((r) => r.sku),
+      );
+      const touchedStockSkus = new Set(
+        targetGroups
+          .filter((g) => syncedGroupSkus.has(g.sku))
+          .flatMap((g) => [g.sku, ...g.rows.map((r) => r.sku)]),
+      );
+      if (touchedStockSkus.size) {
+        await refreshWooStockForCatalog(sheets, spreadsheetId, targetGroups, {
+          touchedSkus: touchedStockSkus,
+        }).catch((e) =>
+          console.error("post-sync woo_stock refresh failed:", e),
+        );
+      }
 
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [

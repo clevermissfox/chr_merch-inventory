@@ -1,4 +1,4 @@
-import { X, ShoppingBag } from "lucide-react";
+import { X, ShoppingBag, LogOut } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "~/context/AuthContext";
 import { useCatalog } from "~/context/CatalogContext";
@@ -32,8 +32,21 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
     user.name?.slice(0, 1) ||
     "?";
 
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        console.error("Logout failed");
+      }
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
+
   return (
-    <dialog ref={ref} className="dialog dialog-profile card" onCancel={onClose}>
+    <dialog ref={ref} className="dialog-profile card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner dialog-profile-inner">
         <div className="row jc-sb ai-cen">
           <h2>Profile</h2>
@@ -59,19 +72,29 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
             <p className="badge">{roleLabel[user.role] ?? user.role}</p>
           </div>
         </div>
-
-        <div className="grid gap-quarter">
-          <label className="xsmall clr-muted" htmlFor="profile-email">
-            Email
-          </label>
-          <input
-            id="profile-email"
-            className="profile-email"
-            type="email"
-            value={user.email}
-            readOnly
-            disabled
-          />
+        <div className="row ai-end gap-1">
+          <div className="grid gap-quarter flex-1">
+            <label className="xsmall clr-muted" htmlFor="profile-email">
+              Email
+            </label>
+            <input
+              id="profile-email"
+              className="profile-email"
+              type="email"
+              value={user.email}
+              readOnly
+              disabled
+            />
+          </div>
+          <button
+            type="button"
+            className="grid pc-cen gap-quarter small btn-icon"
+            onClick={handleLogout}
+            aria-label="Logout"
+            title="Logout"
+          >
+            <LogOut aria-hidden="true" />
+          </button>
         </div>
 
         {wooSiteUrl && (

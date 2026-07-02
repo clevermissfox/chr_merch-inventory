@@ -11,6 +11,8 @@ import type { Route } from "./+types/root";
 import "./app.css";
 import { CatalogProvider } from "./context/CatalogContext";
 import { AuthProvider } from "./context/AuthContext";
+import { ToastProvider } from "./context/ToastContext";
+import ToastStack from "./components/ToastStack";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://api.fonts.coollabs.io" },
@@ -71,7 +73,10 @@ export default function App() {
   return (
     <AuthProvider>
       <CatalogProvider>
-        <Outlet />
+        <ToastProvider>
+          <Outlet />
+          <ToastStack />
+        </ToastProvider>
       </CatalogProvider>
     </AuthProvider>
   );

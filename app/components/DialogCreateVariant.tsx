@@ -1,7 +1,8 @@
-import { AlertTriangle, Plus, X } from "lucide-react";
+import { AlertTriangle, Globe, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, RefData } from "~/types/catalog";
 import { sizeRank } from "~/utils/sizeUtils";
+import { variantDupeKey } from "~/utils/variantKey";
 import FormGroupRef from "./FormGroupRef";
 import RefAddNew from "./RefAddNew";
 import RichTextEditor from "./RichTextEditor";
@@ -42,8 +43,11 @@ export default function DialogCreateVariant({
   const [descriptionVariant, setDescriptionVariant] = useState("");
   const [descOverLimit, setDescOverLimit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [pendingDupes, setPendingDupes] = useState<DupeSkuConflict[] | null>(null);
+  const [pendingDupes, setPendingDupes] = useState<DupeSkuConflict[] | null>(
+    null,
+  );
   const [resolvedSkus, setResolvedSkus] = useState<string[]>([]);
   const [resolvingDupeSku, setResolvingDupeSku] = useState<string | null>(null);
   const [dupeResolveError, setDupeResolveError] = useState<string | null>(null);
@@ -100,44 +104,84 @@ export default function DialogCreateVariant({
   ].filter((n) => n > 0);
   const variantCount = axes.length > 0 ? axes.reduce((a, b) => a * b, 1) : 0;
 
-  const canSubmit = variantCount > 0 && !descOverLimit;
+  // Dimensions alone isn't enough to submit — it's auto-preselected from the
+  // parent product's dimensions on open, so a dimension-only "variant" can
+  // exist without the user having actually chosen anything. Require at least
+  // one attribute the user picked themselves.
+  const hasManualSelection =
+    selectedColors.size > 0 ||
+    selectedSizes.size > 0 ||
+    Boolean(design) ||
+    Boolean(designVariant);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
+  const canSubmit = variantCount > 0 && hasManualSelection && !descOverLimit;
+
+  // Shared by both "Add Variants" and "Add & Sync" — runs the dupe checks
+  // and the sheet write. Returns the created SKUs, or null if it was
+  // blocked (dupe conflict, validation failure) or errored — in every
+  // "null" case this already set the appropriate error/dupe state itself,
+  // so callers just need to bail out without showing a second error.
+  const createVariants = async (): Promise<string[] | null> => {
     setSubmitError(null);
 
-    const norm = (v: string | null | undefined) =>
-      (v ?? "").toLowerCase().trim();
     const existingKeys = new Set(
       group.rows.map((r) =>
-        [r.color, r.size, r.dimensions, r.designVariant].map(norm).join("|"),
+        variantDupeKey({
+          color: r.color,
+          designVariant: r.designVariant,
+          dimension: r.dimensions,
+          size: r.size,
+        }),
       ),
     );
     const colorOpts = selectedColors.size ? [...selectedColors] : [""];
     const sizeOpts = selectedSizes.size ? [...selectedSizes] : [""];
     const dimOpts = selectedDimensions.size ? [...selectedDimensions] : [""];
-    const dupes: string[] = [];
+    // Two different failure modes here, worth distinguishing in the message:
+    // colliding with a row that already exists on this product, vs. two of
+    // the *current* selections resolving to the same SKU as each other (most
+    // often because a dimension is selected alongside multiple sizes — the
+    // SKU formula uses dimension over size whenever both are set, so e.g.
+    // "x-large + 3x3" and "no size + 3x3" aren't actually two variants).
+    const existingDupes: string[] = [];
+    const batchDupes: string[] = [];
+    const seenKeys = new Set<string>();
     for (const c of colorOpts) {
       for (const s of sizeOpts) {
         for (const d of dimOpts) {
-          if (existingKeys.has([c, s, d, designVariant].map(norm).join("|"))) {
-            dupes.push(
-              [c, s, d, designVariant].filter(Boolean).join(" / ") ||
-                "base variant",
-            );
+          const key = variantDupeKey({
+            color: c,
+            designVariant,
+            dimension: d,
+            size: s,
+          });
+          const label =
+            [c, s, d, designVariant].filter(Boolean).join(" / ") ||
+            "base variant";
+          if (existingKeys.has(key)) {
+            existingDupes.push(label);
+          } else if (seenKeys.has(key)) {
+            batchDupes.push(label);
           }
+          seenKeys.add(key);
         }
       }
     }
-    if (dupes.length) {
-      setSubmitError(
-        `${dupes.length === 1 ? "Variant already exists" : "Variants already exist"}: ${dupes.join(", ")}`,
-      );
-      return;
+    if (existingDupes.length || batchDupes.length) {
+      const parts: string[] = [];
+      if (existingDupes.length) {
+        parts.push(
+          `${existingDupes.length === 1 ? "Variant" : "Variants"} already exist${existingDupes.length === 1 ? "s" : ""}: ${existingDupes.join(", ")}.`,
+        );
+      }
+      if (batchDupes.length) {
+        parts.push(
+          `These selections resolve to the same SKU as another combination you picked, since dimensions take priority over size — remove the duplicate size or dimension: ${batchDupes.join(", ")}.`,
+        );
+      }
+      setSubmitError(parts.join(" "));
+      return null;
     }
-
-    setSubmitting(true);
 
     try {
       const res = await fetch(
@@ -161,19 +205,71 @@ export default function DialogCreateVariant({
       const data = await res.json();
       if (data.dupeSkus?.length) {
         setPendingDupes(data.dupeSkus as DupeSkuConflict[]);
-        setSubmitting(false);
-        return;
+        return null;
       }
       if (!data.ok) throw new Error(data.error || "Failed to create variants");
-      onCreated(data.skus as string[]);
+      return data.skus as string[];
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Unknown error");
-      setSubmitting(false);
+      return null;
     }
   };
 
-  const resolveDupe = async (dupe: DupeSkuConflict, keep: "existing" | "new") => {
-    const deleteDataIndex = keep === "existing" ? dupe.new.dataIndex : dupe.existing.dataIndex;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    const skus = await createVariants();
+    setSubmitting(false);
+    if (skus) onCreated(skus);
+  };
+
+  const handleAddAndSync = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    const skus = await createVariants();
+    setSubmitting(false);
+    if (!skus) return;
+
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "selected",
+          productIds: [group.productId],
+          publish: group.publishedStatus !== "draft",
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Sync failed");
+      const result: { status: string; error?: string } | undefined =
+        data.results?.[0];
+      if (result?.status === "failed")
+        throw new Error(result.error || "Sync failed");
+      setSyncing(false);
+      onCreated(skus);
+    } catch (err) {
+      // Variants were already created successfully — leave the dialog open
+      // showing the sync error rather than closing it (which would hide the
+      // message immediately), same as DialogEditProduct's Save & Sync. The
+      // sheet write already succeeded; sync can be retried from the
+      // Products page like any other unsynced product.
+      setSyncing(false);
+      setSubmitError(
+        `Variants created, but sync failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    }
+  };
+
+  const resolveDupe = async (
+    dupe: DupeSkuConflict,
+    keep: "existing" | "new",
+  ) => {
+    const deleteDataIndex =
+      keep === "existing" ? dupe.new.dataIndex : dupe.existing.dataIndex;
     setResolvingDupeSku(dupe.sku);
     setDupeResolveError(null);
     try {
@@ -182,7 +278,8 @@ export default function DialogCreateVariant({
         { method: "DELETE", credentials: "include" },
       );
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to resolve duplicate");
+      if (!data.ok)
+        throw new Error(data.error || "Failed to resolve duplicate");
 
       const remaining = (pendingDupes ?? []).filter((d) => d.sku !== dupe.sku);
       const nowResolved = [...resolvedSkus, dupe.sku];
@@ -192,14 +289,16 @@ export default function DialogCreateVariant({
         onCreated(nowResolved);
       }
     } catch (err) {
-      setDupeResolveError(err instanceof Error ? err.message : "Failed to resolve duplicate");
+      setDupeResolveError(
+        err instanceof Error ? err.message : "Failed to resolve duplicate",
+      );
     } finally {
       setResolvingDupeSku(null);
     }
   };
 
   return (
-    <dialog ref={ref} className="dialog dialog-variant card" onCancel={onClose}>
+    <dialog ref={ref} className="dialog-variant card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner dialog-variant-inner">
         <div className="row jc-sb ai-cen">
           <hgroup>
@@ -459,6 +558,13 @@ export default function DialogCreateVariant({
                 maxChars={150}
               />
             </div>
+            {variantCount > 0 && !hasManualSelection && (
+              <p className="small clr-warning">
+                Pick at least one color, size, or design — a dimension alone
+                (inherited from the product) isn't enough to create a
+                variant.
+              </p>
+            )}
             {canSubmit && (
               <p className="small clr-muted">
                 Will create{" "}
@@ -490,12 +596,15 @@ export default function DialogCreateVariant({
             {pendingDupes && pendingDupes.length > 0 && (
               <div className="grid gap-half">
                 <p role="alert" className="status-line" data-tone="warning">
-                  <AlertTriangle size={14} aria-hidden="true" />
-                  {" "}SKU collision — the sheet formula produced a SKU that already exists.
-                  Choose which variant to keep for each conflict:
+                  <AlertTriangle size={14} aria-hidden="true" /> SKU collision —
+                  the sheet formula produced a SKU that already exists. Choose
+                  which variant to keep for each conflict:
                 </p>
                 {pendingDupes.map((dupe) => (
-                  <div key={dupe.sku} className="grid gap-quarter padding-half default-border">
+                  <div
+                    key={dupe.sku}
+                    className="grid gap-quarter padding-half default-border"
+                  >
                     <p className="small bold">{dupe.sku}</p>
                     <div className="row gap-half fw-wrap">
                       <button
@@ -507,7 +616,12 @@ export default function DialogCreateVariant({
                         {resolvingDupeSku === dupe.sku ? (
                           <span className="render-loader">Resolving…</span>
                         ) : (
-                          <>Keep existing: <span className="clr-muted">{dupe.existing.label}</span></>
+                          <>
+                            Keep existing:{" "}
+                            <span className="clr-muted">
+                              {dupe.existing.label}
+                            </span>
+                          </>
                         )}
                       </button>
                       <button
@@ -519,7 +633,10 @@ export default function DialogCreateVariant({
                         {resolvingDupeSku === dupe.sku ? (
                           <span className="render-loader">Resolving…</span>
                         ) : (
-                          <>Keep new: <span className="clr-muted">{dupe.new.label}</span></>
+                          <>
+                            Keep new:{" "}
+                            <span className="clr-muted">{dupe.new.label}</span>
+                          </>
                         )}
                       </button>
                     </div>
@@ -541,7 +658,9 @@ export default function DialogCreateVariant({
               <button
                 type="submit"
                 className="btn-primary row gap-half ai-cen"
-                disabled={!canSubmit || submitting || pendingDupes !== null}
+                disabled={
+                  !canSubmit || submitting || syncing || pendingDupes !== null
+                }
               >
                 {submitting ? (
                   <>
@@ -557,11 +676,33 @@ export default function DialogCreateVariant({
                   </>
                 )}
               </button>
+              {group.wooId && (
+                <button
+                  type="button"
+                  className="btn-secondary row gap-half ai-cen"
+                  onClick={() => void handleAddAndSync()}
+                  disabled={
+                    !canSubmit ||
+                    submitting ||
+                    syncing ||
+                    pendingDupes !== null
+                  }
+                >
+                  {syncing ? (
+                    <span className="render-loader">Syncing…</span>
+                  ) : (
+                    <>
+                      <Globe aria-hidden="true" />
+                      <span>Add &amp; Sync</span>
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
-                disabled={submitting || resolvingDupeSku !== null}
+                disabled={submitting || syncing || resolvingDupeSku !== null}
               >
                 Cancel
               </button>

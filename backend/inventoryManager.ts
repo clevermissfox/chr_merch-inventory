@@ -1152,6 +1152,34 @@ export async function ensureInventoryIndexRowsExist(
 }
 
 /**
+ * Self-healing inventory_index writer — loads current state, creates any
+ * missing SKU rows (ensureInventoryIndexRowsExist), then writes the given
+ * fields (writeInventoryIndexUpdates). writeInventoryIndexUpdates alone
+ * silently skips SKUs with no existing row, so callers that just want to
+ * "write these fields, creating the row if needed" should use this instead
+ * of calling the two lower-level functions separately and risking forgetting
+ * the ensure step (mirrors updateDescriptionFields' single-call safety).
+ */
+export async function upsertInventoryIndexFields(
+  sheets: any,
+  spreadsheetId: string,
+  updates: InventoryIndexUpdate[],
+  catalogNameBySku: Map<string, string> = new Map(),
+): Promise<InventoryIndexWriteResult> {
+  if (!updates.length) return { updatedCount: 0, missingSkus: [] };
+
+  let state = await loadInventoryIndexState(sheets, spreadsheetId);
+  state = await ensureInventoryIndexRowsExist(
+    sheets,
+    spreadsheetId,
+    state,
+    updates,
+    catalogNameBySku,
+  );
+  return writeInventoryIndexUpdates(sheets, spreadsheetId, state, updates);
+}
+
+/**
  * Chooses the preferred catalog display name from a readable name and fallback product name.
  * Returns the first non-empty trimmed value.
  */

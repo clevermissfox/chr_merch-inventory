@@ -1,6 +1,7 @@
 import { Globe, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup } from "~/types/catalog";
+import { isSalePriceValid } from "~/utils/priceUtils";
 import RichTextEditor from "./RichTextEditor";
 import ImageUploadSection from "./ImageUploadSection";
 
@@ -71,38 +72,60 @@ export default function DialogEditProduct({
 
   const validate = (): string | null => {
     const orig = original.current;
-    if (form.displayName !== orig.displayName && orig.displayName && !form.displayName.trim())
+    if (
+      form.displayName !== orig.displayName &&
+      orig.displayName &&
+      !form.displayName.trim()
+    )
       return "Display name cannot be cleared once set";
-    if (form.basePriceDollars !== orig.basePriceDollars && !form.basePriceDollars.trim())
+    if (
+      form.basePriceDollars !== orig.basePriceDollars &&
+      !form.basePriceDollars.trim()
+    )
       return "Base price cannot be cleared";
     if (form.weightOz !== orig.weightOz && !form.weightOz.trim())
       return "Weight cannot be cleared";
+    if (!isSalePriceValid(form.basePriceDollars, form.salePriceDollars))
+      return "Sale price must be less than base price";
     return null;
   };
 
   const buildPayload = () => {
     const orig = original.current;
     const payload: Record<string, string> = {};
-    if (form.displayName !== orig.displayName) payload.displayName = form.displayName.trim();
-    if (form.basePriceDollars !== orig.basePriceDollars) payload.basePriceDollars = form.basePriceDollars.trim();
-    if (form.salePriceDollars !== orig.salePriceDollars) payload.salePriceDollars = form.salePriceDollars.trim();
-    if (form.publishedStatus !== orig.publishedStatus) payload.publishedStatus = form.publishedStatus;
-    if (form.weightOz !== orig.weightOz) payload.weightOz = form.weightOz.trim();
-    if (form.primaryDescription !== orig.primaryDescription) payload.primaryDescription = form.primaryDescription.trim();
-    if (form.shortDescription !== orig.shortDescription) payload.shortDescription = form.shortDescription.trim();
-    if (form.dimensionsWidth !== orig.dimensionsWidth) payload.dimensionsWidth = form.dimensionsWidth.trim();
-    if (form.dimensionsHeight !== orig.dimensionsHeight) payload.dimensionsHeight = form.dimensionsHeight.trim();
-    if (form.dimensionsDepth !== orig.dimensionsDepth) payload.dimensionsDepth = form.dimensionsDepth.trim();
+    if (form.displayName !== orig.displayName)
+      payload.displayName = form.displayName.trim();
+    if (form.basePriceDollars !== orig.basePriceDollars)
+      payload.basePriceDollars = form.basePriceDollars.trim();
+    if (form.salePriceDollars !== orig.salePriceDollars)
+      payload.salePriceDollars = form.salePriceDollars.trim();
+    if (form.publishedStatus !== orig.publishedStatus)
+      payload.publishedStatus = form.publishedStatus;
+    if (form.weightOz !== orig.weightOz)
+      payload.weightOz = form.weightOz.trim();
+    if (form.primaryDescription !== orig.primaryDescription)
+      payload.primaryDescription = form.primaryDescription.trim();
+    if (form.shortDescription !== orig.shortDescription)
+      payload.shortDescription = form.shortDescription.trim();
+    if (form.dimensionsWidth !== orig.dimensionsWidth)
+      payload.dimensionsWidth = form.dimensionsWidth.trim();
+    if (form.dimensionsHeight !== orig.dimensionsHeight)
+      payload.dimensionsHeight = form.dimensionsHeight.trim();
+    if (form.dimensionsDepth !== orig.dimensionsDepth)
+      payload.dimensionsDepth = form.dimensionsDepth.trim();
     return payload;
   };
 
   const saveToSheet = async (): Promise<void> => {
-    const res = await fetch(`/api/catalog/product/${encodeURIComponent(group.sku)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(buildPayload()),
-    });
+    const res = await fetch(
+      `/api/catalog/product/${encodeURIComponent(group.sku)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(buildPayload()),
+      },
+    );
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Failed to update product");
   };
@@ -111,7 +134,10 @@ export default function DialogEditProduct({
     e.preventDefault();
     if (!isDirty) return;
     const err = validate();
-    if (err) { setSubmitError(err); return; }
+    if (err) {
+      setSubmitError(err);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -127,7 +153,10 @@ export default function DialogEditProduct({
   const handleSaveAndSync = async () => {
     if (!isDirty && !group.wooId) return;
     const err = isDirty ? validate() : null;
-    if (err) { setSubmitError(err); return; }
+    if (err) {
+      setSubmitError(err);
+      return;
+    }
     setSyncing(true);
     setSubmitError(null);
     try {
@@ -144,10 +173,14 @@ export default function DialogEditProduct({
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Sync failed");
-      const result: { status: string; error?: string } | undefined = data.results?.[0];
-      if (result?.status === "failed") throw new Error(result.error || "Sync failed");
+      const result: { status: string; error?: string } | undefined =
+        data.results?.[0];
+      if (result?.status === "failed")
+        throw new Error(result.error || "Sync failed");
       if (result?.status === "sku_collision_trashed")
-        throw new Error(result.error || "A trashed WooCommerce product exists with this SKU");
+        throw new Error(
+          result.error || "A trashed WooCommerce product exists with this SKU",
+        );
       onSaved();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Save & sync failed");
@@ -157,11 +190,7 @@ export default function DialogEditProduct({
   };
 
   return (
-    <dialog
-      ref={ref}
-      className="dialog dialog-edit-product card"
-      onCancel={onClose}
-    >
+    <dialog ref={ref} className="dialog-edit-product card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner">
         <div className="row jc-sb ai-cen">
           <hgroup>
@@ -229,6 +258,14 @@ export default function DialogEditProduct({
                 }
                 disabled={submitting}
               />
+              {!isSalePriceValid(
+                form.basePriceDollars,
+                form.salePriceDollars,
+              ) && (
+                <p role="alert" className="xsmall clr-danger">
+                  Sale price must be less than base price.
+                </p>
+              )}
             </div>
             <div className="form-group flex-1">
               <label htmlFor="ep-weight" className="bold">
@@ -364,7 +401,13 @@ export default function DialogEditProduct({
             <button
               type="submit"
               className="btn-primary row gap-half jc-cen ai-cen flex-1"
-              disabled={!isDirty || submitting || syncing || shortDescOverLimit || imageIsPending}
+              disabled={
+                !isDirty ||
+                submitting ||
+                syncing ||
+                shortDescOverLimit ||
+                imageIsPending
+              }
             >
               {submitting ? (
                 <span className="render-loader">Saving…</span>
@@ -380,7 +423,13 @@ export default function DialogEditProduct({
                 type="button"
                 className="btn-secondary row gap-half jc-cen ai-cen flex-1"
                 onClick={handleSaveAndSync}
-                disabled={!isDirty || submitting || syncing || shortDescOverLimit || imageIsPending}
+                disabled={
+                  !isDirty ||
+                  submitting ||
+                  syncing ||
+                  shortDescOverLimit ||
+                  imageIsPending
+                }
               >
                 {syncing ? (
                   <span className="render-loader">Syncing…</span>

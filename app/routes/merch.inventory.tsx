@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/merch.inventory";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
+import { useToast } from "~/context/ToastContext";
 import DialogConfirm from "~/components/DialogConfirm";
 import type { CatalogGroup } from "~/types/catalog";
 import { ArrowDownUp, RefreshCw } from "lucide-react";
@@ -69,6 +70,7 @@ export default function InventoryPage() {
   const { user } = useAuth();
   const canEdit = user?.canEdit === true;
   const { state, loadCatalog, setStockQty, syncSelectedSkus } = useCatalog();
+  const { showToast } = useToast();
 
   const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
@@ -185,15 +187,18 @@ export default function InventoryPage() {
     setSyncSkipped([]);
     try {
       const result = await syncSelectedSkus(skusToSync);
-      setSyncFeedback(
-        `Pushed ${result.updatedCount} SKU${result.updatedCount !== 1 ? "s" : ""} to website.`,
-      );
+      const message = `Pushed ${result.updatedCount} SKU${result.updatedCount !== 1 ? "s" : ""} to website.`;
+      setSyncFeedback(message);
       setSyncFeedbackTone("success");
       setSyncSkipped(result.skipped);
+      showToast(message, "success");
     } catch (err) {
-      setSyncFeedback(err instanceof Error ? err.message : "Failed to push stock to website");
+      const message =
+        err instanceof Error ? err.message : "Failed to push stock to website";
+      setSyncFeedback(message);
       setSyncFeedbackTone("error");
       setSyncSkipped([]);
+      showToast(`Sync failed — ${message}`, "error");
     }
   };
 

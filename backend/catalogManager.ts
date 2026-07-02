@@ -1,12 +1,13 @@
 import { createHash } from "crypto";
 import { sizeRank } from "~/utils/sizeUtils";
+import { variantDupeKey } from "~/utils/variantKey";
+import { isSalePriceValid } from "~/utils/priceUtils";
 import {
   ensureInventoryIndexRowsExist,
   loadInventoryIndexState,
   getWooConfig,
   buildWooUrl,
 } from "./inventoryManager";
-import type { WooConfig } from "./inventoryManager";
 import type { sheets_v4 } from "googleapis";
 import type {
   CatalogConflictGroup,
@@ -533,7 +534,12 @@ export async function createProductRow(
   const sheetRow = values.length + 1;
   const rowId = crypto.randomUUID();
 
-  // Write only the user-provided cells — never touch formula/protected columns
+  // product_id stays sheet-formula-driven (not written by our code) — GAS
+  // still creates rows in this sheet directly and needs the formula to keep
+  // working unmodified. See project notes for the plan to make that formula
+  // itself stable (row_id-derived instead of positional COUNTIFS).
+
+  // Write only the user-provided cells — never touch other formula/protected columns
   const cell = (name: string, value: string) => ({
     range: `products!${colLetter(col(name))}${sheetRow}`,
     values: [[value]],
@@ -617,6 +623,19 @@ export async function updateProduct(
     }
   }
   if (rowIdx === -1) throw new Error(`Product SKU "${sku}" not found`);
+
+  const row = values[rowIdx] as string[];
+  const effectiveBasePrice =
+    fields.basePriceDollars ?? String(row[col("base_price_dollars")] ?? "");
+  const effectiveSalePrice =
+    fields.salePriceDollars ?? String(row[col("sale_price_dollars")] ?? "");
+  if (
+    (fields.basePriceDollars !== undefined ||
+      fields.salePriceDollars !== undefined) &&
+    !isSalePriceValid(effectiveBasePrice, effectiveSalePrice)
+  ) {
+    throw new Error("Sale price must be less than base price");
+  }
 
   const sheetRow = rowIdx + 1;
   const cell = (name: string, value: string) => ({
@@ -748,6 +767,9 @@ export function parseNewProductFields(
         "Missing required fields: category, subcategory, basePriceDollars, weightOz",
     };
   }
+  if (!isSalePriceValid(basePriceDollars, body.salePriceDollars)) {
+    return { error: "Sale price must be less than base price" };
+  }
   return {
     category,
     subcategory,
@@ -832,6 +854,25 @@ export async function updateVariant(
     }
   }
   if (rowIdx === -1) throw new Error(`Variant SKU "${sku}" not found`);
+
+  const row = values[rowIdx] as string[];
+  // Effective regular price is the variant's own override if one is set,
+  // else it falls back to the parent product's base price — which isn't
+  // loaded here, so we only validate when a variant-level override price is
+  // actually in play. If there's no override, Woo's own sale_price >=
+  // regular_price rejection at sync time is the backstop instead.
+  const effectiveRegularPrice =
+    fields.priceVariant ?? String(row[col("price_variant")] ?? "");
+  const effectiveSalePrice =
+    fields.salePriceVariant ?? String(row[col("sale_price_variant")] ?? "");
+  if (
+    (fields.priceVariant !== undefined ||
+      fields.salePriceVariant !== undefined) &&
+    effectiveRegularPrice &&
+    !isSalePriceValid(effectiveRegularPrice, effectiveSalePrice)
+  ) {
+    throw new Error("Sale price must be less than the regular price");
+  }
 
   const sheetRow = rowIdx + 1;
   const cell = (name: string, value: string) => ({
@@ -1373,7 +1414,9 @@ export async function deleteProduct(
       productId = String(
         (productValues[i] as string[])[pProductIdIdx] ?? "",
       ).trim();
-      const rawWooId = String((productValues[i] as string[])[pWooIdIdx] ?? "").trim();
+      const rawWooId = String(
+        (productValues[i] as string[])[pWooIdIdx] ?? "",
+      ).trim();
       wooId = rawWooId ? Number(rawWooId) : null;
       break;
     }
@@ -1419,6 +1462,23 @@ export async function deleteProduct(
     { sheetName: "descriptions", indices: descRowIndices },
     { sheetName: "inventory_index", indices: invRowIndices },
   ]);
+
+  // Verify the product row is actually gone before reporting success — a
+  // batchUpdate that appears to succeed but silently leaves a row behind is
+  // far worse than a slow request: it reports ok:true while the sheet still
+  // has the "deleted" product, and nothing downstream would ever notice.
+  const verifyRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+  const stillPresent = (verifyRes.data.values ?? []).some(
+    (row, i) => i > 0 && String((row as string[])[pSkuIdx] ?? "").trim() === sku,
+  );
+  if (stillPresent) {
+    throw new Error(
+      `Product SKU "${sku}" still exists in the products sheet after the delete request reported success — the row was not actually removed. Do not retry blindly; check the sheet directly before trying again.`,
+    );
+  }
 
   return {
     variantsDeleted: variantRowIndices.length,
@@ -1471,12 +1531,17 @@ export async function deleteVariant(
   let wooVariantId: number | null = null;
   let variantProductId = "";
   for (let i = 1; i < variantValues.length; i++) {
-    if (String((variantValues[i] as string[])[vSkuIdx] ?? "").trim() !== sku) continue;
+    if (String((variantValues[i] as string[])[vSkuIdx] ?? "").trim() !== sku)
+      continue;
     if (dataIndex !== undefined && i !== dataIndex) continue;
     variantRowIdx = i;
-    const rawWooVariantId = String((variantValues[i] as string[])[vWooVariantIdIdx] ?? "").trim();
+    const rawWooVariantId = String(
+      (variantValues[i] as string[])[vWooVariantIdIdx] ?? "",
+    ).trim();
     wooVariantId = rawWooVariantId ? Number(rawWooVariantId) : null;
-    variantProductId = String((variantValues[i] as string[])[vProductIdIdx] ?? "").trim();
+    variantProductId = String(
+      (variantValues[i] as string[])[vProductIdIdx] ?? "",
+    ).trim();
     break;
   }
   if (variantRowIdx === -1)
@@ -1495,12 +1560,19 @@ export async function deleteVariant(
   if (variantProductId) {
     const productValues = productsRes.data.values ?? [];
     if (productValues.length > 1) {
-      const productHeaders = (productValues[0] as string[]).map((h) => String(h).trim());
+      const productHeaders = (productValues[0] as string[]).map((h) =>
+        String(h).trim(),
+      );
       const pProductIdIdx = colByHeader(productHeaders, "product_id");
       const pWooIdIdx = colByHeader(productHeaders, "woo_id");
       for (let i = 1; i < productValues.length; i++) {
-        if (String((productValues[i] as string[])[pProductIdIdx] ?? "").trim() === variantProductId) {
-          const raw = String((productValues[i] as string[])[pWooIdIdx] ?? "").trim();
+        if (
+          String((productValues[i] as string[])[pProductIdIdx] ?? "").trim() ===
+          variantProductId
+        ) {
+          const raw = String(
+            (productValues[i] as string[])[pWooIdIdx] ?? "",
+          ).trim();
           parentWooId = raw ? Number(raw) : null;
           break;
         }
@@ -1515,7 +1587,11 @@ export async function deleteVariant(
         let count = 0;
         for (let i = 1; i < variantValues.length; i++) {
           if (i === variantRowIdx) continue;
-          if (String((variantValues[i] as string[])[pidIdx] ?? "").trim() === variantProductId) count++;
+          if (
+            String((variantValues[i] as string[])[pidIdx] ?? "").trim() ===
+            variantProductId
+          )
+            count++;
         }
         return count;
       })()
@@ -1672,10 +1748,8 @@ export async function createVariantRows(
   // Key fields match the SKU formula: color + design_variant (graphicsVariant code column) +
   // dimensions OR size. The 'design' field is the artwork name — it is NOT in the SKU formula.
   {
-    // Normalize to catch variants where one stores "3\"x5\"" and another "3″x5″"
-    // (different quote chars that the sheet formula treats as equivalent via XLOOKUP).
     const norm = (v: string | null | undefined) =>
-      (v ?? "").toLowerCase().trim().replace(/[''‛′]/g, "'").replace(/[""‟″]/g, '"');
+      (v ?? "").toLowerCase().trim();
     const pidIdx = colByHeader(headers, "product_id");
     const colIdx2 = colByHeader(headers, "color");
     const dvIdx = colByHeader(headers, "design_variant");
@@ -1687,13 +1761,23 @@ export async function createVariantRows(
       const row = values[i] as string[];
       if (norm(row[pidIdx]) !== productId.toLowerCase()) continue;
       existingCombos.add(
-        [norm(row[colIdx2]), norm(row[dvIdx]), norm(row[dimIdx]), norm(row[sizeIdx])].join("|"),
+        variantDupeKey({
+          color: row[colIdx2],
+          designVariant: row[dvIdx],
+          dimension: row[dimIdx],
+          size: row[sizeIdx],
+        }),
       );
     }
 
     const seen = new Set<string>();
     for (const v of variants) {
-      const key = [norm(v.color), norm(v.designVariant), norm(v.dimension), norm(v.size)].join("|");
+      const key = variantDupeKey({
+        color: v.color,
+        designVariant: v.designVariant,
+        dimension: v.dimension,
+        size: v.size,
+      });
       if (existingCombos.has(key) || seen.has(key)) {
         throw new Error(
           `Variant with this combination already exists: color="${v.color ?? ""}" designVariant="${v.designVariant ?? ""}" dimension="${v.dimension ?? ""}" size="${v.size ?? ""}". No rows were written.`,
@@ -1755,6 +1839,11 @@ export async function createVariantRows(
   // confirm there are exactly 2 rows with that SKU, and delete the new one.
   // If we cannot positively identify the duplicate, we leave the sheet intact and
   // surface the conflict so a human can investigate.
+  // Also builds inventory_index names from the sheet's own resolved readable_name/
+  // product_name/variant_details columns, since we're already reading this row —
+  // ensureInventoryIndexRowsExist below needs real names, not a blank map, or newly
+  // created variants get a permanently-blank product_name (nothing backfills it later).
+  const variantCatalogNameBySku = new Map<string, string>();
   {
     const allVariantsRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -1764,6 +1853,9 @@ export async function createVariantRows(
     if (allRows.length > 1) {
       const hdr = allRows[0].map((h) => String(h).trim());
       const skuCol = colByHeader(hdr, "sku");
+      const readableNameCol = hdr.indexOf("readable_name");
+      const productNameCol = hdr.indexOf("product_name");
+      const variantDetailsCol = hdr.indexOf("variant_details");
 
       // Build sku → [data indices] map for every row
       const skuToIndices = new Map<string, number[]>();
@@ -1774,7 +1866,31 @@ export async function createVariantRows(
         skuToIndices.get(s)!.push(i);
       }
 
-      const dupeSkus = skus.filter((s) => s && (skuToIndices.get(s)?.length ?? 0) > 1);
+      for (const sku of skus) {
+        const idx = skuToIndices.get(sku)?.[0];
+        if (idx == null) continue;
+        const readable =
+          readableNameCol >= 0
+            ? String(allRows[idx][readableNameCol] ?? "").trim()
+            : "";
+        const productName =
+          productNameCol >= 0
+            ? String(allRows[idx][productNameCol] ?? "").trim()
+            : "";
+        const variantDetails =
+          variantDetailsCol >= 0
+            ? String(allRows[idx][variantDetailsCol] ?? "").trim()
+            : "";
+        const name =
+          readable ||
+          [productName, variantDetails].filter(Boolean).join(" | ") ||
+          sku;
+        variantCatalogNameBySku.set(sku, name);
+      }
+
+      const dupeSkus = skus.filter(
+        (s) => s && (skuToIndices.get(s)?.length ?? 0) > 1,
+      );
       if (dupeSkus.length) {
         const colorCol = hdr.indexOf("color");
         const dvCol = hdr.indexOf("design_variant");
@@ -1797,14 +1913,18 @@ export async function createVariantRows(
         for (const dupeSku of dupeSkus) {
           const indices = skuToIndices.get(dupeSku)!;
           const newIndices = indices.filter(
-            (i) => i + 1 >= startSheetRow && i + 1 < startSheetRow + skus.length,
+            (i) =>
+              i + 1 >= startSheetRow && i + 1 < startSheetRow + skus.length,
           );
           if (newIndices.length === 1 && indices.length === 2) {
             const newIdx = newIndices[0];
             const existingIdx = indices.find((i) => i !== newIdx)!;
             conflicts.push({
               sku: dupeSku,
-              existing: { dataIndex: existingIdx, label: rowLabel(existingIdx) },
+              existing: {
+                dataIndex: existingIdx,
+                label: rowLabel(existingIdx),
+              },
               new: { dataIndex: newIdx, label: rowLabel(newIdx) },
             });
           } else {
@@ -1845,7 +1965,7 @@ export async function createVariantRows(
       spreadsheetId,
       invState,
       invUpdates,
-      new Map(),
+      variantCatalogNameBySku,
     ),
   ]);
 

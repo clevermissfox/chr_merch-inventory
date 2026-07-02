@@ -50,7 +50,7 @@ export default function DialogConfirm({
   return (
     <dialog
       ref={ref}
-      className="dialog dialog-confirm card"
+      className="dialog-confirm card"
       onCancel={handleNativeCancel}
     >
       <div className="dialog-inner dialog-confirm-inner grid gap-1">

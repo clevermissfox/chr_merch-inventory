@@ -461,6 +461,41 @@ menu.user-menu {
   animation: rotation 1s linear infinite;
 }
 
+.toast-stack {
+  position: fixed;
+  inset-block-end: 1.5em;
+  inset-inline-end: 1.5em;
+  z-index: 1000;
+  display: grid;
+  gap: var(--spacing-050, 0.5em);
+  max-inline-size: min(90vw, 32em);
+}
+
+.toast-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+  padding: 0.75em 1em;
+  border-radius: var(--default-br);
+  border: var(--default-border);
+  background-color: var(--clr-surface-primary);
+  box-shadow: var(--default-shadow);
+  border-inline-start: 0.25em solid var(--clr-text-muted);
+}
+
+.toast-item[data-tone="success"] {
+  border-inline-start-color: var(--clr-success);
+}
+
+.toast-item[data-tone="error"] {
+  border-inline-start-color: var(--clr-danger);
+}
+
+.toast-item[data-tone="warning"] {
+  border-inline-start-color: var(--clr-warning);
+}
+
 .toggle-group {
   overflow: hidden;
 }
@@ -872,15 +907,15 @@ label.item-selection input[type="checkbox"] {
 
 /* Dialogs — shared base */
 
-.dialog[open] {
+dialog:where([open]) {
   --_dialog-max-w: calc(var(--default-max-inline-size) - 20vw);
   border: none;
   margin: auto;
   width: min(100% - (var(--default-padding) * 2), var(--_dialog-max-w));
 }
 
-.dialog::backdrop {
-  background: oklch(from var(--clr-neutral-1000) l c h / 0.4);
+dialog::backdrop {
+  background: oklch(from var(--clr-neutral-1000) l c h / 0.6);
   backdrop-filter: blur(2px);
 }
 
@@ -925,8 +960,10 @@ label.item-selection input[type="checkbox"] {
 .dialog-profile-shop-link {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--spacing-050, 0.5rem);
-  border: 0.1em solid var(--clr-border-soft);
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
   border-radius: var(--default-br);
   padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem);
   font-weight: var(--fw-500);
@@ -1331,9 +1368,6 @@ label.item-selection input[type="checkbox"] {
   font-family: monospace;
   font-size: var(--fs-200);
   min-block-size: 6rem;
-}
-
-.img-file-list {
 }
 
 .input-file_img::file-selector-button {

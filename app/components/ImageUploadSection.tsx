@@ -1,6 +1,15 @@
 import { CircleQuestionMark, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+// Shows the user's own filename (never our SKU-based rename, which only
+// happens server-side on upload) — truncated so long names don't blow out
+// the layout: first 12 chars, "...", then the last 9 (which keeps the
+// extension visible for typical 3-4 char extensions).
+function truncateFileName(name: string, maxLen = 24): string {
+  if (name.length <= maxLen) return name;
+  return `${name.slice(0, 12)}...${name.slice(-9)}`;
+}
+
 interface ImageUploadSectionProps {
   sku: string;
   productName: string;
@@ -229,8 +238,30 @@ export default function ImageUploadSection({
               accept="image/*"
               multiple={!single}
               onChange={(e) => {
-                setFiles(Array.from(e.target.files ?? []));
+                const picked = Array.from(e.target.files ?? []);
+                if (single) {
+                  setFiles(picked);
+                } else {
+                  // A native file input's FileList is whatever was chosen in
+                  // *this* picker session, not additive — replacing `files`
+                  // wholesale here would silently drop anything picked
+                  // earlier (e.g. after removing one file and reopening the
+                  // picker to add another). Append instead, deduping by
+                  // name+size so re-picking the same file is a no-op.
+                  setFiles((prev) => {
+                    const existingKeys = new Set(
+                      prev.map((f) => `${f.name}:${f.size}`),
+                    );
+                    const additions = picked.filter(
+                      (f) => !existingKeys.has(`${f.name}:${f.size}`),
+                    );
+                    return [...prev, ...additions];
+                  });
+                }
                 setSuccess(false);
+                // Reset so the same file(s) can be re-picked later — browsers
+                // won't fire onChange again for an unchanged FileList.
+                if (fileInputRef.current) fileInputRef.current.value = "";
               }}
               disabled={disabled || submitting}
             />
@@ -238,14 +269,10 @@ export default function ImageUploadSection({
               <ul className="img-file-list small clr-muted" role="list">
                 {files.map((f, i) => (
                   <li
-                    key={i}
+                    key={`${f.name}:${f.size}`}
                     className="row gap-half ai-cen jc-sb padding-quarter"
                   >
-                    <span>
-                      {sku}
-                      {files.length > 1 ? `-${i + 1}` : ""}.
-                      {f.name.split(".").pop()}
-                    </span>
+                    <span title={f.name}>{truncateFileName(f.name)}</span>
                     {!submitting && (
                       <button
                         type="button"
@@ -271,21 +298,17 @@ export default function ImageUploadSection({
 
         {isPending && (
           <p role="alert" className="status-line" data-tone="warning">
-            {single
-              ? "Save the image or clear it before saving changes."
-              : files.length > 1
-                ? `${files.length} images selected — send them for processing or remove files before saving.`
-                : "Send the image for processing or clear it before saving changes."}
+            {!single && files.length > 1
+              ? `${files.length} images selected — send them for processing or remove files before saving.`
+              : "Send the image for processing or clear it before saving changes."}
           </p>
         )}
 
         {success ? (
           <p role="status" className="status-line" data-tone="success">
-            {single
-              ? "Image saved."
-              : files.length > 1
-                ? `${files.length} images sent for processing.`
-                : "Sent for processing."}
+            {!single && files.length > 1
+              ? `${files.length} images sent for processing.`
+              : "Sent for processing."}
           </p>
         ) : (
           <>
@@ -302,11 +325,11 @@ export default function ImageUploadSection({
                 disabled={disabled || submitting || !canSubmit}
               >
                 {submitting ? (
-                  <span className="render-loader">Saving…</span>
+                  <span className="render-loader">Sending…</span>
                 ) : (
                   <>
                     <Upload aria-hidden="true" />
-                    <span>{single ? "Save image" : "Send for processing"}</span>
+                    <span>Send for processing</span>
                   </>
                 )}
               </button>

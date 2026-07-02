@@ -9,6 +9,7 @@
 backend/credentials/*
 gas_legacy/*
 recommendation.md
+TESTING_CHECKLIST.md
 
 
 /chr_merch-inventory/CHR-Merch_Sheet-Schema_withFormulas.xlsx

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Route } from "./+types/merch.products";
 import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
+import { useToast } from "~/context/ToastContext";
 import DialogCreateProduct from "~/components/DialogCreateProduct";
 import DialogConfirm from "~/components/DialogConfirm";
 import type { DialogConfirmStatus } from "~/components/DialogConfirm";
@@ -272,6 +273,7 @@ function ProductGroup({
 export default function ProductsPage() {
   const { state, loadCatalog } = useCatalog();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const { catalog, loading, error } = state;
   const canEdit = user?.canEdit ?? false;
 
@@ -330,6 +332,7 @@ export default function ProductsPage() {
   const handleFailed = (error: string) => {
     setPendingCreate(false);
     setCreateError(error);
+    showToast(`Create failed — ${error}`, "error");
   };
 
   const handleCreated = (sku: string) => {
@@ -338,6 +341,7 @@ export default function ProductsPage() {
     setLastCreated(sku);
     setLastDeleted(null);
     setLastEdited(null);
+    showToast(`Created — new SKU: ${sku}`, "success");
     loadCatalog();
   };
 
@@ -351,6 +355,7 @@ export default function ProductsPage() {
     setLastDeleted(group.sku);
     setLastCreated(null);
     setLastEdited(null);
+    showToast(`Deleted — SKU: ${group.sku}`, "success");
     await loadCatalog();
   };
 
@@ -363,7 +368,9 @@ export default function ProductsPage() {
       setPendingDelete(null);
       setDeleteStatus("idle");
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Unknown error");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setDeleteError(message);
+      showToast(`Delete failed — ${message}`, "error");
       setDeleteStatus("idle");
     }
   };
@@ -446,12 +453,15 @@ export default function ProductsPage() {
       setLastCreated(null);
       setLastDeleted(null);
       setLastEdited(null);
+      showToast(summary, "success");
       await loadCatalog();
       setSyncRequest(null);
       setPublishStatus("idle");
       setPublishDrafts(false);
     } catch (err) {
-      setPublishError(err instanceof Error ? err.message : "Unknown error");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setPublishError(message);
+      showToast(`Sync failed — ${message}`, "error");
       setPublishStatus("idle");
     }
   };
@@ -497,11 +507,14 @@ export default function ProductsPage() {
       setLastCreated(null);
       setLastDeleted(null);
       setLastEdited(null);
+      showToast(`Relinked and synced — ${group.sku}`, "success");
       await loadCatalog();
       setPendingRelink(null);
       setRelinkStatus("idle");
     } catch (err) {
-      setRelinkError(err instanceof Error ? err.message : "Unknown error");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setRelinkError(message);
+      showToast(`Relink failed — ${message}`, "error");
       setRelinkStatus("idle");
     }
   };
@@ -642,6 +655,7 @@ export default function ProductsPage() {
             setLastCreated(null);
             setLastDeleted(null);
             setLastEdited(sku);
+            showToast(`Saved — ${sku}`, "success");
             loadCatalog();
           }}
         />
@@ -658,6 +672,7 @@ export default function ProductsPage() {
             setLastCreated(null);
             setLastDeleted(null);
             setLastEdited(sku);
+            showToast(`Saved — ${sku}`, "success");
             await loadCatalog();
           }}
         />
@@ -680,6 +695,12 @@ export default function ProductsPage() {
             setPendingAddVariants(null);
             setLastCreated(skus[0] ?? null);
             setLastDeleted(null);
+            showToast(
+              skus.length === 1
+                ? `Created — new SKU: ${skus[0]}`
+                : `Created ${skus.length} new variants`,
+              "success",
+            );
             loadCatalog();
           }}
         />
@@ -694,6 +715,7 @@ export default function ProductsPage() {
             setLastDeleted(sku);
             setLastCreated(null);
             setLastEdited(null);
+            showToast(`Deleted — SKU: ${sku}`, "success");
             await loadCatalog();
             setPendingDeleteVariant(null);
           }}
@@ -801,83 +823,87 @@ export default function ProductsPage() {
                       );
                   if (!hasZeroStock) return null;
                   return isSimple ? (
-                    <div className="form-group">
-                      <label
-                        className="bold small"
-                        htmlFor="stock-patch-simple"
-                      >
-                        Initial stock
-                      </label>
-                      <p className="xsmall clr-warning">
-                        No stock set — will sync as out of stock unless you
-                        enter a quantity below.
-                      </p>
-                      <input
-                        id="stock-patch-simple"
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={stockOverrides[syncRequest.group.sku] ?? "0"}
-                        onChange={(e) =>
-                          setStockOverrides((prev) => ({
-                            ...prev,
-                            [syncRequest.group.sku]: e.target.value,
-                          }))
-                        }
-                        onKeyDown={(e) =>
-                          (e.key === "-" || e.key === "e" || e.key === ".") &&
-                          e.preventDefault()
-                        }
-                      />
-                    </div>
+                    <form>
+                      <div className="form-group">
+                        <label
+                          className="bold small"
+                          htmlFor="stock-patch-simple"
+                        >
+                          Initial stock
+                        </label>
+                        <p className="xsmall clr-warning">
+                          No stock set — will sync as out of stock unless you
+                          enter a quantity below.
+                        </p>
+                        <input
+                          id="stock-patch-simple"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={stockOverrides[syncRequest.group.sku] ?? "0"}
+                          onChange={(e) =>
+                            setStockOverrides((prev) => ({
+                              ...prev,
+                              [syncRequest.group.sku]: e.target.value,
+                            }))
+                          }
+                          onKeyDown={(e) =>
+                            (e.key === "-" || e.key === "e" || e.key === ".") &&
+                            e.preventDefault()
+                          }
+                        />
+                      </div>
+                    </form>
                   ) : (
-                    <div className="form-group">
-                      <p className="bold small">Stock per variant</p>
-                      <p className="xsmall clr-warning">
-                        Some variants have no stock — they'll sync as out of
-                        stock unless you set quantities below.
-                      </p>
-                      <ul
-                        className="grid gap-quarter stock-variant-list"
-                        role="list"
-                      >
-                        {syncRequest.group.rows
-                          .filter((r) => (r.stockQty ?? 0) === 0)
-                          .map((r) => (
-                            <li
-                              key={r.sku}
-                              className="row gap-1 ai-cen padding-b-half border-be  border-soft stock-variant-item"
-                            >
-                              <label
-                                className="flex-1"
-                                htmlFor={`stock-variant-${r.sku}`}
+                    <form>
+                      <div className="form-group">
+                        <p className="bold small">Stock per variant</p>
+                        <p className="xsmall clr-warning">
+                          Some variants have no stock — they'll sync as out of
+                          stock unless you set quantities below.
+                        </p>
+                        <ul
+                          className="grid gap-quarter stock-variant-list"
+                          role="list"
+                        >
+                          {syncRequest.group.rows
+                            .filter((r) => (r.stockQty ?? 0) === 0)
+                            .map((r) => (
+                              <li
+                                key={r.sku}
+                                className="row gap-1 ai-cen padding-b-half border-be  border-soft stock-variant-item"
                               >
-                                {r.label ?? r.sku}
-                              </label>
-                              <input
-                                id={`stock-variant-${r.sku}`}
-                                type="number"
-                                min="0"
-                                step="1"
-                                className="stock-variant-input"
-                                value={stockOverrides[r.sku] ?? "0"}
-                                onChange={(e) =>
-                                  setStockOverrides((prev) => ({
-                                    ...prev,
-                                    [r.sku]: e.target.value,
-                                  }))
-                                }
-                                onKeyDown={(e) =>
-                                  (e.key === "-" ||
-                                    e.key === "e" ||
-                                    e.key === ".") &&
-                                  e.preventDefault()
-                                }
-                              />
-                            </li>
-                          ))}
-                      </ul>
-                    </div>
+                                <label
+                                  className="flex-1"
+                                  htmlFor={`stock-variant-${r.sku}`}
+                                >
+                                  {r.label ?? r.sku}
+                                </label>
+                                <input
+                                  id={`stock-variant-${r.sku}`}
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  className="stock-variant-input"
+                                  value={stockOverrides[r.sku] ?? "0"}
+                                  onChange={(e) =>
+                                    setStockOverrides((prev) => ({
+                                      ...prev,
+                                      [r.sku]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(e) =>
+                                    (e.key === "-" ||
+                                      e.key === "e" ||
+                                      e.key === ".") &&
+                                    e.preventDefault()
+                                  }
+                                />
+                              </li>
+                            ))}
+                        </ul>
+                      </div>
+                    </form>
                   );
                 })()}
               {mode === "unpublish" && (
@@ -888,8 +914,9 @@ export default function ProductsPage() {
               )}
               {mode === "sync" && (
                 <p className="small clr-muted">
-                  Pushes current name, description, price, sale price, category,
-                  and variant details to WooCommerce.
+                  Pushes name, description, price, sale price, category,
+                  subcategory, and dimensions to WooCommerce, including child
+                  variants.
                 </p>
               )}
             </DialogConfirm>

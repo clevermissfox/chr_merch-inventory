@@ -10,6 +10,7 @@ function readAsBase64(file: File): Promise<string> {
   });
 }
 import type { NewProductFields, RefData } from "~/types/catalog";
+import { isSalePriceValid } from "~/utils/priceUtils";
 import FormGroupRef from "./FormGroupRef";
 import RichTextEditor from "./RichTextEditor";
 
@@ -159,39 +160,74 @@ export default function DialogCreateProduct({
                 },
               };
             } else {
-              imgBody = { productName: capturedName || sku, pastedUrl: capturedUrl };
+              imgBody = {
+                productName: capturedName || sku,
+                pastedUrl: capturedUrl,
+              };
             }
-            await fetch(`/api/catalog/product/${encodeURIComponent(sku)}/image`, {
+            await fetch(
+              `/api/catalog/product/${encodeURIComponent(sku)}/image`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify(imgBody),
+              },
+            );
+          } catch {
+            // Image failure is non-fatal — product was created, image can be added via Edit
+          }
+        }
+
+        // Publish immediately if the user chose "publish" — skips the extra
+        // manual sync step on the Products page. Best-effort: the product
+        // row already exists either way, so a failure here just leaves it
+        // as an unsynced draft the user can push normally from there.
+        if (form.publishedStatus === "publish" && data.productId) {
+          try {
+            await fetch("/api/catalog/sync_to_site", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               credentials: "include",
-              body: JSON.stringify(imgBody),
+              body: JSON.stringify({
+                mode: "selected",
+                productIds: [data.productId],
+                publish: true,
+              }),
             });
           } catch {
-            // Image failure is non-fatal — product was created, image can be added via Edit
+            // Non-fatal — product was created, sync can be retried from Products page
           }
         }
 
         onCreated(sku);
       })
       .catch((err: unknown) => {
-        onFailed(err instanceof Error ? err.message : "Failed to create product");
+        onFailed(
+          err instanceof Error ? err.message : "Failed to create product",
+        );
       });
   };
 
+  const salePriceValid = isSalePriceValid(
+    form.basePriceDollars,
+    form.salePriceDollars,
+  );
+
   const canSubmit =
-    form.category && form.subcategory && form.basePriceDollars && form.weightOz && !shortDescOverLimit;
+    form.category &&
+    form.subcategory &&
+    form.basePriceDollars &&
+    form.weightOz &&
+    !shortDescOverLimit &&
+    salePriceValid;
 
   return (
-    <dialog ref={ref} className="dialog dialog-product card" onCancel={onClose}>
+    <dialog ref={ref} className="dialog-product card" onCancel={onClose}>
       <div className="grid gap-1half dialog-inner dialog-product-inner">
         <div className="row jc-sb ai-cen">
           <h2>New Product</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-          >
+          <button type="button" onClick={onClose} aria-label="Close">
             <X aria-hidden="true" />
           </button>
         </div>
@@ -339,9 +375,7 @@ export default function DialogCreateProduct({
                     const selectedCat = refData.categories.find(
                       (c) => c.value === form.category,
                     );
-                    return (
-                      !!selectedCat && s.parentCode === selectedCat.code
-                    );
+                    return !!selectedCat && s.parentCode === selectedCat.code;
                   })
                   .sort((a, b) =>
                     (a.label ?? a.value).localeCompare(b.label ?? b.value),
@@ -393,6 +427,11 @@ export default function DialogCreateProduct({
                   }
                   placeholder="0.00"
                 />
+                {!salePriceValid && (
+                  <p role="alert" className="xsmall clr-danger">
+                    Sale price must be less than base price.
+                  </p>
+                )}
               </div>
 
               <div className="form-group flex-1">
@@ -646,7 +685,8 @@ export default function DialogCreateProduct({
                         setImageMode("file");
                         setImageUrl("");
                         setImageFile(null);
-                        if (imageFileRef.current) imageFileRef.current.value = "";
+                        if (imageFileRef.current)
+                          imageFileRef.current.value = "";
                       }}
                     />
                     Upload file
@@ -659,7 +699,8 @@ export default function DialogCreateProduct({
                       onChange={() => {
                         setImageMode("url");
                         setImageFile(null);
-                        if (imageFileRef.current) imageFileRef.current.value = "";
+                        if (imageFileRef.current)
+                          imageFileRef.current.value = "";
                       }}
                     />
                     Paste Drive link
@@ -682,7 +723,8 @@ export default function DialogCreateProduct({
                 )}
                 {(imageFile || imageUrl.trim()) && (
                   <p className="xsmall clr-muted">
-                    Image will be uploaded after the product is created.
+                    Image will be sent to dev for processing after the product
+                    is created.
                   </p>
                 )}
               </div>
@@ -701,7 +743,11 @@ export default function DialogCreateProduct({
                 disabled={!canSubmit}
               >
                 <Plus aria-hidden="true" />
-                <span>Create Product</span>
+                <span>
+                  {form.publishedStatus === "publish"
+                    ? "Create + Publish"
+                    : "Create Product"}
+                </span>
               </button>
               <button
                 type="button"
