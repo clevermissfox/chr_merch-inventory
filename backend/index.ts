@@ -27,6 +27,7 @@ import {
   ensureCategoryWooId,
   ensureDescriptionRowsExist,
   ensureDimensionExists,
+  toTitleCase,
   parseCreateVariantsBody,
   parseNewProductFields,
   parseUpdateProductFields,
@@ -866,9 +867,11 @@ app.post(
           .trim()
           .toLowerCase()
           .replace(/[^a-z0-9 ]/g, "");
-        // label is the sheet display name for subcategories (user-provided, may include capitals/symbols)
-        // Woo name + slug are always the lowercase normalizedValue
-        const sheetLabel = label?.trim() || normalizedValue;
+        // label is the sheet display name for subcategories — the one
+        // human-facing string in ref data, always title-cased regardless of
+        // how the user typed it in. Woo name + slug are always the
+        // lowercase normalizedValue.
+        const sheetLabel = toTitleCase(label?.trim() || normalizedValue);
         const display = type === "category" ? "default" : "subcategories";
 
         // Parent category may not have a Woo ID yet (never synced, or stale

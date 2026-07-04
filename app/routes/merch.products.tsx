@@ -297,6 +297,9 @@ export default function ProductsPage() {
   } | null>(null);
   type SyncRequest = { type: "single"; group: CatalogGroup } | { type: "all" };
   const [syncRequest, setSyncRequest] = useState<SyncRequest | null>(null);
+  const [pendingSyncProductId, setPendingSyncProductId] = useState<
+    string | null
+  >(null);
   const [publishDrafts, setPublishDrafts] = useState(false);
   const [publishStatus, setPublishStatus] =
     useState<DialogConfirmStatus>("idle");
@@ -320,6 +323,27 @@ export default function ProductsPage() {
     }
   }, []);
 
+  // Opens the zero-stock sync-confirm dialog for a product once the catalog
+  // reflects its post-write state (fresh row data, correct stock). Dialogs
+  // that create/edit and then want to sync (Add & Sync, Save & Sync,
+  // publish-on-create) request this instead of calling sync_to_site
+  // themselves, so they all go through the same force-stock prompt as the
+  // Products page's own sync button.
+  useEffect(() => {
+    // Wait for the in-flight reload to actually finish — loadCatalog() and
+    // setPendingSyncProductId() are called back-to-back, so acting the
+    // instant pendingSyncProductId is set would search the catalog from
+    // before the write (missing the new/edited row entirely).
+    if (!pendingSyncProductId || loading || !catalog) return;
+    const freshGroup = catalog.groups.find(
+      (g) => g.productId === pendingSyncProductId,
+    );
+    setPendingSyncProductId(null);
+    if (freshGroup) {
+      setSyncRequest({ type: "single", group: freshGroup });
+    }
+  }, [catalog, loading, pendingSyncProductId]);
+
   const handlePending = () => {
     setShowCreate(false);
     setPendingCreate(true);
@@ -338,11 +362,16 @@ export default function ProductsPage() {
   const handleCreated = (sku: string) => {
     setPendingCreate(false);
     setCreateError(null);
-    setLastCreated(sku);
+    setLastCreated(`Created — new SKU: ${sku}`);
     setLastDeleted(null);
     setLastEdited(null);
     showToast(`Created — new SKU: ${sku}`, "success");
     loadCatalog();
+  };
+
+  const handleCreatedThenSync = (sku: string, productId: string) => {
+    handleCreated(sku);
+    setPendingSyncProductId(productId);
   };
 
   const performDeleteProduct = async (group: CatalogGroup): Promise<void> => {
@@ -526,7 +555,7 @@ export default function ProductsPage() {
       : createError
         ? `Create failed — ${createError}`
         : lastCreated
-          ? `Created — new SKU: ${lastCreated}`
+          ? lastCreated
           : lastDeleted
             ? `Deleted — SKU: ${lastDeleted}`
             : lastSynced
@@ -658,6 +687,17 @@ export default function ProductsPage() {
             showToast(`Saved — ${sku}`, "success");
             loadCatalog();
           }}
+          onSavedThenSync={() => {
+            const sku = pendingEdit.sku;
+            const productId = pendingEdit.productId;
+            setPendingEdit(null);
+            setLastCreated(null);
+            setLastDeleted(null);
+            setLastEdited(sku);
+            showToast(`Saved — ${sku}`, "success");
+            loadCatalog();
+            setPendingSyncProductId(productId);
+          }}
         />
       )}
 
@@ -682,6 +722,7 @@ export default function ProductsPage() {
         <DialogCreateProduct
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
+          onCreatedThenSync={handleCreatedThenSync}
           onPending={handlePending}
           onFailed={handleFailed}
         />
@@ -693,7 +734,13 @@ export default function ProductsPage() {
           onClose={() => setPendingAddVariants(null)}
           onCreated={(skus) => {
             setPendingAddVariants(null);
-            setLastCreated(skus[0] ?? null);
+            setLastCreated(
+              skus.length === 1
+                ? `Created — new SKU: ${skus[0]}`
+                : skus.length > 0
+                  ? `Created ${skus.length} new variants`
+                  : null,
+            );
             setLastDeleted(null);
             showToast(
               skus.length === 1
@@ -702,6 +749,26 @@ export default function ProductsPage() {
               "success",
             );
             loadCatalog();
+          }}
+          onCreatedThenSync={(skus) => {
+            const productId = pendingAddVariants.productId;
+            setPendingAddVariants(null);
+            setLastCreated(
+              skus.length === 1
+                ? `Created — new SKU: ${skus[0]}`
+                : skus.length > 0
+                  ? `Created ${skus.length} new variants`
+                  : null,
+            );
+            setLastDeleted(null);
+            showToast(
+              skus.length === 1
+                ? `Created — new SKU: ${skus[0]}`
+                : `Created ${skus.length} new variants`,
+              "success",
+            );
+            loadCatalog();
+            setPendingSyncProductId(productId);
           }}
         />
       )}

@@ -22,12 +22,14 @@ interface DialogCreateVariantProps {
   group: CatalogGroup;
   onClose: () => void;
   onCreated: (skus: string[]) => void;
+  onCreatedThenSync: (skus: string[]) => void;
 }
 
 export default function DialogCreateVariant({
   group,
   onClose,
   onCreated,
+  onCreatedThenSync,
 }: DialogCreateVariantProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const [refData, setRefData] = useState<RefData | null>(null);
@@ -43,7 +45,6 @@ export default function DialogCreateVariant({
   const [descriptionVariant, setDescriptionVariant] = useState("");
   const [descOverLimit, setDescOverLimit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingDupes, setPendingDupes] = useState<DupeSkuConflict[] | null>(
     null,
@@ -230,38 +231,10 @@ export default function DialogCreateVariant({
     const skus = await createVariants();
     setSubmitting(false);
     if (!skus) return;
-
-    setSyncing(true);
-    try {
-      const res = await fetch("/api/catalog/sync_to_site", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          mode: "selected",
-          productIds: [group.productId],
-          publish: group.publishedStatus !== "draft",
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Sync failed");
-      const result: { status: string; error?: string } | undefined =
-        data.results?.[0];
-      if (result?.status === "failed")
-        throw new Error(result.error || "Sync failed");
-      setSyncing(false);
-      onCreated(skus);
-    } catch (err) {
-      // Variants were already created successfully — leave the dialog open
-      // showing the sync error rather than closing it (which would hide the
-      // message immediately), same as DialogEditProduct's Save & Sync. The
-      // sheet write already succeeded; sync can be retried from the
-      // Products page like any other unsynced product.
-      setSyncing(false);
-      setSubmitError(
-        `Variants created, but sync failed: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
-    }
+    // Sync itself happens in the parent, which opens the same zero-stock
+    // confirm prompt used by the Products page's own sync button — new
+    // variants have no stock yet, so that prompt is required, not optional.
+    onCreatedThenSync(skus);
   };
 
   const resolveDupe = async (
@@ -658,9 +631,7 @@ export default function DialogCreateVariant({
               <button
                 type="submit"
                 className="btn-primary row gap-half ai-cen"
-                disabled={
-                  !canSubmit || submitting || syncing || pendingDupes !== null
-                }
+                disabled={!canSubmit || submitting || pendingDupes !== null}
               >
                 {submitting ? (
                   <>
@@ -681,28 +652,17 @@ export default function DialogCreateVariant({
                   type="button"
                   className="btn-secondary row gap-half ai-cen"
                   onClick={() => void handleAddAndSync()}
-                  disabled={
-                    !canSubmit ||
-                    submitting ||
-                    syncing ||
-                    pendingDupes !== null
-                  }
+                  disabled={!canSubmit || submitting || pendingDupes !== null}
                 >
-                  {syncing ? (
-                    <span className="render-loader">Syncing…</span>
-                  ) : (
-                    <>
-                      <Globe aria-hidden="true" />
-                      <span>Add &amp; Sync</span>
-                    </>
-                  )}
+                  <Globe aria-hidden="true" />
+                  <span>Add &amp; Sync</span>
                 </button>
               )}
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
-                disabled={submitting || syncing || resolvingDupeSku !== null}
+                disabled={submitting || resolvingDupeSku !== null}
               >
                 Cancel
               </button>

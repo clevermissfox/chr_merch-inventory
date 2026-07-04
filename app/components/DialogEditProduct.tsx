@@ -9,6 +9,7 @@ interface DialogEditProductProps {
   group: CatalogGroup;
   onClose: () => void;
   onSaved: () => void;
+  onSavedThenSync: () => void;
 }
 
 interface FormState {
@@ -43,6 +44,7 @@ export default function DialogEditProduct({
   group,
   onClose,
   onSaved,
+  onSavedThenSync,
 }: DialogEditProductProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const original = useRef<FormState>(initForm(group));
@@ -161,29 +163,12 @@ export default function DialogEditProduct({
     setSubmitError(null);
     try {
       if (isDirty) await saveToSheet();
-      const res = await fetch("/api/catalog/sync_to_site", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          mode: "selected",
-          productIds: [group.productId],
-          publish: group.publishedStatus !== "draft",
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Sync failed");
-      const result: { status: string; error?: string } | undefined =
-        data.results?.[0];
-      if (result?.status === "failed")
-        throw new Error(result.error || "Sync failed");
-      if (result?.status === "sku_collision_trashed")
-        throw new Error(
-          result.error || "A trashed WooCommerce product exists with this SKU",
-        );
-      onSaved();
+      // Sync itself happens in the parent, which opens the same zero-stock
+      // confirm prompt used by the Products page's own sync button, instead
+      // of pushing to Woo unconditionally here.
+      onSavedThenSync();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Save & sync failed");
+      setSubmitError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSyncing(false);
     }
@@ -432,7 +417,7 @@ export default function DialogEditProduct({
                 }
               >
                 {syncing ? (
-                  <span className="render-loader">Syncing…</span>
+                  <span className="render-loader">Saving…</span>
                 ) : (
                   <>
                     <Globe aria-hidden="true" />

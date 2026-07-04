@@ -462,13 +462,25 @@ menu.user-menu {
 }
 
 .toast-stack {
+  /* Reset the browser's default [popover] UA styles (margin: auto, border,
+     padding, background, width/height: fit-content) before applying our own. */
+  margin: 0;
+  border: none;
+  padding: 0;
+  background: none;
+  overflow: visible;
   position: fixed;
   inset-block-end: 1.5em;
   inset-inline-end: 1.5em;
-  z-index: 1000;
+  inset-block-start: auto;
+  inset-inline-start: auto;
   display: grid;
   gap: var(--spacing-050, 0.5em);
   max-inline-size: min(90vw, 32em);
+}
+
+.toast-stack:popover-open {
+  display: grid;
 }
 
 .toast-item {

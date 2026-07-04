@@ -41,6 +41,17 @@ export function colByHeader(headers: string[], name: string): number {
   return idx;
 }
 
+// Subcategory labels are the one human-facing display string in ref data —
+// everything else (category/subcategory/design/color/size values) is a
+// lowercase slug, and codes are uppercase. Capitalizes each space-separated
+// word regardless of how the user typed it in.
+export function toTitleCase(text: string): string {
+  return text.replace(
+    /\S+/g,
+    (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+  );
+}
+
 export async function readRefData(
   sheets: SheetsClient,
   spreadsheetId: string,
@@ -534,10 +545,35 @@ export async function createProductRow(
   const sheetRow = values.length + 1;
   const rowId = crypto.randomUUID();
 
-  // product_id stays sheet-formula-driven (not written by our code) — GAS
-  // still creates rows in this sheet directly and needs the formula to keep
-  // working unmodified. See project notes for the plan to make that formula
-  // itself stable (row_id-derived instead of positional COUNTIFS).
+  // product_id used to be a live ARRAYFORMULA (COUNTIFS by row position) —
+  // any deletion above a row silently renumbered every product_id below it,
+  // while variant rows keep whatever product_id they were created with
+  // forever. GAS creates its own rows independently and assigns its own
+  // product_id, so this column no longer needs to be formula-driven for our
+  // side — assigning it once here, as a plain value, means an existing
+  // row's product_id can never change again regardless of what gets deleted
+  // around it later. Requires the ARRAYFORMULA to be cleared from this
+  // column in the sheet first, or Sheets will reject writes into its spill
+  // range.
+  const refData = await readRefData(sheets, spreadsheetId);
+  const categoryEntry = refData.categories.find(
+    (c) => c.value === fields.category,
+  );
+  if (!categoryEntry?.code) {
+    throw new Error(`No category code found for category "${fields.category}"`);
+  }
+  const productIdIdx = col("product_id");
+  const existingProductIds = values
+    .slice(1)
+    .map((row) => String((row as string[])[productIdIdx] ?? "").trim())
+    .filter(Boolean);
+  const prefix = `${categoryEntry.code}-`;
+  const maxExisting = existingProductIds.reduce((max, id) => {
+    if (!id.startsWith(prefix)) return max;
+    const num = Number(id.slice(prefix.length));
+    return Number.isFinite(num) && num > max ? num : max;
+  }, 0);
+  const newProductId = `${prefix}${String(maxExisting + 1).padStart(4, "0")}`;
 
   // Write only the user-provided cells — never touch other formula/protected columns
   const cell = (name: string, value: string) => ({
@@ -546,6 +582,7 @@ export async function createProductRow(
   });
 
   const writes = [
+    cell("product_id", newProductId),
     cell("category", fields.category),
     cell("subcategory", fields.subcategory),
     cell("base_price_dollars", fields.basePriceDollars),

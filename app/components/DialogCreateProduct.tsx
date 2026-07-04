@@ -11,12 +11,14 @@ function readAsBase64(file: File): Promise<string> {
 }
 import type { NewProductFields, RefData } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
+import { useToast } from "~/context/ToastContext";
 import FormGroupRef from "./FormGroupRef";
 import RichTextEditor from "./RichTextEditor";
 
 interface DialogCreateProductProps {
   onClose: () => void;
   onCreated: (sku: string) => void;
+  onCreatedThenSync: (sku: string, productId: string) => void;
   onPending: () => void;
   onFailed: (error: string) => void;
 }
@@ -58,9 +60,11 @@ const empty: FormState = {
 export default function DialogCreateProduct({
   onClose,
   onCreated,
+  onCreatedThenSync,
   onPending,
   onFailed,
 }: DialogCreateProductProps) {
+  const { showToast } = useToast();
   const ref = useRef<HTMLDialogElement>(null);
   const [refData, setRefData] = useState<RefData | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -153,11 +157,13 @@ export default function DialogCreateProduct({
             if (capturedFile) {
               imgBody = {
                 productName: capturedName || sku,
-                file: {
-                  fileName: capturedFile.name,
-                  fileData: await readAsBase64(capturedFile),
-                  mimeType: capturedFile.type,
-                },
+                files: [
+                  {
+                    fileName: capturedFile.name,
+                    fileData: await readAsBase64(capturedFile),
+                    mimeType: capturedFile.type,
+                  },
+                ],
               };
             } else {
               imgBody = {
@@ -165,7 +171,7 @@ export default function DialogCreateProduct({
                 pastedUrl: capturedUrl,
               };
             }
-            await fetch(
+            const imgRes = await fetch(
               `/api/catalog/product/${encodeURIComponent(sku)}/image`,
               {
                 method: "POST",
@@ -174,33 +180,33 @@ export default function DialogCreateProduct({
                 body: JSON.stringify(imgBody),
               },
             );
-          } catch {
-            // Image failure is non-fatal — product was created, image can be added via Edit
+            const imgData = await imgRes.json();
+            if (!imgData.ok) {
+              showToast(
+                `Image upload failed — you can add it via Edit. (${imgData.error || "unknown error"})`,
+                "warning",
+              );
+            }
+          } catch (err) {
+            // Non-fatal — product was created, image can be added via Edit
+            showToast(
+              `Image upload failed — you can add it via Edit. (${err instanceof Error ? err.message : "unknown error"})`,
+              "warning",
+            );
           }
         }
 
         // Publish immediately if the user chose "publish" — skips the extra
-        // manual sync step on the Products page. Best-effort: the product
-        // row already exists either way, so a failure here just leaves it
-        // as an unsynced draft the user can push normally from there.
+        // manual sync step on the Products page. The sync itself is handed
+        // off to the parent, which opens the same zero-stock confirm prompt
+        // used by the Products page's own sync button — a brand new
+        // product has no stock yet, so that prompt is required, not
+        // optional.
         if (form.publishedStatus === "publish" && data.productId) {
-          try {
-            await fetch("/api/catalog/sync_to_site", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({
-                mode: "selected",
-                productIds: [data.productId],
-                publish: true,
-              }),
-            });
-          } catch {
-            // Non-fatal — product was created, sync can be retried from Products page
-          }
+          onCreatedThenSync(sku, data.productId);
+        } else {
+          onCreated(sku);
         }
-
-        onCreated(sku);
       })
       .catch((err: unknown) => {
         onFailed(
@@ -727,6 +733,14 @@ export default function DialogCreateProduct({
                     is created.
                   </p>
                 )}
+                {!imageFile &&
+                  !imageUrl.trim() &&
+                  form.publishedStatus === "publish" && (
+                    <p className="xsmall clr-warning">
+                      No image selected — this product will go live on the
+                      site with no image until one is added via Edit.
+                    </p>
+                  )}
               </div>
             </fieldset>
 
