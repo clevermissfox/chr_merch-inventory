@@ -6,7 +6,17 @@ interface Props {
   row: CatalogRow;
   group: CatalogGroup;
   onClose: () => void;
-  onDeleted: (sku: string) => Promise<void>;
+  /**
+   * convertedToSimpleProductId is set when this delete was the last variant
+   * and the parent successfully converted to a simple product on Woo — the
+   * caller should follow up with the same zero-stock confirm flow used
+   * elsewhere, since a freshly-converted simple product has no stock of its
+   * own yet (it was tracked per-variation before).
+   */
+  onDeleted: (
+    sku: string,
+    convertedToSimpleProductId?: string,
+  ) => Promise<void>;
   onDeleteProduct: (group: CatalogGroup) => Promise<void>;
 }
 
@@ -47,7 +57,12 @@ export default function DialogDeleteVariant({
       );
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Delete failed");
-      await onDeleted(row.sku);
+      await onDeleted(
+        row.sku,
+        data.wasLastVariant && data.convertedToSimple
+          ? data.productId
+          : undefined,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setStatus("idle");
@@ -99,8 +114,9 @@ export default function DialogDeleteVariant({
           {isLast ? (
             <p className="small clr-muted">
               This is the only variant of <strong>{group.displayName}</strong>.
-              Deleting it will leave the product with no variants. Choose how to
-              proceed:
+              Deleting it will leave the product with no variants. If you
+              convert to simple product you'll be asked for a new stock quantity
+              prior to syncing. Choose how to proceed:
             </p>
           ) : (
             <p className="small clr-muted">
@@ -111,8 +127,9 @@ export default function DialogDeleteVariant({
 
           {row.wooVariantId && (
             <p className="small clr-warning">
-              This variant is live on the site — it will also be permanently
-              deleted from WooCommerce.
+              This variant is{" "}
+              {group.publishedStatus === "draft" ? "stored" : "live"} on the
+              site — it will also be permanently deleted from WooCommerce.
             </p>
           )}
         </div>

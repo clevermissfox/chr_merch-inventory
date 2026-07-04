@@ -16,13 +16,29 @@ export interface ImageNotificationParams {
   uploaderEmail: string;
   uploadedFiles?: Array<{ name: string; link: string }>;
   pastedUrl?: string;
+  folderLink?: string;
+  notes?: string;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export async function sendImageNotification(
   params: ImageNotificationParams,
 ): Promise<void> {
-  const { sku, productName, uploaderEmail, uploadedFiles = [], pastedUrl } =
-    params;
+  const {
+    sku,
+    productName,
+    uploaderEmail,
+    uploadedFiles = [],
+    pastedUrl,
+    folderLink,
+    notes,
+  } = params;
 
   const devEmail = process.env.DEV_EMAIL;
   if (!devEmail) {
@@ -86,12 +102,27 @@ export async function sendImageNotification(
               <p style="margin:0 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">
                 ${hasDriveFiles ? "Uploaded to Drive" : "Submitted link"}
               </p>
-              ${hasDriveFiles
-                ? `<table width="100%" cellpadding="0" cellspacing="0">${driveLinksHtml}</table>`
-                : `<a href="${pastedUrl}" style="display:inline-block;background:#282828;color:#d3aa56;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open link →</a>
+              ${
+                hasDriveFiles && folderLink
+                  ? `<a href="${folderLink}" style="display:inline-block;margin-bottom:14px;background:#282828;color:#d3aa56;text-decoration:none;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;">Open Drive folder →</a>`
+                  : ""
+              }
+              ${
+                hasDriveFiles
+                  ? `<table width="100%" cellpadding="0" cellspacing="0">${driveLinksHtml}</table>`
+                  : `<a href="${pastedUrl}" style="display:inline-block;background:#282828;color:#d3aa56;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open link →</a>
                    <p style="margin:12px 0 0;font-size:12px;color:#999;word-break:break-all;">${pastedUrl}</p>`
               }
             </td></tr>
+
+            ${
+              notes
+                ? `<tr><td style="padding:20px 0 0;">
+              <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">Notes</p>
+              <p style="margin:0;font-size:14px;color:#282828;white-space:pre-wrap;">${escapeHtml(notes)}</p>
+            </td></tr>`
+                : ""
+            }
 
           </table>
         </td></tr>
@@ -113,10 +144,12 @@ export async function sendImageNotification(
   const textLines = [
     `${uploaderEmail} submitted ${hasDriveFiles ? `${fileCount} image${fileCount !== 1 ? "s" : ""}` : "an image link"} for ${productName} (${sku}).`,
     `Please optimize and watermark before uploading to WooCommerce.`,
+    hasDriveFiles && folderLink ? `Drive folder: ${folderLink}` : "",
     hasDriveFiles
       ? uploadedFiles.map((f) => `${f.name}: ${f.link}`).join("\n")
       : `Link: ${pastedUrl}`,
-  ];
+    notes ? `Notes: ${notes}` : "",
+  ].filter(Boolean);
 
   const { error } = await resend.emails.send({
     from: "CHR Merch Hub <onboarding@resend.dev>",

@@ -1,6 +1,8 @@
 export interface SkipReasonFormatted {
   label: string;
   hint: string | null;
+  /** Label for the "review on Products page" link, matching this reason's tone. Null means no link should be shown. */
+  cta: string | null;
 }
 
 export function formatSkipReason(reason: string): SkipReasonFormatted {
@@ -8,28 +10,32 @@ export function formatSkipReason(reason: string): SkipReasonFormatted {
     return {
       label: "Not yet published to site",
       hint: "Stock is saved to the sheet. Publish this product to WooCommerce to enable site sync.",
+      cta: "Review & publish on Products page →",
     };
   }
   if (reason === "draft_unpublished") {
     return {
       label: "Draft — not published to site",
       hint: "Stock is saved to the sheet. Publish this product to WooCommerce to enable site sync.",
+      cta: "Review & publish on Products page →",
     };
   }
   if (reason.toLowerCase().includes("missing woo parent product")) {
     return {
       label: "Not yet published to site",
       hint: "Stock is recorded in the sheet and will sync automatically once the product is published to WooCommerce.",
+      cta: "Review on Products page →",
     };
   }
   if (reason === "variable_parent_not_editable") {
     return {
       label: "Variable product parent — update individual variants",
       hint: null,
+      cta: null,
     };
   }
   if (reason === "not_found") {
-    return { label: "SKU not found in catalog", hint: null };
+    return { label: "SKU not found in catalog", hint: null, cta: null };
   }
-  return { label: reason, hint: null };
+  return { label: reason, hint: null, cta: null };
 }

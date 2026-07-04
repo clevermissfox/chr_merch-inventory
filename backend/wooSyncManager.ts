@@ -767,6 +767,145 @@ export async function convertWooProductToSimple(wooId: number): Promise<void> {
   }
 }
 
+export interface WooProductImage {
+  id: number;
+  src: string;
+  name: string;
+}
+
+export async function getWooProductImages(
+  wooId: number,
+): Promise<WooProductImage[]> {
+  const woo = getWooConfig();
+  // Cache-busting query param — some WP hosts front the REST API with a
+  // CDN/edge cache keyed on the exact URL, which doesn't get purged by a
+  // raw REST PUT the way normal post saves do. A unique param per request
+  // forces a fresh origin hit instead of a stale cached one.
+  const url = buildWooUrl(woo, `products/${wooId}`, {
+    _fields: "images",
+    _: String(Date.now()),
+  });
+  const res = await fetch(url, {
+    headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo product fetch failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  const images = Array.isArray(data.images) ? data.images : [];
+  return images.map((img: { id: number; src: string; name?: string }) => ({
+    id: img.id,
+    src: img.src,
+    name: img.name ?? "",
+  }));
+}
+
+// Woo has no single-image-delete endpoint — removal is done by PUTting back
+// the full images array minus the one being dropped. First item in the
+// array becomes the featured image; order of the rest is preserved.
+export async function removeWooProductImage(
+  wooId: number,
+  imageId: number,
+): Promise<WooProductImage[]> {
+  const current = await getWooProductImages(wooId);
+  const remaining = current.filter((img) => img.id !== imageId);
+  if (remaining.length === current.length) {
+    throw new Error(`Image ${imageId} not found on this product`);
+  }
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}`);
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ images: remaining.map((img) => ({ id: img.id })) }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo image removal failed (${res.status}): ${text}`);
+  }
+  return remaining;
+}
+
+export interface WooVariationImage {
+  wooVariantId: number;
+  sku: string;
+  image: WooProductImage;
+}
+
+// A variation has at most one image, unlike the parent's gallery — only
+// variations that currently have their own image are returned. When a
+// variation has none set, Woo's REST API doesn't return null — it falls
+// back to reporting the parent's own featured/gallery image as the
+// variation's "image", so the storefront still has something to show.
+// That's not a real per-variant image, so `parentImageIds` lets the caller
+// filter those out rather than offering to "remove" an image that was
+// never actually set on the variation.
+export async function getWooVariationImages(
+  wooId: number,
+  parentImageIds: Set<number> = new Set(),
+): Promise<WooVariationImage[]> {
+  const woo = getWooConfig();
+  const results: WooVariationImage[] = [];
+  let page = 1;
+  while (true) {
+    const url = buildWooUrl(woo, `products/${wooId}/variations`, {
+      per_page: "100",
+      page: String(page),
+      _fields: "id,sku,image",
+      _: String(Date.now()),
+    });
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Woo variations fetch failed (${res.status}): ${text}`);
+    }
+    const arr = (await res.json()) as Array<{
+      id: number;
+      sku?: string;
+      image?: { id: number; src: string; name?: string } | null;
+    }>;
+    if (!arr.length) break;
+    for (const v of arr) {
+      if (v.image && !parentImageIds.has(v.image.id)) {
+        results.push({
+          wooVariantId: v.id,
+          sku: v.sku?.trim() ?? "",
+          image: { id: v.image.id, src: v.image.src, name: v.image.name ?? "" },
+        });
+      }
+    }
+    if (arr.length < 100) break;
+    page += 1;
+  }
+  return results;
+}
+
+export async function removeWooVariationImage(
+  wooId: number,
+  wooVariantId: number,
+): Promise<void> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}/variations/${wooVariantId}`);
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ image: null }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Woo variation image removal failed (${res.status}): ${text}`);
+  }
+}
+
 export async function deleteProductFromWoo(wooId: number): Promise<void> {
   const woo = getWooConfig();
   const url = buildWooUrl(woo, `products/${wooId}`, { force: "true" });

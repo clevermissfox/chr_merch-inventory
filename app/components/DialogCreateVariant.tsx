@@ -39,13 +39,19 @@ export default function DialogCreateVariant({
   const [selectedDimensions, setSelectedDimensions] = useState<Set<string>>(
     new Set(),
   );
-  const [design, setDesign] = useState("");
+  // Defaults to the parent product's own design/graphic — most variants
+  // share it, and the user can still override via the select below.
+  const [design, setDesign] = useState(group.design ?? "");
   const [designVariant, setDesignVariant] = useState("");
   const [weightOzVariant, setWeightOzVariant] = useState("");
   const [descriptionVariant, setDescriptionVariant] = useState("");
   const [descOverLimit, setDescOverLimit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [dupeConflict, setDupeConflict] = useState<{
+    existing: string[];
+    batchGroups: string[][];
+  } | null>(null);
   const [pendingDupes, setPendingDupes] = useState<DupeSkuConflict[] | null>(
     null,
   );
@@ -124,6 +130,7 @@ export default function DialogCreateVariant({
   // so callers just need to bail out without showing a second error.
   const createVariants = async (): Promise<string[] | null> => {
     setSubmitError(null);
+    setDupeConflict(null);
 
     const existingKeys = new Set(
       group.rows.map((r) =>
@@ -143,10 +150,14 @@ export default function DialogCreateVariant({
     // the *current* selections resolving to the same SKU as each other (most
     // often because a dimension is selected alongside multiple sizes — the
     // SKU formula uses dimension over size whenever both are set, so e.g.
-    // "x-large + 3x3" and "no size + 3x3" aren't actually two variants).
+    // "x-large + 3x3" and "no size + 3x3" aren't actually two variants). For
+    // the batch case, group every colliding label together (not just the
+    // "extra" ones) so the message can show the whole equivalent set at
+    // once — otherwise a lone "cream / one size" reads like it conflicts
+    // with an existing row, when really it's tied to "cream / no size"
+    // earlier in the same selection.
     const existingDupes: string[] = [];
-    const batchDupes: string[] = [];
-    const seenKeys = new Set<string>();
+    const batchGroups = new Map<string, string[]>();
     for (const c of colorOpts) {
       for (const s of sizeOpts) {
         for (const d of dimOpts) {
@@ -161,26 +172,22 @@ export default function DialogCreateVariant({
             "base variant";
           if (existingKeys.has(key)) {
             existingDupes.push(label);
-          } else if (seenKeys.has(key)) {
-            batchDupes.push(label);
+          } else {
+            const group = batchGroups.get(key);
+            if (group) group.push(label);
+            else batchGroups.set(key, [label]);
           }
-          seenKeys.add(key);
         }
       }
     }
-    if (existingDupes.length || batchDupes.length) {
-      const parts: string[] = [];
-      if (existingDupes.length) {
-        parts.push(
-          `${existingDupes.length === 1 ? "Variant" : "Variants"} already exist${existingDupes.length === 1 ? "s" : ""}: ${existingDupes.join(", ")}.`,
-        );
-      }
-      if (batchDupes.length) {
-        parts.push(
-          `These selections resolve to the same SKU as another combination you picked, since dimensions take priority over size — remove the duplicate size or dimension: ${batchDupes.join(", ")}.`,
-        );
-      }
-      setSubmitError(parts.join(" "));
+    const batchDupeGroups = Array.from(batchGroups.values()).filter(
+      (labels) => labels.length > 1,
+    );
+    if (existingDupes.length || batchDupeGroups.length) {
+      setDupeConflict({
+        existing: existingDupes,
+        batchGroups: batchDupeGroups,
+      });
       return null;
     }
 
@@ -516,26 +523,11 @@ export default function DialogCreateVariant({
                 disabled={submitting}
               />
             </div>
-            <div className="form-group">
-              <label className="bold">
-                Bulk Variant Description{" "}
-                <span className="clr-muted xsmall">(optional)</span>
-              </label>
-              <RichTextEditor
-                value={descriptionVariant}
-                onChange={setDescriptionVariant}
-                onOverLimit={setDescOverLimit}
-                disabled={submitting}
-                placeholder="Describe what's unique about this variant…"
-                variant="simple"
-                maxChars={150}
-              />
-            </div>
+
             {variantCount > 0 && !hasManualSelection && (
               <p className="small clr-warning">
                 Pick at least one color, size, or design — a dimension alone
-                (inherited from the product) isn't enough to create a
-                variant.
+                (inherited from the product) isn't enough to create a variant.
               </p>
             )}
             {canSubmit && (
@@ -619,6 +611,40 @@ export default function DialogCreateVariant({
                   <p role="alert" className="status-line" data-tone="error">
                     {dupeResolveError}
                   </p>
+                )}
+              </div>
+            )}
+            {dupeConflict && (
+              <div className="grid gap-half">
+                {dupeConflict.existing.length > 0 && (
+                  <div className="grid gap-quarter">
+                    <p role="alert" className="status-line" data-tone="error">
+                      {dupeConflict.existing.length === 1
+                        ? "Variant"
+                        : "Variants"}{" "}
+                      already exist
+                      {dupeConflict.existing.length === 1 ? "s" : ""}:
+                    </p>
+                    <ul className="grid gap-quarter xsmall" role="list">
+                      {dupeConflict.existing.map((label) => (
+                        <li key={label}>{label}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {dupeConflict.batchGroups.length > 0 && (
+                  <div className="grid gap-quarter">
+                    <p role="alert" className="status-line" data-tone="error">
+                      These selections in your current picks resolve to the same
+                      SKU as each other (dimensions take priority over size) —
+                      keep only one from each group:
+                    </p>
+                    <ul className="grid gap-quarter xsmall" role="list">
+                      {dupeConflict.batchGroups.map((group) => (
+                        <li key={group.join("|")}>{group.join(" = ")}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             )}

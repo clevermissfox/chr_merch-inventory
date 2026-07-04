@@ -4,6 +4,7 @@ import type { CatalogGroup } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
 import RichTextEditor from "./RichTextEditor";
 import ImageUploadSection from "./ImageUploadSection";
+import WooImageGallery from "./WooImageGallery";
 
 interface DialogEditProductProps {
   group: CatalogGroup;
@@ -68,9 +69,26 @@ export default function DialogEditProduct({
     ) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
-  const isDirty = (Object.keys(form) as Array<keyof FormState>).some(
+  const dirtyFields = (Object.keys(form) as Array<keyof FormState>).filter(
     (k) => form[k] !== original.current[k],
   );
+  const isDirty = dirtyFields.length > 0;
+
+  // Temporary diagnostic for an intermittent bug: Save/Save & Sync appear
+  // enabled on open with zero user interaction, self-resolving without any
+  // state change we've been able to catch. Logs every time isDirty flips so
+  // the next occurrence shows exactly which field(s) original vs form
+  // disagreed on, and whether it happened on mount or after some render.
+  useEffect(() => {
+    console.log("[DialogEditProduct] isDirty changed", {
+      sku: group.sku,
+      isDirty,
+      dirtyFields,
+      form,
+      original: original.current,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty]);
 
   const validate = (): string | null => {
     const orig = original.current;
@@ -206,70 +224,72 @@ export default function DialogEditProduct({
               disabled={submitting}
             />
           </div>
+          <div className="grid gap-half">
+            <div className="row gap-1 fw-wrap ai-end">
+              <div className="form-group flex-1">
+                <label htmlFor="ep-price" className="bold">
+                  Base price ($)
+                </label>
+                <input
+                  id="ep-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.basePriceDollars}
+                  onChange={set("basePriceDollars")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  required
+                  disabled={submitting}
+                />
+              </div>
+              <div className="form-group flex-1">
+                <label htmlFor="ep-sale-price" className="bold">
+                  Sale price ($){" "}
+                  <span className="clr-muted xsmall">(optional)</span>
+                </label>
+                <input
+                  id="ep-sale-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.salePriceDollars}
+                  onChange={set("salePriceDollars")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  disabled={submitting}
+                />
+              </div>
+              <div className="form-group flex-1">
+                <label htmlFor="ep-weight" className="bold">
+                  Weight (oz)
+                </label>
+                <input
+                  id="ep-weight"
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={form.weightOz}
+                  onChange={set("weightOz")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  required
+                  disabled={submitting}
+                />
+              </div>
+            </div>
 
-          <div className="row gap-1 fw-wrap ai-end">
-            <div className="form-group flex-1">
-              <label htmlFor="ep-price" className="bold">
-                Base price ($)
-              </label>
-              <input
-                id="ep-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.basePriceDollars}
-                onChange={set("basePriceDollars")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                required
-                disabled={submitting}
-              />
-            </div>
-            <div className="form-group flex-1">
-              <label htmlFor="ep-sale-price" className="bold">
-                Sale price ($){" "}
-                <span className="clr-muted xsmall">(optional)</span>
-              </label>
-              <input
-                id="ep-sale-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.salePriceDollars}
-                onChange={set("salePriceDollars")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                disabled={submitting}
-              />
-              {!isSalePriceValid(
-                form.basePriceDollars,
-                form.salePriceDollars,
-              ) && (
-                <p role="alert" className="xsmall clr-danger">
-                  Sale price must be less than base price.
-                </p>
-              )}
-            </div>
-            <div className="form-group flex-1">
-              <label htmlFor="ep-weight" className="bold">
-                Weight (oz)
-              </label>
-              <input
-                id="ep-weight"
-                type="number"
-                min="0"
-                step="0.001"
-                value={form.weightOz}
-                onChange={set("weightOz")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                required
-                disabled={submitting}
-              />
-            </div>
+            {!isSalePriceValid(
+              form.basePriceDollars,
+              form.salePriceDollars,
+            ) && (
+              <p role="alert" className="xsmall clr-danger">
+                Sale price must be less than base price.
+              </p>
+            )}
           </div>
 
           <div className="form-group">
@@ -375,6 +395,10 @@ export default function DialogEditProduct({
             disabled={submitting}
             onPendingChange={setImageIsPending}
           />
+
+          {group.wooId && (
+            <WooImageGallery group={group} disabled={submitting} />
+          )}
 
           {submitError && (
             <p role="alert" className="status-line" data-tone="error">

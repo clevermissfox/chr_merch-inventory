@@ -447,6 +447,9 @@ export async function appendCategoryEntry(
     wooIdRange,
     ...(labelRange ? [labelRange] : []),
     ...(parentCodeRange ? [parentCodeRange] : []),
+    // Only needed to resolve a subcategory conflict's parent category name
+    // for the error message — cheap to include unconditionally.
+    ...(type === "subcategory" ? ["catList", "catCode"] : []),
   ];
 
   const response = await sheets.spreadsheets.values.batchGet({
@@ -455,17 +458,36 @@ export async function appendCategoryEntry(
   });
 
   const vrs = response.data.valueRanges ?? [];
-  const existingValues = (vrs[0]?.values ?? [])
-    .flat()
-    .map(String)
-    .filter(Boolean);
+  // Raw (unfiltered) so its index lines up row-for-row with parentCodes below
+  // — filtering blanks out of a copy first would desync the two arrays.
+  const rawValues = (vrs[0]?.values ?? []).flat().map(String);
+  const existingValues = rawValues.filter(Boolean);
   const existingCodes = (vrs[1]?.values ?? [])
     .flat()
     .map(String)
     .filter(Boolean)
     .map((c) => c.toUpperCase());
 
-  if (existingValues.some((v) => v.toLowerCase() === value.toLowerCase())) {
+  const dupeRowIdx = rawValues.findIndex(
+    (v) => v && v.toLowerCase() === value.toLowerCase(),
+  );
+  if (dupeRowIdx !== -1) {
+    if (type === "subcategory" && parentCodeRange) {
+      // Index positions: [value, code, wooId, label?, parentCode, catList, catCode]
+      const parentCodes = (vrs[4]?.values ?? []).flat().map(String);
+      const catValues = (vrs[5]?.values ?? []).flat().map(String);
+      const catCodes = (vrs[6]?.values ?? []).flat().map(String);
+      const conflictParentCode = parentCodes[dupeRowIdx]?.toUpperCase();
+      const catIdx = conflictParentCode
+        ? catCodes.findIndex((c) => c.toUpperCase() === conflictParentCode)
+        : -1;
+      const categoryName = catIdx !== -1 ? catValues[catIdx] : null;
+      throw new Error(
+        categoryName
+          ? `"${value}" already exists under category "${categoryName}"`
+          : `"${value}" already exists`,
+      );
+    }
     throw new Error(`"${value}" already exists`);
   }
   if (existingCodes.includes(code.toUpperCase())) {
@@ -632,6 +654,32 @@ export interface UpdateProductFields {
   dimensionsWidth?: string;
   dimensionsHeight?: string;
   dimensionsDepth?: string;
+}
+
+export async function getProductWooId(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  sku: string,
+): Promise<number | null> {
+  const productData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+  const values = productData.data.values ?? [];
+  if (!values.length) throw new Error("products sheet returned no data");
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const skuIdx = colByHeader(headers, "sku");
+  const wooIdIdx = colByHeader(headers, "woo_id");
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] as string[];
+    if (String(row[skuIdx] ?? "").trim() === sku) {
+      const raw = String(row[wooIdIdx] ?? "").trim();
+      return raw ? Number(raw) : null;
+    }
+  }
+  throw new Error(`Product SKU "${sku}" not found`);
 }
 
 export async function updateProduct(
@@ -1318,39 +1366,6 @@ export async function writeProductWooId(
   });
 }
 
-export async function writeVariantImageUrl(
-  sheets: SheetsClient,
-  spreadsheetId: string,
-  sku: string,
-  imageUrl: string,
-): Promise<void> {
-  const variantData = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "variants_values",
-  });
-  const values = variantData.data.values ?? [];
-  if (values.length < 2) throw new Error("variants sheet is empty");
-
-  const headers = (values[0] as string[]).map((h) => String(h).trim());
-  const skuIdx = colByHeader(headers, "sku");
-  const imgIdx = colByHeader(headers, "image_variant");
-
-  let sheetRow: number | null = null;
-  for (let i = 1; i < values.length; i++) {
-    if (String((values[i] as string[])[skuIdx] ?? "").trim() === sku) {
-      sheetRow = i + 1;
-      break;
-    }
-  }
-  if (!sheetRow) throw new Error(`SKU "${sku}" not found in variants sheet`);
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `variants!${colLetter(imgIdx)}${sheetRow}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[imageUrl]] },
-  });
-}
 
 // Returns 0-based row indices (matching the values array) where the sku column matches any of the given SKUs.
 // Skips row 0 (headers). Used to build delete requests for descriptions and inventory_index.
@@ -1536,6 +1551,7 @@ export async function deleteVariant(
   wooVariantId: number | null;
   parentWooId: number | null;
   wasLastVariant: boolean;
+  productId: string;
 }> {
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -1651,6 +1667,7 @@ export async function deleteVariant(
     wooVariantId,
     parentWooId,
     wasLastVariant,
+    productId: variantProductId,
   };
 }
 

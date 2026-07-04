@@ -12,7 +12,14 @@ const PreserveStyleAttr = Extension.create({
   addGlobalAttributes() {
     return [
       {
-        types: ["paragraph", "heading", "listItem", "bulletList", "orderedList", "blockquote"],
+        types: [
+          "paragraph",
+          "heading",
+          "listItem",
+          "bulletList",
+          "orderedList",
+          "blockquote",
+        ],
         attributes: {
           style: {
             default: null,
@@ -37,7 +44,7 @@ import {
   Underline as UnderlineIcon,
 } from "lucide-react";
 
-const SHORT_DESC_MAX = 100;
+const SHORT_DESC_MAX = 150;
 
 interface RichTextEditorProps {
   value: string;
@@ -178,7 +185,9 @@ export default function RichTextEditor({
   };
 
   return (
-    <div className={`rich-editor${disabled ? " rich-editor--disabled" : ""}${overLimit ? " rich-editor--over-limit" : ""}`}>
+    <div
+      className={`rich-editor${disabled ? " rich-editor--disabled" : ""}${overLimit ? " rich-editor--over-limit" : ""}`}
+    >
       <div className="rich-editor-toolbar" aria-label="Text formatting">
         <ToolbarButton
           active={editor?.isActive("bold")}
@@ -275,7 +284,9 @@ export default function RichTextEditor({
       )}
 
       {isSimple && (
-        <p className={`rich-editor-charcount xsmall${overLimit ? " clr-danger" : " clr-muted"}`}>
+        <p
+          className={`rich-editor-charcount xsmall${overLimit ? " clr-danger" : " clr-muted"}`}
+        >
           {charCount}/{charLimit}
         </p>
       )}

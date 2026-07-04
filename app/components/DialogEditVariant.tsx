@@ -2,7 +2,6 @@ import { CircleQuestionMark, Globe, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
-import ImageUploadSection from "./ImageUploadSection";
 import RichTextEditor from "./RichTextEditor";
 
 interface DialogEditVariantProps {
@@ -41,9 +40,9 @@ export default function DialogEditVariant({
   const [syncing, setSyncing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showPriceHelp, setShowPriceHelp] = useState(false);
+  const [showSalePriceHelp, setShowSalePriceHelp] = useState(false);
   const [showWeightHelp, setShowWeightHelp] = useState(false);
   const [descOverLimit, setDescOverLimit] = useState(false);
-  const [imageIsPending, setImageIsPending] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -190,115 +189,129 @@ export default function DialogEditVariant({
         </dl>
 
         <form className="grid gap-1" onSubmit={handleSubmit}>
-          <div className="row gap-1 ai-end fw-wrap">
-            <div className="form-group flex-1">
-              <div className="row ai-cen gap-half">
-                <label htmlFor="ev-price" className="bold">
-                  Price override ($){" "}
-                  <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <button
-                  type="button"
-                  className="btn-icon btn-help"
-                  onClick={() => setShowPriceHelp((v) => !v)}
-                  aria-expanded={showPriceHelp}
-                  aria-controls="ev-price-help"
-                >
-                  <CircleQuestionMark aria-hidden="true" />
-                </button>
+          <div className="grid gap-half">
+            <div className="row gap-1 ai-end fw-wrap">
+              <div className="form-group flex-1">
+                <div className="row ai-cen gap-half">
+                  <label htmlFor="ev-price" className="bold">
+                    Price override ($){" "}
+                    <span className="clr-muted xsmall">(optional)</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn-icon btn-help"
+                    onClick={() => setShowPriceHelp((v) => !v)}
+                    aria-expanded={showPriceHelp}
+                    aria-controls="ev-price-help"
+                  >
+                    <CircleQuestionMark aria-hidden="true" />
+                  </button>
+                </div>
+                <input
+                  id="ev-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.priceVariant}
+                  onChange={set("priceVariant")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  placeholder={basePriceDollars || "0.00"}
+                  disabled={submitting}
+                />
               </div>
-              {showPriceHelp && (
-                <p id="ev-price-help" className="xsmall clr-warning">
-                  This value <strong>overrides</strong> the base price. Leave
-                  blank to use the product's base price ($
-                  {basePriceDollars || "—"}).
-                </p>
-              )}
-              <input
-                id="ev-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.priceVariant}
-                onChange={set("priceVariant")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                placeholder={basePriceDollars || "0.00"}
-                disabled={submitting}
-              />
-            </div>
-            <div className="form-group flex-1">
-              <label htmlFor="ev-sale-price" className="bold">
-                Sale price override ($){" "}
-                <span className="clr-muted xsmall">(optional)</span>
-              </label>
-
-              <input
-                id="ev-sale-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.salePriceVariant}
-                onChange={set("salePriceVariant")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                placeholder={
-                  group.salePriceDollars?.replace(/[^0-9.]/g, "") || "0.00"
-                }
-                disabled={submitting}
-              />
-              {group.salePriceDollars && (
-                <p className="xsmall clr-muted">
-                  Product sale price: $
-                  {group.salePriceDollars.replace(/[^0-9.]/g, "")}. Leave blank
-                  to inherit.
-                </p>
-              )}
-              {!salePriceValid && (
-                <p role="alert" className="xsmall clr-danger">
-                  Sale price must be less than the regular price ($
-                  {effectiveRegularPrice}).
-                </p>
-              )}
-            </div>
-            <div className="form-group flex-1">
-              <div className="row ai-cen gap-half">
-                <label htmlFor="ev-weight" className="bold">
-                  Weight override (oz){" "}
-                  <span className="clr-muted xsmall">(optional)</span>
-                </label>
-                <button
-                  type="button"
-                  className="btn-icon btn-help"
-                  onClick={() => setShowWeightHelp((v) => !v)}
-                  aria-expanded={showWeightHelp}
-                  aria-controls="ev-weight-help"
-                >
-                  <CircleQuestionMark aria-hidden="true" />
-                </button>
+              <div className="form-group flex-1">
+                <div className="row ai-cen gap-half">
+                  <label htmlFor="ev-sale-price" className="bold">
+                    Sale price override ($){" "}
+                    <span className="clr-muted xsmall">(optional)</span>
+                  </label>
+                  {group.salePriceDollars && (
+                    <button
+                      type="button"
+                      className="btn-icon btn-help"
+                      onClick={() => setShowSalePriceHelp((v) => !v)}
+                      aria-expanded={showSalePriceHelp}
+                      aria-controls="ev-sale-price-help"
+                    >
+                      <CircleQuestionMark aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="ev-sale-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.salePriceVariant}
+                  onChange={set("salePriceVariant")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  placeholder={
+                    group.salePriceDollars?.replace(/[^0-9.]/g, "") || "0.00"
+                  }
+                  disabled={submitting}
+                />
               </div>
-              {showWeightHelp && group.weightOz && (
-                <p id="ev-weight-help" className="xsmall clr-warning">
-                  This value <strong>overrides</strong> the base weight. Leave
-                  blank to use the product's base weight ({group.weightOz}oz).
-                </p>
-              )}
-              <input
-                id="ev-weight"
-                type="number"
-                min="0"
-                step="0.001"
-                value={form.weightOzVariant}
-                onChange={set("weightOzVariant")}
-                onKeyDown={(e) =>
-                  (e.key === "-" || e.key === "e") && e.preventDefault()
-                }
-                placeholder={group.weightOz ?? "0.0"}
-                disabled={submitting}
-              />
+              <div className="form-group flex-1">
+                <div className="row ai-cen gap-half">
+                  <label htmlFor="ev-weight" className="bold">
+                    Weight override (oz){" "}
+                    <span className="clr-muted xsmall">(optional)</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn-icon btn-help"
+                    onClick={() => setShowWeightHelp((v) => !v)}
+                    aria-expanded={showWeightHelp}
+                    aria-controls="ev-weight-help"
+                  >
+                    <CircleQuestionMark aria-hidden="true" />
+                  </button>
+                </div>
+                <input
+                  id="ev-weight"
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={form.weightOzVariant}
+                  onChange={set("weightOzVariant")}
+                  onKeyDown={(e) =>
+                    (e.key === "-" || e.key === "e") && e.preventDefault()
+                  }
+                  placeholder={group.weightOz ?? "0.0"}
+                  disabled={submitting}
+                />
+              </div>
             </div>
+            {showPriceHelp && (
+              <p id="ev-price-help" className="xsmall clr-warning">
+                This value <strong>overrides</strong> the base price. Leave
+                blank to use the product's base price ($
+                {basePriceDollars || "—"}).
+              </p>
+            )}
+            {showSalePriceHelp && group.salePriceDollars && (
+              <p id="ev-sale-price-help" className="xsmall clr-warning">
+                This value <strong>overrides</strong> the product's sale
+                price. Leave blank to use the product's sale price ($
+                {group.salePriceDollars.replace(/[^0-9.]/g, "")}).
+              </p>
+            )}
+            {!salePriceValid && (
+              <p role="alert" className="xsmall clr-danger">
+                Sale price must be less than the regular price ($
+                {effectiveRegularPrice}).
+              </p>
+            )}
+            {showWeightHelp && group.weightOz && (
+              <p id="ev-weight-help" className="xsmall clr-warning">
+                This value <strong>overrides</strong> the base weight. Leave
+                blank to use the product's base weight ({group.weightOz}oz).
+              </p>
+            )}
           </div>
 
           <div className="form-group">
@@ -318,20 +331,10 @@ export default function DialogEditVariant({
             />
           </div>
 
-          <ImageUploadSection
-            sku={row.sku}
-            productName={`${group.displayName} — ${row.label ?? row.sku}`}
-            disabled={submitting}
-            single
-            existingUrl={row.imageVariant ?? undefined}
-            endpoint={`/api/catalog/variant/${encodeURIComponent(row.sku)}/image`}
-            onPendingChange={setImageIsPending}
-          />
-
           <p className="xsmall">
             Note: Cannot change color, graphic, size, or dimensions as it would
             change the SKU. Delete and recreate the variant if those need to
-            change.
+            change. Images are managed at the product level — see Edit product.
           </p>
 
           {submitError && (
@@ -344,13 +347,7 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={
-                !isDirty ||
-                submitting ||
-                syncing ||
-                descOverLimit ||
-                imageIsPending
-              }
+              disabled={!isDirty || submitting || syncing || descOverLimit}
             >
               {submitting ? (
                 <>
@@ -368,13 +365,7 @@ export default function DialogEditVariant({
                 type="button"
                 className="btn-secondary row gap-half ai-cen"
                 onClick={() => void handleSaveAndSync()}
-                disabled={
-                  !isDirty ||
-                  submitting ||
-                  syncing ||
-                  descOverLimit ||
-                  imageIsPending
-                }
+                disabled={!isDirty || submitting || syncing || descOverLimit}
               >
                 {syncing ? (
                   <span className="render-loader">Syncing…</span>

@@ -27,6 +27,7 @@ import {
   ensureCategoryWooId,
   ensureDescriptionRowsExist,
   ensureDimensionExists,
+  getProductWooId,
   toTitleCase,
   parseCreateVariantsBody,
   parseNewProductFields,
@@ -42,12 +43,20 @@ import {
   VALID_REF_TYPES,
   writeProductSyncHashes,
   writeProductWooId,
-  writeVariantImageUrl,
   writeSheetLog,
 } from "./catalogManager";
 import type { RefAddType, UpdateProductFields } from "./catalogManager";
 import { DupeSkuError } from "./catalogManager";
-import { syncCatalogGroupsToWoo, deleteProductFromWoo, deleteVariationFromWoo, convertWooProductToSimple } from "./wooSyncManager";
+import {
+  syncCatalogGroupsToWoo,
+  deleteProductFromWoo,
+  deleteVariationFromWoo,
+  convertWooProductToSimple,
+  getWooProductImages,
+  removeWooProductImage,
+  getWooVariationImages,
+  removeWooVariationImage,
+} from "./wooSyncManager";
 import { sendImageNotification } from "./mailer";
 
 import {
@@ -419,7 +428,11 @@ async function reconcileGroupsWithInventoryIndex(
   spreadsheetId: string,
   groups: CatalogGroup[],
 ): Promise<{ groups: CatalogGroup[]; contentUnsyncedCount: number }> {
-  const patched = await patchGroupsWithConfirmedStock(sheets, spreadsheetId, groups);
+  const patched = await patchGroupsWithConfirmedStock(
+    sheets,
+    spreadsheetId,
+    groups,
+  );
   return computeContentUnsyncedFlags(patched);
 }
 
@@ -512,9 +525,11 @@ app.get(
         g.sku,
         ...g.rows.map((r) => r.sku),
       ]);
-      await ensureDescriptionRowsExist(sheets, spreadsheetId, allCatalogSkus).catch(
-        (e) => tryLogError(req, "get_stock_description_audit", e),
-      );
+      await ensureDescriptionRowsExist(
+        sheets,
+        spreadsheetId,
+        allCatalogSkus,
+      ).catch((e) => tryLogError(req, "get_stock_description_audit", e));
       await loadInventoryIndexState(sheets, spreadsheetId)
         .then(async (invAuditState) => {
           const catalogNameBySku = buildCatalogNameBySku(payload.groups);
@@ -701,10 +716,8 @@ app.post(
       const freshVariantRows = rowsToObjects<VariantSheetRow>(
         freshValueRanges[1]?.values ?? [],
       );
-      const { groups: freshGroups, summary: freshSummary } = shapeToCatalogPayload(
-        freshProductRows,
-        freshVariantRows,
-      );
+      const { groups: freshGroups, summary: freshSummary } =
+        shapeToCatalogPayload(freshProductRows, freshVariantRows);
       const stockPatchedGroups = await patchGroupsWithConfirmedStock(
         sheets,
         spreadsheetId,
@@ -829,14 +842,15 @@ app.post(
   requireCanEdit,
   async (req: Request, res: Response) => {
     try {
-      const { type, value, code, label, parentWooId, parentCode } = req.body as {
-        type?: string;
-        value?: string;
-        code?: string;
-        label?: string;
-        parentWooId?: number;
-        parentCode?: string;
-      };
+      const { type, value, code, label, parentWooId, parentCode } =
+        req.body as {
+          type?: string;
+          value?: string;
+          code?: string;
+          label?: string;
+          parentWooId?: number;
+          parentCode?: string;
+        };
 
       if (!value?.trim()) {
         return res.status(400).json({ ok: false, error: "Value is required" });
@@ -915,7 +929,10 @@ app.post(
           code: safeCode.toUpperCase(),
           wooId,
           label: sheetLabel,
-          parentCode: type === "subcategory" ? parentCode!.trim().toUpperCase() : undefined,
+          parentCode:
+            type === "subcategory"
+              ? parentCode!.trim().toUpperCase()
+              : undefined,
         });
       }
 
@@ -1149,6 +1166,122 @@ app.delete(
   },
 );
 
+app.get(
+  "/api/catalog/product/:sku/woo_images",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const wooId = await getProductWooId(sheets, spreadsheetId, sku);
+      if (!wooId) return res.json({ ok: true, images: [], variantImages: [] });
+
+      const images = await getWooProductImages(wooId);
+      const variantImages = await getWooVariationImages(
+        wooId,
+        new Set(images.map((img) => img.id)),
+      );
+      return res.json({ ok: true, images, variantImages });
+    } catch (error: any) {
+      console.error("GET /api/catalog/product/:sku/woo_images failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to fetch site images",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/api/catalog/product/:sku/woo_images/:imageId",
+  requireAuth,
+  requireCanEdit,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      const imageId = Number(req.params.imageId);
+      if (!sku || !Number.isFinite(imageId))
+        return res
+          .status(400)
+          .json({ ok: false, error: "Missing sku or imageId" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const wooId = await getProductWooId(sheets, spreadsheetId, sku);
+      if (!wooId)
+        return res.status(400).json({
+          ok: false,
+          error: "Product is not published to WooCommerce",
+        });
+
+      const images = await removeWooProductImage(wooId, imageId);
+
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "remove_woo_image",
+        `sku=${sku} wooId=${wooId} imageId=${imageId}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.json({ ok: true, images });
+    } catch (error: any) {
+      console.error(
+        "DELETE /api/catalog/product/:sku/woo_images/:imageId failed:",
+        error,
+      );
+      tryLogError(req, "remove_woo_image", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to remove image",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/api/catalog/woo_variant_image/:wooId/:wooVariantId",
+  requireAuth,
+  requireCanEdit,
+  async (req: Request, res: Response) => {
+    try {
+      const wooId = Number(req.params.wooId);
+      const wooVariantId = Number(req.params.wooVariantId);
+      if (!Number.isFinite(wooId) || !Number.isFinite(wooVariantId))
+        return res
+          .status(400)
+          .json({ ok: false, error: "Missing or invalid wooId/wooVariantId" });
+
+      await removeWooVariationImage(wooId, wooVariantId);
+
+      const { sheets, spreadsheetId } = getSheets();
+      const actor = req.session.user!;
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        actor.email,
+        "remove_woo_variant_image",
+        `wooId=${wooId} wooVariantId=${wooVariantId}`,
+        TARGET_ENV,
+      ]).catch((e) => console.error("log failed:", e));
+
+      return res.json({ ok: true });
+    } catch (error: any) {
+      console.error(
+        "DELETE /api/catalog/woo_variant_image/:wooId/:wooVariantId failed:",
+        error,
+      );
+      tryLogError(req, "remove_woo_variant_image", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to remove variant image",
+      });
+    }
+  },
+);
+
 app.post(
   "/api/catalog/product/:sku/variants",
   requireAuth,
@@ -1268,7 +1401,9 @@ app.delete(
 
       const rawDataIndex = req.query.dataIndex;
       const dataIndex =
-        rawDataIndex !== undefined ? parseInt(String(rawDataIndex), 10) : undefined;
+        rawDataIndex !== undefined
+          ? parseInt(String(rawDataIndex), 10)
+          : undefined;
       if (dataIndex !== undefined && isNaN(dataIndex))
         return res.status(400).json({ ok: false, error: "Invalid dataIndex" });
 
@@ -1276,18 +1411,79 @@ app.delete(
       const result = await deleteVariant(sheets, spreadsheetId, sku, dataIndex);
 
       let wooDeleted = false;
-      if (result.wooVariantId && result.parentWooId) {
+      let convertedToSimple = false;
+      const attemptedWooDelete = Boolean(
+        result.wooVariantId && result.parentWooId,
+      );
+      if (attemptedWooDelete) {
         try {
-          await deleteVariationFromWoo(result.parentWooId, result.wooVariantId);
+          await deleteVariationFromWoo(
+            result.parentWooId!,
+            result.wooVariantId!,
+          );
           wooDeleted = true;
-          // If this was the last variant, convert the parent to a simple product
+          // If this was the last variant, convert the parent to a simple
+          // product. Stock was tracked per-variation before this — none of
+          // it carries over automatically, so the frontend follows up with
+          // the same zero-stock confirm dialog used elsewhere once this
+          // response comes back with convertedToSimple + productId.
           if (result.wasLastVariant) {
-            await convertWooProductToSimple(result.parentWooId).catch((e: any) =>
-              console.error(`Convert-to-simple failed for parent ${result.parentWooId}:`, e?.message),
-            );
+            try {
+              await convertWooProductToSimple(result.parentWooId!);
+              convertedToSimple = true;
+            } catch (e: any) {
+              console.error(
+                `Convert-to-simple failed for parent ${result.parentWooId}:`,
+                e?.message,
+              );
+            }
           }
         } catch (e: any) {
           console.error(`Woo variation delete failed for ${sku}:`, e?.message);
+        }
+      }
+
+      // The sheet row is already gone either way, but if Woo still has a
+      // stale variation (delete attempted and failed), the sheet and site
+      // genuinely disagree — leave the parent's last_hash alone so
+      // contentUnsynced correctly stays true. Otherwise (deleted from Woo
+      // too, or was never live there to begin with) recompute the hash
+      // against the post-deletion row set so the product doesn't show as
+      // falsely unsynced for a change that's already fully applied.
+      const wooDeleteFailed = attemptedWooDelete && !wooDeleted;
+      if (!wooDeleteFailed) {
+        try {
+          const freshResponse = await sheets.spreadsheets.values.batchGet({
+            spreadsheetId,
+            ranges: ["products_values", "variants_values"],
+          });
+          const freshValueRanges = freshResponse.data.valueRanges ?? [];
+          const freshProductRows = rowsToObjects<ProductSheetRow>(
+            freshValueRanges[0]?.values ?? [],
+          );
+          const freshVariantRows = rowsToObjects<VariantSheetRow>(
+            freshValueRanges[1]?.values ?? [],
+          );
+          const { groups: freshGroups } = shapeToCatalogPayload(
+            freshProductRows,
+            freshVariantRows,
+          );
+          const parentGroup = freshGroups.find(
+            (g) => g.productId === result.productId,
+          );
+          if (parentGroup) {
+            await writeProductSyncHashes(sheets, spreadsheetId, [
+              {
+                sku: parentGroup.sku,
+                hash: computeProductSyncHash(parentGroup),
+              },
+            ]);
+          }
+        } catch (e: any) {
+          console.error(
+            `Hash refresh after variant delete failed for ${sku}:`,
+            e?.message,
+          );
         }
       }
 
@@ -1300,7 +1496,9 @@ app.delete(
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
-      return res.status(200).json({ ok: true, sku, ...result, wooDeleted });
+      return res
+        .status(200)
+        .json({ ok: true, sku, ...result, wooDeleted, convertedToSimple });
     } catch (error: any) {
       console.error("DELETE /api/catalog/variant/:sku failed:", error);
       tryLogError(req, "delete_variant", error);
@@ -1351,9 +1549,7 @@ app.post(
         syncMode === "selected" &&
         (!Array.isArray(productIds) || !productIds.length)
       ) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "Missing productIds" });
+        return res.status(400).json({ ok: false, error: "Missing productIds" });
       }
 
       const { sheets, spreadsheetId } = getSheets();
@@ -1482,7 +1678,10 @@ app.post(
     if (!req.session?.user) {
       return res.status(401).json({ ok: false, error: "Not authenticated" });
     }
-    if (req.session.user.role !== "editor" && req.session.user.role !== "admin") {
+    if (
+      req.session.user.role !== "editor" &&
+      req.session.user.role !== "admin"
+    ) {
       return res.status(403).json({ ok: false, error: "Not authorized" });
     }
     try {
@@ -1518,28 +1717,83 @@ app.post(
     if (!req.session?.user) {
       return res.status(401).json({ ok: false, error: "Not authenticated" });
     }
-    if (req.session.user.role !== "editor" && req.session.user.role !== "admin") {
+    if (
+      req.session.user.role !== "editor" &&
+      req.session.user.role !== "admin"
+    ) {
       return res.status(403).json({ ok: false, error: "Not authorized" });
     }
-    try {
-      const sku = decodeURIComponent(req.params.sku);
-      const { productName, pastedUrl, files } = req.body as {
-        productName?: string;
-        pastedUrl?: string;
-        files?: Array<{ fileName: string; fileData: string; mimeType: string }>;
+    const sku = decodeURIComponent(req.params.sku);
+    const { productName, pastedUrl, files, notes } = req.body as {
+      productName?: string;
+      pastedUrl?: string;
+      files?: Array<{ fileName: string; fileData: string; mimeType: string }>;
+      notes?: string;
+    };
+    if (!productName) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "productName is required" });
+    }
+    if (!pastedUrl && (!files || files.length === 0)) {
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          error: "Provide an image URL or upload at least one file",
+        });
+    }
+
+    const method = files && files.length > 0 ? "upload" : "link";
+    const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
+    const folderLink = folderId
+      ? `https://drive.google.com/drive/folders/${folderId}`
+      : undefined;
+    const requestedCount = files?.length ?? 1;
+    const uploadedFiles: Array<{ name: string; link: string }> = [];
+    let driveError: string | null = null;
+    let emailSent = false;
+    let emailError: string | null = null;
+
+    // Every attempt gets logged, success or partial failure — this write
+    // path has two independent points of failure (Drive upload, then the
+    // dev-notification email) and each needs its own visibility since one
+    // can succeed while the other fails. JSON keeps keys unambiguous
+    // (notably `files`, a comma-joined list, which must come last so it
+    // can't be mistaken for swallowing whatever key follows it).
+    const { sheets, spreadsheetId } = getSheets();
+    const logAttempt = () => {
+      const detail = {
+        sku,
+        method,
+        ...(method === "upload"
+          ? {
+              requested: requestedCount,
+              uploaded: uploadedFiles.length,
+              folderId: folderId ?? "unset",
+            }
+          : { url: pastedUrl }),
+        emailSent,
+        ...(driveError ? { driveError } : {}),
+        ...(emailError ? { emailError } : {}),
+        ...(notes ? { notes } : {}),
+        ...(method === "upload"
+          ? { files: uploadedFiles.map((f) => f.name) }
+          : {}),
       };
-      if (!productName) {
-        return res.status(400).json({ ok: false, error: "productName is required" });
-      }
-      if (!pastedUrl && (!files || files.length === 0)) {
-        return res.status(400).json({ ok: false, error: "Provide an image URL or upload at least one file" });
-      }
+      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
+        new Date().toISOString(),
+        req.session!.user!.email,
+        "image_notification",
+        JSON.stringify(detail),
+        TARGET_ENV,
+      ]).catch(() => {});
+    };
 
-      const uploadedFiles: Array<{ name: string; link: string }> = [];
-
+    try {
       if (files && files.length > 0) {
-        const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
-        if (!folderId) throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
+        if (!folderId)
+          throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
 
         const drive = google.drive({ version: "v3", auth: serviceAuth });
         const { Readable } = await import("stream");
@@ -1553,123 +1807,66 @@ app.post(
           const uploaded = await drive.files.create({
             supportsAllDrives: true,
             requestBody: { name: uploadedName, parents: [folderId] },
-            media: { mimeType, body: Readable.from(Buffer.from(fileData, "base64")) },
+            media: {
+              mimeType,
+              body: Readable.from(Buffer.from(fileData, "base64")),
+            },
             fields: "id,webViewLink",
           });
           uploadedFiles.push({
             name: uploadedName,
-            link: uploaded.data.webViewLink ?? `https://drive.google.com/file/d/${uploaded.data.id}/view`,
+            link:
+              uploaded.data.webViewLink ??
+              `https://drive.google.com/file/d/${uploaded.data.id}/view`,
           });
         }
       }
+    } catch (error: unknown) {
+      driveError =
+        error instanceof Error ? error.message : "Drive upload failed";
+      console.error(
+        "POST /api/catalog/product/:sku/image failed (drive):",
+        error,
+      );
+      tryLogError(req, "image_notification", error);
+      logAttempt();
+      return res.status(500).json({ ok: false, error: driveError });
+    }
 
+    try {
       await sendImageNotification({
         sku,
         productName,
-        uploaderEmail: req.session.user.email,
+        uploaderEmail: req.session.user!.email,
         uploadedFiles,
         pastedUrl,
+        folderLink: uploadedFiles.length > 0 ? folderLink : undefined,
+        notes,
       });
-
-      const { sheets, spreadsheetId } = getSheets();
-      const logDetail = uploadedFiles.length
-        ? `sku=${sku} drive:${uploadedFiles.map((f) => f.name).join(",")}`
-        : `sku=${sku} url:${pastedUrl}`;
-      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
-        new Date().toISOString(),
-        req.session.user.email,
-        "image_notification",
-        logDetail,
-        TARGET_ENV,
-      ]).catch(() => {});
-      return res.json({ ok: true });
+      emailSent = true;
     } catch (error: unknown) {
-      console.error("POST /api/catalog/product/:sku/image failed:", error);
+      emailError =
+        error instanceof Error ? error.message : "Failed to send email";
+      console.error(
+        "POST /api/catalog/product/:sku/image failed (email):",
+        error,
+      );
       tryLogError(req, "image_notification", error);
-      return res.status(500).json({
+    }
+
+    logAttempt();
+
+    if (!emailSent) {
+      // Drive upload (if any) may have succeeded, but without the email the
+      // dev team never learns to attach it — treat as a failure so the
+      // frontend surfaces it instead of reporting quiet success.
+      return res.status(502).json({
         ok: false,
-        error: error instanceof Error ? error.message : "Failed to send image notification",
+        error: `Image ${method === "upload" ? "uploaded" : "link saved"}, but the notification email failed: ${emailError}`,
       });
     }
-  },
-);
 
-app.post(
-  "/api/catalog/variant/:sku/image",
-  requireAuth,
-  requireCanEdit,
-  async (req: Request, res: Response) => {
-    try {
-      const sku = decodeURIComponent(req.params.sku);
-      const { productName, pastedUrl, file } = req.body as {
-        productName?: string;
-        pastedUrl?: string;
-        file?: { fileName: string; fileData: string; mimeType: string };
-      };
-      if (!productName) {
-        return res.status(400).json({ ok: false, error: "productName is required" });
-      }
-      if (!pastedUrl && !file) {
-        return res.status(400).json({ ok: false, error: "Provide an image URL or upload a file" });
-      }
-
-      const { sheets, spreadsheetId } = getSheets();
-      let finalUrl: string;
-
-      if (file) {
-        const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
-        if (!folderId) throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
-
-        const drive = google.drive({ version: "v3", auth: serviceAuth });
-        const { Readable } = await import("stream");
-        const ts = Date.now();
-        const ext = file.fileName.split(".").pop() ?? "jpg";
-        const uploadedName = `${sku}-${ts}.${ext}`;
-
-        const uploaded = await drive.files.create({
-          supportsAllDrives: true,
-          requestBody: { name: uploadedName, parents: [folderId] },
-          media: { mimeType: file.mimeType, body: Readable.from(Buffer.from(file.fileData, "base64")) },
-          fields: "id,webViewLink",
-        });
-        finalUrl = uploaded.data.webViewLink ?? `https://drive.google.com/file/d/${uploaded.data.id}/view`;
-
-        await sendImageNotification({
-          sku,
-          productName,
-          uploaderEmail: req.session.user!.email,
-          uploadedFiles: [{ name: uploadedName, link: finalUrl }],
-        });
-      } else {
-        finalUrl = pastedUrl!;
-        await sendImageNotification({
-          sku,
-          productName,
-          uploaderEmail: req.session.user!.email,
-          uploadedFiles: [],
-          pastedUrl: finalUrl,
-        });
-      }
-
-      await writeVariantImageUrl(sheets, spreadsheetId, sku, finalUrl);
-
-      writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
-        new Date().toISOString(),
-        req.session.user!.email,
-        "variant_image",
-        `sku=${sku} url=${finalUrl}`,
-        TARGET_ENV,
-      ]).catch(() => {});
-
-      return res.json({ ok: true, imageUrl: finalUrl });
-    } catch (error: unknown) {
-      console.error("POST /api/catalog/variant/:sku/image failed:", error);
-      tryLogError(req, "variant_image", error);
-      return res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : "Failed to save variant image",
-      });
-    }
+    return res.json({ ok: true });
   },
 );
 

@@ -13,12 +13,12 @@ import type { NewProductFields, RefData } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
 import { useToast } from "~/context/ToastContext";
 import FormGroupRef from "./FormGroupRef";
+import ImageUploadSection, { type StagedImage } from "./ImageUploadSection";
 import RichTextEditor from "./RichTextEditor";
 
 interface DialogCreateProductProps {
   onClose: () => void;
   onCreated: (sku: string) => void;
-  onCreatedThenSync: (sku: string, productId: string) => void;
   onPending: () => void;
   onFailed: (error: string) => void;
 }
@@ -38,6 +38,7 @@ interface FormState {
   dimensionsDepth: string;
   primaryDescription: string;
   shortDescription: string;
+  initialStockQty: string;
 }
 
 const empty: FormState = {
@@ -55,12 +56,12 @@ const empty: FormState = {
   dimensionsDepth: "",
   primaryDescription: "",
   shortDescription: "",
+  initialStockQty: "",
 };
 
 export default function DialogCreateProduct({
   onClose,
   onCreated,
-  onCreatedThenSync,
   onPending,
   onFailed,
 }: DialogCreateProductProps) {
@@ -71,10 +72,12 @@ export default function DialogCreateProduct({
   const [form, setForm] = useState<FormState>(empty);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
-  const [imageMode, setImageMode] = useState<"file" | "url">("file");
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imageUrl, setImageUrl] = useState("");
-  const imageFileRef = useRef<HTMLInputElement>(null);
+  const [stagedImage, setStagedImage] = useState<StagedImage>({
+    mode: "file",
+    files: [],
+    url: "",
+    notes: "",
+  });
   const [showCatHelp, setShowCatHelp] = useState(false);
   const [showPrimaryDescHelp, setShowPrimaryDescHelp] = useState(false);
   const [showShortDescHelp, setShowShortDescHelp] = useState(false);
@@ -130,8 +133,10 @@ export default function DialogCreateProduct({
     };
 
     // Capture image data before closing — we'll need it after the SKU arrives
-    const capturedFile = imageFile;
-    const capturedUrl = imageUrl.trim();
+    const capturedMode = stagedImage.mode;
+    const capturedFiles = stagedImage.files;
+    const capturedUrl = stagedImage.url;
+    const capturedNotes = stagedImage.notes || undefined;
     const capturedName = form.displayName || form.design || "";
 
     // Close the dialog immediately — the sheet formulas can take up to 3
@@ -151,24 +156,30 @@ export default function DialogCreateProduct({
         const sku: string = data.sku;
 
         // Upload image if the user selected/pasted one — best-effort, non-fatal
-        if (capturedFile || capturedUrl) {
+        const hasStagedImage =
+          capturedMode === "file"
+            ? capturedFiles.length > 0
+            : capturedUrl.length > 0;
+        if (hasStagedImage) {
           try {
             let imgBody: Record<string, unknown>;
-            if (capturedFile) {
+            if (capturedMode === "file") {
               imgBody = {
                 productName: capturedName || sku,
-                files: [
-                  {
-                    fileName: capturedFile.name,
-                    fileData: await readAsBase64(capturedFile),
-                    mimeType: capturedFile.type,
-                  },
-                ],
+                files: await Promise.all(
+                  capturedFiles.map(async (f) => ({
+                    fileName: f.name,
+                    fileData: await readAsBase64(f),
+                    mimeType: f.type,
+                  })),
+                ),
+                notes: capturedNotes,
               };
             } else {
               imgBody = {
                 productName: capturedName || sku,
                 pastedUrl: capturedUrl,
+                notes: capturedNotes,
               };
             }
             const imgRes = await fetch(
@@ -197,16 +208,45 @@ export default function DialogCreateProduct({
         }
 
         // Publish immediately if the user chose "publish" — skips the extra
-        // manual sync step on the Products page. The sync itself is handed
-        // off to the parent, which opens the same zero-stock confirm prompt
-        // used by the Products page's own sync button — a brand new
-        // product has no stock yet, so that prompt is required, not
-        // optional.
+        // manual sync step on the Products page. A brand-new product is
+        // always a simple product (no variants yet), so its stock is a
+        // single number collected right here instead of routing through
+        // the multi-row zero-stock confirm dialog used elsewhere.
         if (form.publishedStatus === "publish" && data.productId) {
-          onCreatedThenSync(sku, data.productId);
-        } else {
-          onCreated(sku);
+          try {
+            const qty = parseInt(form.initialStockQty, 10);
+            const stockOverrides =
+              Number.isFinite(qty) && qty > 0 ? { [sku]: qty } : undefined;
+            const syncRes = await fetch("/api/catalog/sync_to_site", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                mode: "selected",
+                productIds: [data.productId],
+                publish: true,
+                ...(stockOverrides ? { stockOverrides } : {}),
+              }),
+            });
+            const syncData = await syncRes.json();
+            const result: { status: string; error?: string } | undefined =
+              syncData.results?.[0];
+            if (!syncData.ok || result?.status === "failed") {
+              showToast(
+                `Publish sync failed — retry from the Products page. (${result?.error || syncData.error || "unknown error"})`,
+                "warning",
+              );
+            }
+          } catch (err) {
+            // Non-fatal — product was created, sync can be retried from Products page
+            showToast(
+              `Publish sync failed — retry from the Products page. (${err instanceof Error ? err.message : "unknown error"})`,
+              "warning",
+            );
+          }
         }
+
+        onCreated(sku);
       })
       .catch((err: unknown) => {
         onFailed(
@@ -337,6 +377,13 @@ export default function DialogCreateProduct({
               refType="subcategory"
               existingValues={refData.subcategories.map((s) => s.value)}
               existingCodes={refData.subcategories.map((s) => s.code)}
+              existingValueOwners={Object.fromEntries(
+                refData.subcategories.map((s) => [
+                  s.value.toLowerCase(),
+                  refData.categories.find((c) => c.code === s.parentCode)
+                    ?.value ?? s.parentCode,
+                ]),
+              )}
               parentWooId={
                 refData.categories.find((c) => c.value === form.category)
                   ?.wooId ?? null
@@ -393,72 +440,74 @@ export default function DialogCreateProduct({
                   ))}
               </select>
             </FormGroupRef>
+            <div className="grid gap-half">
+              <div className="row gap-1 fw-wrap ai-end">
+                <div className="form-group flex-1">
+                  <label className="bold" htmlFor="cp-price">
+                    Base Price ($)
+                  </label>
+                  <input
+                    id="cp-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.basePriceDollars}
+                    onChange={setNumeric("basePriceDollars")}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) =>
+                      (e.key === "-" || e.key === "e") && e.preventDefault()
+                    }
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
 
-            <div className="row gap-1 fw-wrap ai-end">
-              <div className="form-group flex-1">
-                <label className="bold" htmlFor="cp-price">
-                  Base Price ($)
-                </label>
-                <input
-                  id="cp-price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.basePriceDollars}
-                  onChange={setNumeric("basePriceDollars")}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) =>
-                    (e.key === "-" || e.key === "e") && e.preventDefault()
-                  }
-                  placeholder="0.00"
-                  required
-                />
+                <div className="form-group flex-1">
+                  <label htmlFor="cp-sale-price" className="bold">
+                    Sale Price ($){" "}
+                    <span className="muted xsmall">(optional)</span>
+                  </label>
+                  <input
+                    id="cp-sale-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.salePriceDollars}
+                    onChange={setNumeric("salePriceDollars")}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) =>
+                      (e.key === "-" || e.key === "e") && e.preventDefault()
+                    }
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div className="form-group flex-1">
+                  <label className="bold" htmlFor="cp-weight">
+                    Weight (oz)
+                  </label>
+                  <input
+                    id="cp-weight"
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={form.weightOz}
+                    onChange={setNumeric("weightOz")}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) =>
+                      (e.key === "-" || e.key === "e") && e.preventDefault()
+                    }
+                    placeholder="0.0"
+                    required
+                  />
+                </div>
               </div>
 
-              <div className="form-group flex-1">
-                <label htmlFor="cp-sale-price" className="bold">
-                  Sale Price ($){" "}
-                  <span className="muted xsmall">(optional)</span>
-                </label>
-                <input
-                  id="cp-sale-price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.salePriceDollars}
-                  onChange={setNumeric("salePriceDollars")}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) =>
-                    (e.key === "-" || e.key === "e") && e.preventDefault()
-                  }
-                  placeholder="0.00"
-                />
-                {!salePriceValid && (
-                  <p role="alert" className="xsmall clr-danger">
-                    Sale price must be less than base price.
-                  </p>
-                )}
-              </div>
-
-              <div className="form-group flex-1">
-                <label className="bold" htmlFor="cp-weight">
-                  Weight (oz)
-                </label>
-                <input
-                  id="cp-weight"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  value={form.weightOz}
-                  onChange={setNumeric("weightOz")}
-                  onFocus={(e) => e.target.select()}
-                  onKeyDown={(e) =>
-                    (e.key === "-" || e.key === "e") && e.preventDefault()
-                  }
-                  placeholder="0.0"
-                  required
-                />
-              </div>
+              {!salePriceValid && (
+                <p role="alert" className="xsmall clr-danger">
+                  Sale price must be less than base price.
+                </p>
+              )}
             </div>
 
             <div className="form-group">
@@ -478,6 +527,27 @@ export default function DialogCreateProduct({
                 <option value="private">Private</option>
               </select>
             </div>
+
+            {form.publishedStatus === "publish" && (
+              <div className="form-group">
+                <label className="bold" htmlFor="cp-initial-stock">
+                  Initial stock quantity
+                </label>
+                <input
+                  id="cp-initial-stock"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.initialStockQty}
+                  onChange={setNumeric("initialStockQty")}
+                  placeholder="0"
+                />
+                <p className="xsmall clr-muted">
+                  Published products sync to the site immediately — set the
+                  stock now so it isn't published with zero inventory.
+                </p>
+              </div>
+            )}
 
             <div className="form-group">
               <label className="bold" htmlFor="cp-display-name">
@@ -676,73 +746,28 @@ export default function DialogCreateProduct({
               />
             </div>
 
-            <fieldset className="form-fieldset">
-              <legend className="bold">
-                Image <span className="clr-muted xsmall">(optional)</span>
-              </legend>
-              <div className="grid gap-half">
-                <div className="row gap-1">
-                  <label className="row gap-half ai-cen bold">
-                    <input
-                      type="radio"
-                      name="cp-img-mode"
-                      checked={imageMode === "file"}
-                      onChange={() => {
-                        setImageMode("file");
-                        setImageUrl("");
-                        setImageFile(null);
-                        if (imageFileRef.current)
-                          imageFileRef.current.value = "";
-                      }}
-                    />
-                    Upload file
-                  </label>
-                  <label className="row gap-half ai-cen bold">
-                    <input
-                      type="radio"
-                      name="cp-img-mode"
-                      checked={imageMode === "url"}
-                      onChange={() => {
-                        setImageMode("url");
-                        setImageFile(null);
-                        if (imageFileRef.current)
-                          imageFileRef.current.value = "";
-                      }}
-                    />
-                    Paste Drive link
-                  </label>
-                </div>
-                {imageMode === "file" ? (
-                  <input
-                    ref={imageFileRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
-                  />
-                ) : (
-                  <input
-                    type="url"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://drive.google.com/…"
-                  />
-                )}
-                {(imageFile || imageUrl.trim()) && (
-                  <p className="xsmall clr-muted">
-                    Image will be sent to dev for processing after the product
-                    is created.
-                  </p>
-                )}
-                {!imageFile &&
-                  !imageUrl.trim() &&
-                  form.publishedStatus === "publish" && (
-                    <p className="xsmall clr-warning">
-                      No image selected — this product will go live on the
-                      site with no image until one is added via Edit.
-                    </p>
-                  )}
-              </div>
-            </fieldset>
+            <ImageUploadSection
+              sku="new-product"
+              productName={form.displayName || form.design || "New product"}
+              deferred
+              onStagedChange={setStagedImage}
+            />
+            {form.publishedStatus === "publish" ? (
+              <p className="xsmall clr-warning">
+                Images are added manually by dev after processing — this product
+                will go live with no image (even if you selected one) until
+                that's done. Choose Draft instead if you don't want it live yet.
+              </p>
+            ) : (
+              (stagedImage.mode === "file"
+                ? stagedImage.files.length > 0
+                : stagedImage.url.length > 0) && (
+                <p className="xsmall clr-muted">
+                  Image will be sent to dev for processing after the product is
+                  created.
+                </p>
+              )
+            )}
 
             {submitError && (
               <p role="alert" className="status-line" data-tone="error">

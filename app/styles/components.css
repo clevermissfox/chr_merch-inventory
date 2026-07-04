@@ -575,6 +575,22 @@ menu.user-menu {
   --_clr-feedback: var(--clr-warning);
 }
 
+/* Briefly rings the product card that was deep-linked to (e.g. from the
+   Inventory page's "not synced to site" list) so it's obvious which one
+   scrolled into view. */
+.product-group--highlighted {
+  animation: product-highlight-ring 2.5s ease-out 1;
+}
+
+@keyframes product-highlight-ring {
+  0% {
+    box-shadow: 0 0 0 0.2rem var(--clr-accent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 .summary-count {
   color: var(--clr-text-muted);
 }
@@ -689,18 +705,48 @@ menu.user-menu {
   }
 }
 
-.product-actions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-025, 0.25rem);
-  padding: var(--spacing-075, 0.75rem) var(--spacing-100, 1rem)
-    var(--spacing-075, 0.75rem) 0;
-  justify-content: flex-start;
-  flex-shrink: 0;
+.product-actions-wrapper {
+  position: relative;
+  transform: translate3d(0, 0, 0);
+  anchor-scope: --product-actions;
+  & > button {
+    anchor-name: --product-actions;
+  }
+}
 
-  & button {
+.product-actions {
+  inset: auto;
+  top: 0;
+  right: 0;
+  left: auto;
+  bottom: auto;
+  position-anchor: --product-actions;
+  /* top: anchor(bottom);
+  right: anchor(right); */
+  position-area: block-end span-inline-start;
+  position-try-fallbacks: flip-block;
+}
+
+.product-actions:popover-open {
+  display: grid;
+  gap: var(--spacing-050, 0.5rem);
+  justify-content: start;
+  align-content: start;
+  flex-shrink: 0;
+  padding: var(--spacing-075, 0.75rem);
+  border-radius: var(--default-br);
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
+  background: var(--clr-surface-primary);
+
+  & :is(.btn-secondary, .pseudo-btn-secondary) {
     --_btn-font-size: var(--fs-200);
     --_btn-padding: var(--spacing-050, 0.5rem) var(--spacing-075, 0.75rem);
+    --_btn-text-align: start;
+
+    &:not(.btn-warning, .btn-danger) {
+      --_clr-btn-bg: var(--clr-surface-secondary);
+    }
   }
 
   & .lucide {
@@ -1382,10 +1428,6 @@ dialog::backdrop {
   min-block-size: 6rem;
 }
 
-.input-file_img::file-selector-button {
-  margin-inline-end: var(--spacing-050, 0.5rem);
-}
-
 /* Scrollable stock-override variant list in publish confirm */
 .stock-variant-list {
   max-block-size: 12rem;
@@ -1399,4 +1441,25 @@ dialog::backdrop {
   border-color: var(--clr-border-soft);
   outline-offset: initial;
   padding: var(--spacing-025, 0.25rem);
+}
+
+.woo-image-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr));
+  gap: var(--spacing-050, 0.5rem);
+}
+
+.woo-image-gallery__item {
+  display: grid;
+  gap: var(--spacing-025, 0.25rem);
+  justify-items: center;
+}
+
+.woo-image-thumb {
+  inline-size: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
+  border-radius: var(--default-br);
 }

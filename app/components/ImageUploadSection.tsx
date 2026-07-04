@@ -10,50 +10,62 @@ function truncateFileName(name: string, maxLen = 24): string {
   return `${name.slice(0, 12)}...${name.slice(-9)}`;
 }
 
+export interface StagedImage {
+  mode: "url" | "file";
+  files: File[];
+  url: string;
+  notes: string;
+}
+
 interface ImageUploadSectionProps {
   sku: string;
   productName: string;
   disabled?: boolean;
-  /** Restrict to a single file and write the URL back to the sheet (for variants) */
-  single?: boolean;
-  /** Existing image URL to display (for variants) */
-  existingUrl?: string;
-  /** Override the API endpoint. Defaults to /api/catalog/product/:sku/image */
-  endpoint?: string;
-  /** Called with the final URL when the image is saved to the sheet (single mode only) */
-  onUploaded?: (url: string) => void;
-  /** Called when the section has unprocessed content (file selected or URL entered but not yet sent) */
+  /** Called when the section has unprocessed content (file selected or URL entered but not yet sent). Ignored in deferred mode. */
   onPendingChange?: (isPending: boolean) => void;
+  /**
+   * Stage the pick locally instead of sending immediately — for callers
+   * where no SKU exists yet (e.g. creating a new product). The parent reads
+   * the staged selection via onStagedChange and sends it itself once a SKU
+   * is available.
+   */
+  deferred?: boolean;
+  onStagedChange?: (staged: StagedImage) => void;
 }
 
 export default function ImageUploadSection({
   sku,
   productName,
   disabled,
-  single = false,
-  existingUrl,
-  endpoint,
-  onUploaded,
   onPendingChange,
+  deferred = false,
+  onStagedChange,
 }: ImageUploadSectionProps) {
-  const apiEndpoint =
-    endpoint ?? `/api/catalog/product/${encodeURIComponent(sku)}/image`;
+  const apiEndpoint = `/api/catalog/product/${encodeURIComponent(sku)}/image`;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"url" | "file">("file");
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [savedUrl, setSavedUrl] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
 
   const canSubmit = mode === "url" ? url.trim().length > 0 : files.length > 0;
   const isPending = canSubmit && !success;
 
   useEffect(() => {
+    if (deferred) return;
     onPendingChange?.(isPending);
-  }, [isPending]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPending, deferred]);
+
+  useEffect(() => {
+    if (!deferred) return;
+    onStagedChange?.({ mode, files, url: url.trim(), notes: notes.trim() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferred, mode, files, url, notes]);
 
   const handleModeChange = (next: "url" | "file") => {
     setMode(next);
@@ -67,6 +79,7 @@ export default function ImageUploadSection({
   const handleClear = () => {
     setUrl("");
     setFiles([]);
+    setNotes("");
     setError(null);
     setSuccess(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -87,38 +100,27 @@ export default function ImageUploadSection({
 
     try {
       let body: Record<string, unknown>;
+      const trimmedNotes = notes.trim() || undefined;
 
       if (mode === "url") {
         if (!url.trim()) {
           setError("Paste an image or Drive link first.");
           return;
         }
-        body = { productName, pastedUrl: url.trim() };
+        body = { productName, pastedUrl: url.trim(), notes: trimmedNotes };
       } else {
         if (files.length === 0) {
           setError("Select an image file.");
           return;
         }
-        if (single) {
-          const f = files[0];
-          body = {
-            productName,
-            file: {
-              fileName: f.name,
-              fileData: await readAsBase64(f),
-              mimeType: f.type,
-            },
-          };
-        } else {
-          const encoded = await Promise.all(
-            files.map(async (f) => ({
-              fileName: f.name,
-              fileData: await readAsBase64(f),
-              mimeType: f.type,
-            })),
-          );
-          body = { productName, files: encoded };
-        }
+        const encoded = await Promise.all(
+          files.map(async (f) => ({
+            fileName: f.name,
+            fileData: await readAsBase64(f),
+            mimeType: f.type,
+          })),
+        );
+        body = { productName, files: encoded, notes: trimmedNotes };
       }
 
       const res = await fetch(apiEndpoint, {
@@ -130,14 +132,10 @@ export default function ImageUploadSection({
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to send");
 
-      if (single && data.imageUrl) {
-        setSavedUrl(data.imageUrl);
-        onUploaded?.(data.imageUrl);
-      }
-
       setSuccess(true);
       setUrl("");
       setFiles([]);
+      setNotes("");
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -146,14 +144,12 @@ export default function ImageUploadSection({
     }
   };
 
-  const displayUrl = savedUrl ?? existingUrl;
-
   return (
     <fieldset className="form-fieldset grid gap-half">
-      <div className="row ai-cen gap-half">
-        <legend className="bold">
+      <legend className="row ai-cen gap-half">
+        <p className="bold">
           Image <span className="clr-muted xsmall">(optional)</span>
-        </legend>
+        </p>
         <button
           type="button"
           className="btn-icon btn-help"
@@ -163,27 +159,20 @@ export default function ImageUploadSection({
         >
           <CircleQuestionMark aria-hidden="true" />
         </button>
-      </div>
+      </legend>
       {showHint && (
         <p className="xsmall clr-warning margin-be-half">
-          {single
-            ? "Upload a single image for this variant. The file is saved to Drive and the developer is notified to optimize and watermark it. Allow 1–2 business days."
-            : "Upload one or more images for this product. Files are saved to Drive and the developer is notified to optimize and watermark them. Allow 1–2 business days."}
+          Upload one or more images for this product. Developer is notified to
+          optimize, watermark, and attach them. Allow 1–2 business days.
         </p>
       )}
 
       <div className="grid gap-half">
-        {displayUrl && (
-          <p className="xsmall clr-muted word-break-ba">
-            Current:{" "}
-            <a href={displayUrl} target="_blank" rel="noopener noreferrer">
-              {displayUrl}
-            </a>
-          </p>
-        )}
-
         <div className="row gap-1">
-          <label className="row gap-half ai-cen bold">
+          <label
+            className="row gap-half ai-cen bold"
+            id={`img-radio-file-label-${sku}`}
+          >
             <input
               id={`img-radio-file-${sku}`}
               type="radio"
@@ -192,9 +181,12 @@ export default function ImageUploadSection({
               onChange={() => handleModeChange("file")}
               disabled={disabled || submitting}
             />
-            Upload {single ? "file" : "files"}
+            Upload files
           </label>
-          <label className="row gap-half ai-cen bold">
+          <label
+            className="row gap-half ai-cen bold"
+            id={`img-radio-url-label-${sku}`}
+          >
             <input
               id={`img-radio-url-${sku}`}
               type="radio"
@@ -212,7 +204,7 @@ export default function ImageUploadSection({
             <input
               id={`img-url-${sku}`}
               type="url"
-              aria-label="Drive link URL"
+              aria-labelledby={`img-radio-url-label-${sku}`}
               value={url}
               onChange={(e) => {
                 setUrl(e.target.value);
@@ -221,50 +213,56 @@ export default function ImageUploadSection({
               placeholder="https://drive.google.com/…"
               disabled={disabled || submitting}
             />
-            {!single && (
-              <p className="xsmall clr-muted">
-                Make sure the Drive file is shared with your developer.
-              </p>
-            )}
+            <p className="xsmall clr-muted">
+              Make sure the Drive file is shared with your developer.
+            </p>
           </>
         ) : (
           <div className="grid gap-quarter">
             <input
               id={`img-file-${sku}`}
-              className="input-file_img padding-b-half"
+              className="visually-hidden"
               ref={fileInputRef}
               type="file"
-              aria-label={single ? "Select image file" : "Select image files"}
+              aria-labelledby={`img-radio-file-label-${sku}`}
               accept="image/*"
-              multiple={!single}
+              multiple
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (single) {
-                  setFiles(picked);
-                } else {
-                  // A native file input's FileList is whatever was chosen in
-                  // *this* picker session, not additive — replacing `files`
-                  // wholesale here would silently drop anything picked
-                  // earlier (e.g. after removing one file and reopening the
-                  // picker to add another). Append instead, deduping by
-                  // name+size so re-picking the same file is a no-op.
-                  setFiles((prev) => {
-                    const existingKeys = new Set(
-                      prev.map((f) => `${f.name}:${f.size}`),
-                    );
-                    const additions = picked.filter(
-                      (f) => !existingKeys.has(`${f.name}:${f.size}`),
-                    );
-                    return [...prev, ...additions];
-                  });
-                }
+                // A native file input's FileList is whatever was chosen in
+                // *this* picker session, not additive — replacing `files`
+                // wholesale here would silently drop anything picked
+                // earlier (e.g. after removing one file and reopening the
+                // picker to add another). Append instead, deduping by
+                // name+size so re-picking the same file is a no-op.
+                setFiles((prev) => {
+                  const existingKeys = new Set(
+                    prev.map((f) => `${f.name}:${f.size}`),
+                  );
+                  const additions = picked.filter(
+                    (f) => !existingKeys.has(`${f.name}:${f.size}`),
+                  );
+                  return [...prev, ...additions];
+                });
                 setSuccess(false);
                 // Reset so the same file(s) can be re-picked later — browsers
-                // won't fire onChange again for an unchanged FileList.
+                // won't fire onChange again for an unchanged FileList. The
+                // native input's own "no file chosen" label is never shown
+                // (input is visually hidden) so this reset has no visible
+                // side effect — the file list below is the only status UI.
                 if (fileInputRef.current) fileInputRef.current.value = "";
               }}
               disabled={disabled || submitting}
             />
+
+            <label
+              htmlFor={`img-file-${sku}`}
+              className="pseudo-btn-secondary row gap-half ai-cen cursor-pointer"
+            >
+              <Upload size={12} aria-hidden="true" />
+              <span>Choose image files</span>
+            </label>
+
             {files.length > 0 && (
               <ul className="img-file-list small clr-muted" role="list">
                 {files.map((f, i) => (
@@ -296,17 +294,47 @@ export default function ImageUploadSection({
           </div>
         )}
 
-        {isPending && (
+        {canSubmit && !success && (
+          <div className="form-group">
+            <label className="bold" htmlFor={`img-notes-${sku}`}>
+              Notes for dev <span className="clr-muted xsmall">(optional)</span>
+            </label>
+            <textarea
+              id={`img-notes-${sku}`}
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. this is the black / small combo"
+              disabled={disabled || submitting}
+            />
+          </div>
+        )}
+
+        {!deferred && isPending && (
           <p role="alert" className="status-line" data-tone="warning">
-            {!single && files.length > 1
+            {files.length > 1
               ? `${files.length} images selected — send them for processing or remove files before saving.`
               : "Send the image for processing or clear it before saving changes."}
           </p>
         )}
 
-        {success ? (
+        {deferred ? (
+          canSubmit && (
+            <div className="row gap-half">
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={handleClear}
+                disabled={disabled}
+              >
+                <X aria-hidden="true" />
+                <span>{files.length > 1 ? "Clear all" : "Clear"}</span>
+              </button>
+            </div>
+          )
+        ) : success ? (
           <p role="status" className="status-line" data-tone="success">
-            {!single && files.length > 1
+            {files.length > 1
               ? `${files.length} images sent for processing.`
               : "Sent for processing."}
           </p>
@@ -341,9 +369,7 @@ export default function ImageUploadSection({
                   disabled={disabled}
                 >
                   <X aria-hidden="true" />
-                  <span>
-                    {!single && files.length > 1 ? "Clear all" : "Clear"}
-                  </span>
+                  <span>{files.length > 1 ? "Clear all" : "Clear"}</span>
                 </button>
               )}
             </div>

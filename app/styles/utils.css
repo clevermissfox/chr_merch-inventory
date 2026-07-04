@@ -18,7 +18,7 @@
 
 /* TEXT UTILITIES */
 .xsmall {
-  font-size: var(--fs-xsmall, 0.75em);
+  font-size: var(--fs-200, 0.75em);
   line-height: var(--lh-1, 1.1);
 }
 

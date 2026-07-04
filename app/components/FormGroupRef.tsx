@@ -18,6 +18,7 @@ interface FormGroupRefProps {
   parentWooId?: number | null;
   parentCode?: string | null;
   parentDisplayName?: string;
+  existingValueOwners?: Record<string, string>;
   /** Called when the add-new form opens or closes */
   onExpandedChange?: (expanded: boolean) => void;
   disabled?: boolean;
@@ -37,6 +38,7 @@ export default function FormGroupRef({
   parentWooId,
   parentCode,
   parentDisplayName,
+  existingValueOwners,
   onExpandedChange,
   disabled,
   children,
@@ -101,6 +103,7 @@ export default function FormGroupRef({
           parentWooId={parentWooId}
           parentCode={parentCode}
           parentDisplayName={parentDisplayName}
+          existingValueOwners={existingValueOwners}
           onExpandedChange={(v) => {
             if (!v) handleExpandedChange(false);
           }}

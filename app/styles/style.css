@@ -398,10 +398,41 @@ button:disabled {
   min-inline-size: fit-content;
 }
 
-.btn-secondary {
+:is(.btn-secondary, .pseudo-btn-secondary) {
   --_clr-btn-border: var(--clr-border-soft);
   --_btn-padding: var(--spacing-050) var(--spacing-125, 1.25rem);
   min-inline-size: fit-content;
+}
+
+/* .btn-secondary only works on a real <button> — its custom properties are
+   read by the `button { }` base rule above, which non-button elements never
+   match. This is the same visual treatment for a <label>, <a>, or anything
+   else styled to look like a secondary button but isn't one. */
+.pseudo-btn-secondary {
+  padding: var(--_btn-padding);
+  border: var(--default-border);
+  border-color: var(--_clr-btn-border, transparent);
+  border-radius: var(--_btn-br, var(--default-br));
+  background: var(--_clr-btn-bg);
+  color: var(--_clr-btn-txt);
+  font-size: var(--_btn-font-size);
+  font-weight: var(--_btn-font-weight, var(--fw-500));
+  text-transform: uppercase;
+  text-align: var(--_btn-text-align, center);
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition:
+    transform var(--default-trans-dur) var(--default-timing),
+    opacity var(--default-trans-dur) var(--default-timing),
+    background-color var(--default-trans-dur) var(--default-timing);
+
+  &:hover {
+    opacity: 0.92;
+  }
+
+  &:active {
+    transform: translateY(0.1em);
+  }
 }
 
 :is(.btn-lg) {

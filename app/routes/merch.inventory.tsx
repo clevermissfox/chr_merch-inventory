@@ -1,12 +1,56 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import type { Route } from "./+types/merch.inventory";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
 import { useToast } from "~/context/ToastContext";
 import DialogConfirm from "~/components/DialogConfirm";
-import type { CatalogGroup } from "~/types/catalog";
+import type { CatalogGroup, CatalogPayload } from "~/types/catalog";
 import { ArrowDownUp, RefreshCw } from "lucide-react";
 import { formatSkipReason } from "~/utils/skipReason";
+
+// A skipped sku can be a simple product's own sku or a variant sku — either
+// way every row in its group shares one productId, which is what the
+// Products page's deep-link (?highlight=) needs.
+function findGroupForSku(
+  catalog: CatalogPayload,
+  sku: string,
+): CatalogGroup | null {
+  for (const group of catalog.groups) {
+    if (group.sku === sku || group.rows.some((r) => r.sku === sku)) {
+      return group;
+    }
+  }
+  return null;
+}
+
+interface SkipGroup {
+  key: string;
+  group: CatalogGroup | null;
+  skus: string[];
+  reason: string;
+}
+
+// Multiple skipped variants from the same product all share one cause (the
+// product isn't published) and one fix (publish it once) — group them into
+// a single row instead of repeating the same hint/link per variant.
+function groupSkipped(
+  catalog: CatalogPayload,
+  syncSkipped: Array<{ sku: string; reason: string }>,
+): SkipGroup[] {
+  const map = new Map<string, SkipGroup>();
+  for (const { sku, reason } of syncSkipped) {
+    const group = findGroupForSku(catalog, sku);
+    const key = group ? group.productId : `sku:${sku}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.skus.push(sku);
+    } else {
+      map.set(key, { key, group, skus: [sku], reason });
+    }
+  }
+  return Array.from(map.values());
+}
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -379,21 +423,39 @@ export default function InventoryPage() {
           <div className="grid gap-half">
             <p className="xsmall bold clr-warning">Not synced to site:</p>
             <ul className="grid gap-quarter" role="list">
-              {syncSkipped.map(({ sku, reason }) => {
-                const { label, hint } = formatSkipReason(reason);
-                return (
-                  <li
-                    key={sku}
-                    className="grid gap-025 padding-half surface-secondary"
-                  >
-                    <span className="xsmall">
-                      <strong>{sku}</strong>
-                      <span className="clr-muted"> — {label}</span>
-                    </span>
-                    {hint && <span className="xsmall clr-muted">{hint}</span>}
-                  </li>
-                );
-              })}
+              {groupSkipped(catalog, syncSkipped).map(
+                ({ key, group, skus, reason }) => {
+                  const { label, hint, cta } = formatSkipReason(reason);
+                  const displaySku = group?.sku ?? skus[0];
+                  return (
+                    <li
+                      key={key}
+                      className="grid gap-025 padding-half surface-secondary"
+                    >
+                      <span className="xsmall">
+                        <strong>{displaySku}</strong>
+                        <span className="clr-muted"> — {label}</span>
+                      </span>
+                      {skus.length > 1 && (
+                        <span className="xsmall clr-muted">
+                          Affected SKUs: {skus.join(", ")}
+                        </span>
+                      )}
+                      {hint && (
+                        <span className="xsmall clr-muted">{hint}</span>
+                      )}
+                      {group && cta && (
+                        <Link
+                          to={`/products?highlight=${encodeURIComponent(group.productId)}`}
+                          className="xsmall"
+                        >
+                          {cta}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                },
+              )}
             </ul>
           </div>
         )}

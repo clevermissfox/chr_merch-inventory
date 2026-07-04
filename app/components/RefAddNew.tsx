@@ -64,6 +64,10 @@ interface RefAddNewProps {
   parentWooId?: number | null;
   parentCode?: string | null;
   parentDisplayName?: string;
+  /** Subcategory values are unique across all categories — this maps a
+   * lowercased existing value to the display name of the category it
+   * already belongs to, so a conflict can say where it lives. */
+  existingValueOwners?: Record<string, string>;
   onExpandedChange?: (expanded: boolean) => void;
   disabled?: boolean;
   startExpanded?: boolean;
@@ -77,6 +81,7 @@ export default function RefAddNew({
   parentWooId,
   parentCode,
   parentDisplayName,
+  existingValueOwners,
   onExpandedChange,
   disabled,
   startExpanded,
@@ -271,7 +276,13 @@ export default function RefAddNew({
             {aliasConflict &&
             aliasConflict.toLowerCase() !== value.trim().toLowerCase()
               ? `"${value.trim()}" already exists as "${aliasConflict}"`
-              : `"${value.trim()}" already exists`}
+              : (() => {
+                  const owner =
+                    existingValueOwners?.[value.trim().toLowerCase()];
+                  return owner
+                    ? `"${value.trim()}" already exists under "${owner}"`
+                    : `"${value.trim()}" already exists`;
+                })()}
           </p>
         )}
       </div>

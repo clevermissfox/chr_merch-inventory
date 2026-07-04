@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import type { Route } from "./+types/merch.products";
 import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
@@ -11,7 +12,15 @@ import DialogDeleteVariant from "~/components/DialogDeleteVariant";
 import DialogEditProduct from "~/components/DialogEditProduct";
 import DialogEditVariant from "~/components/DialogEditVariant";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
-import { Globe, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ExternalLink,
+  Globe,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -29,6 +38,39 @@ export const handle = {
   eyebrow: "Manage products",
 };
 
+// A product can have a wooId while sitting in draft on Woo (previously
+// published, then taken down) — hasWooId alone is NOT the same as
+// "currently live", which the sync-confirm logic used to assume. When the
+// sheet says draft and nothing has changed since the last confirmed sync
+// (contentUnsynced false), Woo already reflects that draft state — there's
+// nothing left to "take offline", so the useful action is republishing.
+// contentUnsynced true means the draft flag itself is a fresh, unsynced
+// edit — Woo may still be live, so that's the real "take it offline" moment.
+function getSyncMode(group: CatalogGroup): "publish" | "unpublish" | "sync" {
+  const isLive = Boolean(group.wooId);
+  const isDraft = !group.publishedStatus || group.publishedStatus === "draft";
+  if (!isLive) return isDraft ? "sync" : "publish";
+  if (!isDraft) return "sync";
+  return group.contentUnsynced ? "unpublish" : "publish";
+}
+
+function PriceDisplay({
+  price,
+  sale,
+}: {
+  price: string | null;
+  sale: string | null;
+}) {
+  if (!price) return <>—</>;
+  if (!sale) return <>{price}</>;
+  return (
+    <>
+      <s className="clr-muted">{price}</s>{" "}
+      <span className="clr-warning">{sale}</span>
+    </>
+  );
+}
+
 function stripHtml(html: string): string {
   return html
     .replace(/<[^>]*>/g, "")
@@ -45,6 +87,7 @@ function truncate(str: string | null | undefined, len: number): string | null {
 interface ProductGroupProps {
   group: CatalogGroup;
   canEdit: boolean;
+  wooSiteUrl?: string;
   onDeleteRequest: (group: CatalogGroup) => void;
   onAddVariantsRequest: (group: CatalogGroup) => void;
   onDeleteVariantRequest: (row: CatalogRow, group: CatalogGroup) => void;
@@ -56,6 +99,7 @@ interface ProductGroupProps {
 function ProductGroup({
   group,
   canEdit,
+  wooSiteUrl,
   onDeleteRequest,
   onAddVariantsRequest,
   onDeleteVariantRequest,
@@ -66,7 +110,10 @@ function ProductGroup({
   const isSimple = group.rowCount === 0;
 
   return (
-    <details className="toggle-group product-group card">
+    <details
+      id={`product-${group.productId}`}
+      className="toggle-group product-group card"
+    >
       <summary data-unsynced={group.contentUnsynced || undefined}>
         <div className="summary-title">
           <p className="row gap-half ai-cen fw-wrap">
@@ -91,8 +138,8 @@ function ProductGroup({
         <span className="toggle-label">Toggle</span>
       </summary>
 
-      <div className="product-body row fw-wrap gap-1">
-        <div className="product-info flex-1 padding-b-three-forths padding-i-1quarter grid gap-1quarter">
+      <div className="product-body row fw-wrap-reverse gap-1 padding-b-three-forths padding-i-1quarter">
+        <div className="product-info flex-1 grid gap-1">
           <dl className="product-meta row fw-wrap">
             <div>
               <dt>SKU</dt>
@@ -106,7 +153,12 @@ function ProductGroup({
             </div>
             <div>
               <dt>Price</dt>
-              <dd>{group.basePriceDollars || "—"}</dd>
+              <dd>
+                <PriceDisplay
+                  price={group.basePriceDollars}
+                  sale={group.salePriceDollars}
+                />
+              </dd>
             </div>
             {group.weightOz && (
               <div>
@@ -155,39 +207,72 @@ function ProductGroup({
         </div>
 
         {canEdit && (
-          <div className="product-actions">
+          <div className="product-actions-wrapper">
             <button
               type="button"
-              className="btn-secondary row gap-half ai-cen"
-              onClick={() => onPublishRequest(group)}
+              className="btn-ghost padding-i-half"
+              aria-label="Product actions"
+              popoverTarget={`product-actions-${group.productId}`}
             >
-              <Globe aria-hidden="true" />
-              <span>{group.wooId ? "Sync to site" : "Publish to site"}</span>
+              <MoreHorizontal aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              className="btn-secondary row gap-half ai-cen"
-              onClick={() => onAddVariantsRequest(group)}
+            <menu
+              className="product-actions"
+              popover="auto"
+              id={`product-actions-${group.productId}`}
             >
-              <Plus aria-hidden="true" />
-              <span>Add Variants</span>
-            </button>
-            <button
-              type="button"
-              className="btn-secondary row gap-half ai-cen"
-              onClick={() => onEditRequest(group)}
-            >
-              <Pencil aria-hidden="true" />
-              <span>Edit</span>
-            </button>
-            <button
-              type="button"
-              className="btn-primary btn-danger row gap-half ai-cen"
-              onClick={() => onDeleteRequest(group)}
-            >
-              <Trash2 aria-hidden="true" />
-              <span>Delete</span>
-            </button>
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => onPublishRequest(group)}
+              >
+                <Globe aria-hidden="true" />
+                <span>
+                  {getSyncMode(group) === "publish"
+                    ? group.wooId
+                      ? "Republish to site"
+                      : "Publish to site"
+                    : "Sync to site"}
+                </span>
+              </button>
+              {wooSiteUrl &&
+                group.wooId &&
+                group.publishedStatus === "publish" && (
+                  <a
+                    className="pseudo-btn-secondary row gap-half ai-cen"
+                    href={`${wooSiteUrl}/?post_type=product&p=${group.wooId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLink aria-hidden="true" />
+                    <span>View Product</span>
+                  </a>
+                )}
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => onAddVariantsRequest(group)}
+              >
+                <Plus aria-hidden="true" />
+                <span>Add Variants</span>
+              </button>
+              <button
+                type="button"
+                className="btn-secondary row gap-half ai-cen"
+                onClick={() => onEditRequest(group)}
+              >
+                <Pencil aria-hidden="true" />
+                <span>Edit</span>
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-danger row gap-half ai-cen"
+                onClick={() => onDeleteRequest(group)}
+              >
+                <Trash2 aria-hidden="true" />
+                <span>Delete</span>
+              </button>
+            </menu>
           </div>
         )}
       </div>
@@ -226,7 +311,12 @@ function ProductGroup({
                   <tr key={row.sku}>
                     <td className="sku-cell">{row.sku}</td>
                     <td>{row.label}</td>
-                    <td>{row.priceDollars || "—"}</td>
+                    <td>
+                      <PriceDisplay
+                        price={row.priceVariant || group.basePriceDollars}
+                        sale={row.salePriceVariant || group.salePriceDollars}
+                      />
+                    </td>
                     <td className="ta-cen">
                       {row.weightOzVariant ?? row.baseWeightOz ?? "—"}
                     </td>
@@ -276,6 +366,7 @@ export default function ProductsPage() {
   const { showToast } = useToast();
   const { catalog, loading, error } = state;
   const canEdit = user?.canEdit ?? false;
+  const [searchParams] = useSearchParams();
 
   const [showCreate, setShowCreate] = useState(false);
   const [pendingCreate, setPendingCreate] = useState(false);
@@ -323,6 +414,31 @@ export default function ProductsPage() {
     }
   }, []);
 
+  // Deep-link support for arriving from elsewhere (e.g. the Inventory
+  // page's "not synced to site" list) via ?highlight=<productId> — scrolls
+  // to and expands that product's card so the user can review name, price,
+  // image, and variants before deciding to publish, rather than acting
+  // blind. Doesn't auto-open any dialog — just brings the card into view.
+  useEffect(() => {
+    const productId = searchParams.get("highlight");
+    if (!productId || !catalog) return;
+    const el = document.getElementById(`product-${productId}`);
+    if (el instanceof HTMLDetailsElement) {
+      el.open = true;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("product-group--highlighted");
+      setTimeout(() => el.classList.remove("product-group--highlighted"), 2500);
+    }
+    // Strip the param via raw history, not setSearchParams — the latter is
+    // a React Router navigation, and <ScrollRestoration /> in root.tsx
+    // resets scroll to top on every RR navigation, which snapped the page
+    // straight back up right as the scrollIntoView animation above started.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("highlight");
+    window.history.replaceState(null, "", url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog]);
+
   // Opens the zero-stock sync-confirm dialog for a product once the catalog
   // reflects its post-write state (fresh row data, correct stock). Dialogs
   // that create/edit and then want to sync (Add & Sync, Save & Sync,
@@ -369,11 +485,6 @@ export default function ProductsPage() {
     loadCatalog();
   };
 
-  const handleCreatedThenSync = (sku: string, productId: string) => {
-    handleCreated(sku);
-    setPendingSyncProductId(productId);
-  };
-
   const performDeleteProduct = async (group: CatalogGroup): Promise<void> => {
     const res = await fetch(
       `/api/catalog/product/${encodeURIComponent(group.sku)}`,
@@ -409,6 +520,31 @@ export default function ProductsPage() {
     setPublishStatus("confirming");
     setPublishError(null);
     try {
+      // Republishing a product that's already draft on both the sheet and
+      // Woo (see getSyncMode) needs the sheet's own published_status flipped
+      // first — the backend always pushes whatever that field currently
+      // says, so without this the sync below would just push "draft" again.
+      if (
+        syncRequest.type === "single" &&
+        getSyncMode(syncRequest.group) === "publish" &&
+        syncRequest.group.publishedStatus === "draft"
+      ) {
+        const updateRes = await fetch(
+          `/api/catalog/product/${encodeURIComponent(syncRequest.group.sku)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ publishedStatus: "publish" }),
+          },
+        );
+        const updateData = await updateRes.json();
+        if (!updateData.ok)
+          throw new Error(
+            updateData.error || "Failed to update published status",
+          );
+      }
+
       // Convert string inputs to numbers, dropping blanks/zeros
       const parsedOverrides = Object.fromEntries(
         Object.entries(stockOverrides)
@@ -452,7 +588,11 @@ export default function ProductsPage() {
           setPublishStatus("idle");
           return;
         }
-        summary = `Synced to site — ${syncRequest.group.sku}`;
+        // Includes a timestamp — without it, syncing the same product twice
+        // in a row produces the exact same string both times, so a stale
+        // leftover message from 10 minutes ago is indistinguishable from one
+        // that just happened.
+        summary = `Synced to site — ${syncRequest.group.sku} at ${new Date().toLocaleTimeString()}`;
       } else {
         const parts = [`${data.syncedCount} synced`];
         if (data.skippedUnchangedCount)
@@ -651,6 +791,7 @@ export default function ProductsPage() {
               key={group.productId}
               group={group}
               canEdit={canEdit}
+              wooSiteUrl={catalog.summary.wooSiteUrl}
               onDeleteRequest={setPendingDelete}
               onAddVariantsRequest={setPendingAddVariants}
               onDeleteVariantRequest={(row, grp) =>
@@ -722,7 +863,6 @@ export default function ProductsPage() {
         <DialogCreateProduct
           onClose={() => setShowCreate(false)}
           onCreated={handleCreated}
-          onCreatedThenSync={handleCreatedThenSync}
           onPending={handlePending}
           onFailed={handleFailed}
         />
@@ -778,13 +918,19 @@ export default function ProductsPage() {
           row={pendingDeleteVariant.row}
           group={pendingDeleteVariant.group}
           onClose={() => setPendingDeleteVariant(null)}
-          onDeleted={async (sku) => {
+          onDeleted={async (sku, convertedToSimpleProductId) => {
             setLastDeleted(sku);
             setLastCreated(null);
             setLastEdited(null);
             showToast(`Deleted — SKU: ${sku}`, "success");
             await loadCatalog();
             setPendingDeleteVariant(null);
+            if (convertedToSimpleProductId) {
+              // Stock was tracked per-variation — the now-simple product has
+              // none of its own yet. Route through the same zero-stock
+              // confirm dialog used elsewhere instead of guessing a value.
+              setPendingSyncProductId(convertedToSimpleProductId);
+            }
           }}
           onDeleteProduct={async (group) => {
             await performDeleteProduct(group);
@@ -819,8 +965,10 @@ export default function ProductsPage() {
           </p>
           {pendingDelete.wooId && (
             <p className="small clr-warning">
-              This product is live on the site — it will also be permanently
-              deleted from WooCommerce.
+              This product is{" "}
+              {pendingDelete.publishedStatus === "draft" ? "stored" : "live"}{" "}
+              on the site — it will also be permanently deleted from
+              WooCommerce.
             </p>
           )}
         </DialogConfirm>
@@ -828,21 +976,7 @@ export default function ProductsPage() {
 
       {syncRequest?.type === "single" &&
         (() => {
-          const isLive = Boolean(syncRequest.group.wooId);
-          const isDraft =
-            !syncRequest.group.publishedStatus ||
-            syncRequest.group.publishedStatus === "draft";
-          // Has wooId + draft → unpublish (take it down).
-          // Has wooId + not draft → sync existing content.
-          // No wooId + not draft → publish for the first time.
-          // No wooId + draft → sync as draft (create on Woo as draft — do NOT force-publish).
-          const mode = isLive
-            ? isDraft
-              ? "unpublish"
-              : "sync"
-            : isDraft
-              ? "sync"
-              : "publish";
+          const mode = getSyncMode(syncRequest.group);
 
           return (
             <DialogConfirm
