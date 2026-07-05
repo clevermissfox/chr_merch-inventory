@@ -284,6 +284,13 @@ menu.user-menu {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.dashboard-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-100, 1rem);
+  align-items: start;
+}
+
 .merch-card,
 .merch-note-box,
 .metric {
@@ -578,7 +585,8 @@ menu.user-menu {
 /* Briefly rings the product card that was deep-linked to (e.g. from the
    Inventory page's "not synced to site" list) so it's obvious which one
    scrolled into view. */
-.product-group--highlighted {
+.product-group--highlighted,
+.inventory-group--highlighted {
   animation: product-highlight-ring 2.5s ease-out 1;
 }
 
@@ -1187,6 +1195,10 @@ dialog::backdrop {
 
 @media (max-width: 980px) {
   .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-panels {
     grid-template-columns: 1fr;
   }
 }

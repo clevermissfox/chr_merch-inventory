@@ -9,6 +9,19 @@ export type SearchResult =
 export function searchCatalog(
   groups: CatalogGroup[],
   query: string,
+  options?: {
+    // When true, a group whose own fields match the query is always
+    // included alongside any matched variant rows, instead of only
+    // appearing when no row matched. Off by default because the Dashboard's
+    // stock-update search treats a "group" result as something with its own
+    // trackable stock — true for a simple product, meaningless for a
+    // variable one — so surfacing a variable product's parent there by
+    // default would offer a selection that can't actually be used for
+    // stock. The Products page turns this on since selecting a group there
+    // always means "open Edit Product," which is valid regardless of
+    // whether the product has variants.
+    alwaysIncludeMatchedGroup?: boolean;
+  },
 ): SearchResult[] {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];
@@ -33,9 +46,10 @@ export function searchCatalog(
       group.design,
       group.styleModifier,
     );
+    const groupMatchesOwnFields = hits(groupStr);
 
     if (group.rows.length === 0) {
-      if (hits(groupStr)) results.push({ kind: "group", group });
+      if (groupMatchesOwnFields) results.push({ kind: "group", group });
       continue;
     }
 
@@ -47,7 +61,10 @@ export function searchCatalog(
 
     if (matchedRows.length > 0) {
       for (const row of matchedRows) results.push({ kind: "row", row, group });
-    } else if (hits(groupStr)) {
+      if (options?.alwaysIncludeMatchedGroup && groupMatchesOwnFields) {
+        results.push({ kind: "group", group });
+      }
+    } else if (groupMatchesOwnFields) {
       results.push({ kind: "group", group });
     }
   }
@@ -61,6 +78,7 @@ interface SearchComponentProps {
   placeholder?: string;
   resultKind?: "all" | "rows" | "groups";
   maxResults?: number;
+  alwaysIncludeMatchedGroup?: boolean;
   onSelect: (result: SearchResult) => void;
   renderResult: (result: SearchResult) => React.ReactNode;
 }
@@ -71,6 +89,7 @@ export default function SearchComponent({
   placeholder = "SKU, name, color, size…",
   resultKind = "all",
   maxResults = 20,
+  alwaysIncludeMatchedGroup = false,
   onSelect,
   renderResult,
 }: SearchComponentProps) {
@@ -104,7 +123,9 @@ export default function SearchComponent({
   };
 
   const results = useMemo(() => {
-    const all = searchCatalog(groups, deferredQuery);
+    const all = searchCatalog(groups, deferredQuery, {
+      alwaysIncludeMatchedGroup,
+    });
     const filtered =
       resultKind === "all"
         ? all
@@ -112,7 +133,7 @@ export default function SearchComponent({
             (r) => r.kind === (resultKind === "rows" ? "row" : "group"),
           );
     return filtered.slice(0, maxResults);
-  }, [groups, deferredQuery, resultKind, maxResults]);
+  }, [groups, deferredQuery, resultKind, maxResults, alwaysIncludeMatchedGroup]);
 
   const showResults = deferredQuery.trim().length >= 2;
 

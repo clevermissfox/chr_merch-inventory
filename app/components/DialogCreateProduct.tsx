@@ -20,10 +20,15 @@ interface DialogCreateProductProps {
   onClose: () => void;
   onCreated: (sku: string) => void;
   onPending: () => void;
-  onFailed: (error: string) => void;
+  onFailed: (error: string, form: FormState) => void;
+  // Repopulates the form after a failed submission (see onFailed) — the
+  // backend rolls back the incomplete row on failure, but the user's typed
+  // values shouldn't have to be retyped just because the dialog closed
+  // while the create was in flight.
+  initialValues?: FormState;
 }
 
-interface FormState {
+export interface FormState {
   category: string;
   subcategory: string;
   basePriceDollars: string;
@@ -60,12 +65,13 @@ export default function DialogCreateProduct({
   onCreated,
   onPending,
   onFailed,
+  initialValues,
 }: DialogCreateProductProps) {
   const { showToast } = useToast();
   const ref = useRef<HTMLDialogElement>(null);
   const [refData, setRefData] = useState<RefData | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
-  const [form, setForm] = useState<FormState>(empty);
+  const [form, setForm] = useState<FormState>(initialValues ?? empty);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
   const [stagedImage, setStagedImage] = useState<StagedImage>({
@@ -207,6 +213,7 @@ export default function DialogCreateProduct({
       .catch((err: unknown) => {
         onFailed(
           err instanceof Error ? err.message : "Failed to create product",
+          form,
         );
       });
   };

@@ -338,7 +338,9 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={!isDirty || submitting || descOverLimit}
+              disabled={
+                !isDirty || submitting || descOverLimit || !salePriceValid
+              }
             >
               {submitting ? (
                 <span className="render-loader">Syncing…</span>

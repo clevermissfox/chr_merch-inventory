@@ -7,11 +7,12 @@ interface Props {
   group: CatalogGroup;
   onClose: () => void;
   /**
-   * convertedToSimpleProductId is set when this delete was the last variant
-   * and the parent successfully converted to a simple product on Woo — the
-   * caller should follow up with the same zero-stock confirm flow used
-   * elsewhere, since a freshly-converted simple product has no stock of its
-   * own yet (it was tracked per-variation before).
+   * convertedToSimpleProductId is set whenever this delete was the last
+   * variant — regardless of whether the Woo-side type-conversion API call
+   * itself succeeded, since that's a separate concern from "does this
+   * product now need a stock decision." The caller re-checks the parent's
+   * actual wooId from the reloaded catalog to decide whether anything needs
+   * to sync at all (a never-published parent has nothing to reconcile).
    */
   onDeleted: (
     sku: string,
@@ -59,9 +60,7 @@ export default function DialogDeleteVariant({
       if (!data.ok) throw new Error(data.error || "Delete failed");
       await onDeleted(
         row.sku,
-        data.wasLastVariant && data.convertedToSimple
-          ? data.productId
-          : undefined,
+        data.wasLastVariant ? data.productId : undefined,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");

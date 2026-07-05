@@ -5,13 +5,16 @@ import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
 import { useToast } from "~/context/ToastContext";
 import DialogCreateProduct from "~/components/DialogCreateProduct";
+import type { FormState as CreateProductFormState } from "~/components/DialogCreateProduct";
 import DialogConfirm from "~/components/DialogConfirm";
 import type { DialogConfirmStatus } from "~/components/DialogConfirm";
 import DialogCreateVariant from "~/components/DialogCreateVariant";
 import DialogDeleteVariant from "~/components/DialogDeleteVariant";
 import DialogEditProduct from "~/components/DialogEditProduct";
 import DialogEditVariant from "~/components/DialogEditVariant";
-import type { CatalogGroup, CatalogRow } from "~/types/catalog";
+import SearchComponent from "~/components/SearchComponent";
+import type { SearchResult } from "~/components/SearchComponent";
+import type { CatalogGroup, CatalogPayload, CatalogRow } from "~/types/catalog";
 import {
   ExternalLink,
   Globe,
@@ -69,6 +72,19 @@ function getSyncMode(
   // "confirmed" and let the dialog offer both "stay as-is, just sync" and
   // "flip to the opposite state," driven entirely by what Woo just reported.
   return "confirmed";
+}
+
+// Products Sync All would newly create in Woo for the first time if the
+// "also publish unpublished products" checkbox is checked — the exact same
+// isNew condition wooSyncManager.ts's buildWooParentPayload/
+// buildWooVariationPayload use to decide whether to set stock at all.
+// These are the ones that need a stock decision before going live, since
+// Sync All (unlike the single-product publish flow) has never asked for
+// one — it would otherwise silently default to 0/out-of-stock.
+function getFirstPublishCandidates(catalog: CatalogPayload): CatalogGroup[] {
+  return catalog.groups.filter(
+    (g) => g.publishedStatus === "draft" && !g.wooId,
+  );
 }
 
 function getSyncButtonLabel(group: CatalogGroup): string {
@@ -404,6 +420,8 @@ export default function ProductsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [pendingCreate, setPendingCreate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [failedCreateFields, setFailedCreateFields] =
+    useState<CreateProductFormState | null>(null);
   const [lastCreated, setLastCreated] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CatalogGroup | null>(null);
@@ -424,10 +442,19 @@ export default function ProductsPage() {
         type: "single";
         group: CatalogGroup;
         wooLiveStatus: string | null | "loading";
+        // Set only by the convert-to-simple trigger below — always show the
+        // stock form regardless of whether wooStock looks "already set,"
+        // since a simple product's stock is meaningless until confirmed
+        // fresh, but pre-fill (rather than blank) when a value already
+        // exists so the ask is "keep this?" not "type something."
+        forceStockPrompt?: boolean;
       }
     | { type: "all"; wooStatuses: Record<number, string> | "loading" };
   const [syncRequest, setSyncRequest] = useState<SyncRequest | null>(null);
   const [pendingSyncProductId, setPendingSyncProductId] = useState<
+    string | null
+  >(null);
+  const [pendingConvertToSimpleId, setPendingConvertToSimpleId] = useState<
     string | null
   >(null);
   const [publishDrafts, setPublishDrafts] = useState(false);
@@ -495,6 +522,12 @@ export default function ProductsPage() {
     );
     setPendingSyncProductId(null);
     if (freshGroup) {
+      // Clear any stock values left over from a previous sync dialog in this
+      // session — this path (delete-last-variant conversion, Add & Sync,
+      // publish-on-create) opens a fresh force-stock prompt for a specific
+      // product, and it must start blank rather than inheriting stale input
+      // from whatever was last typed elsewhere.
+      setStockOverrides({});
       setSyncRequest({
         type: "single",
         group: freshGroup,
@@ -510,6 +543,44 @@ export default function ProductsPage() {
     }
   }, [catalog, loading, pendingSyncProductId]);
 
+  // Converting a product's last variant away (variable → simple) has its
+  // own, stricter rule than the generic force-stock flow above:
+  //   - no wooId at all (never published) — nothing exists in Woo to
+  //     reconcile, so don't ask for stock or show any dialog at all; it's a
+  //     sheet-only change and stays that way until the user chooses to sync.
+  //   - has a wooId — always show the stock prompt before syncing, since a
+  //     simple product's stock was tracked per-variation before and is not
+  //     trustworthy now, but pre-fill whatever value already happens to be
+  //     there (wooStock, else the sheet's stockQty) instead of blanking it,
+  //     so the ask is "keep this?" rather than nagging for a number that
+  //     might already be correct.
+  useEffect(() => {
+    if (!pendingConvertToSimpleId || loading || !catalog) return;
+    const freshGroup = catalog.groups.find(
+      (g) => g.productId === pendingConvertToSimpleId,
+    );
+    setPendingConvertToSimpleId(null);
+    if (!freshGroup || !freshGroup.wooId) return;
+
+    const existing = freshGroup.wooStock ?? freshGroup.stockQty;
+    setStockOverrides({
+      [freshGroup.sku]: existing != null ? String(existing) : "0",
+    });
+    setSyncRequest({
+      type: "single",
+      group: freshGroup,
+      wooLiveStatus: "loading",
+      forceStockPrompt: true,
+    });
+    void fetchWooLiveStatus(freshGroup).then((wooLiveStatus) => {
+      setSyncRequest((prev) =>
+        prev?.type === "single" && prev.group.sku === freshGroup.sku
+          ? { ...prev, wooLiveStatus }
+          : prev,
+      );
+    });
+  }, [catalog, loading, pendingConvertToSimpleId]);
+
   const handlePending = () => {
     setShowCreate(false);
     setPendingCreate(true);
@@ -519,15 +590,21 @@ export default function ProductsPage() {
     setLastEdited(null);
   };
 
-  const handleFailed = (error: string) => {
+  const handleFailed = (error: string, failedForm: CreateProductFormState) => {
     setPendingCreate(false);
     setCreateError(error);
     showToast(`Create failed — ${error}`, "error");
+    // The backend rolls back the incomplete row on failure — reopen the
+    // dialog pre-filled with exactly what was submitted so the user can
+    // review/adjust and retry without retyping everything from scratch.
+    setFailedCreateFields(failedForm);
+    setShowCreate(true);
   };
 
   const handleCreated = (sku: string) => {
     setPendingCreate(false);
     setCreateError(null);
+    setFailedCreateFields(null);
     setLastCreated(`Created — new SKU: ${sku}`);
     setLastDeleted(null);
     setLastEdited(null);
@@ -605,9 +682,37 @@ export default function ProductsPage() {
         }
       }
 
-      // Convert string inputs to numbers, dropping blanks/zeros
+      // Convert string inputs to numbers, dropping blanks/zeros. stockOverrides
+      // is one piece of state shared across every sync dialog the page can
+      // open in a session — it's only ever cleared when a NEW dialog opens
+      // (see the sync-request openers below), never scoped by itself. Without
+      // filtering to the SKUs this specific request actually covers, a stale
+      // entry left over from an earlier product/variant (e.g. one that has
+      // since been deleted, like a variant removed by a simple-product
+      // conversion) would still get sent here and silently resurrect an
+      // inventory_index row for a SKU that no longer has anything else
+      // referencing it.
+      // Sync All only ever needs stock overrides for products it's about to
+      // publish for the first time (see getFirstPublishCandidates) — an
+      // already-published or still-intentionally-unpublished product has no
+      // reason to have its stock touched by this dialog.
+      const relevantSkus =
+        syncRequest.type === "single"
+          ? new Set([
+              syncRequest.group.sku,
+              ...syncRequest.group.rows.map((r) => r.sku),
+            ])
+          : publishDrafts && catalog
+            ? new Set(
+                getFirstPublishCandidates(catalog).flatMap((g) => [
+                  g.sku,
+                  ...g.rows.map((r) => r.sku),
+                ]),
+              )
+            : new Set<string>();
       const parsedOverrides = Object.fromEntries(
         Object.entries(stockOverrides)
+          .filter(([sku]) => relevantSkus.has(sku))
           .map(([sku, v]) => [sku, parseInt(v, 10)])
           .filter(([, n]) => Number.isFinite(n) && (n as number) > 0),
       );
@@ -622,7 +727,13 @@ export default function ProductsPage() {
                 ? { stockOverrides: parsedOverrides }
                 : {}),
             }
-          : { mode: "sync_all" as const, publish: publishDrafts };
+          : {
+              mode: "sync_all" as const,
+              publish: publishDrafts,
+              ...(Object.keys(parsedOverrides).length
+                ? { stockOverrides: parsedOverrides }
+                : {}),
+            };
 
       const res = await fetch("/api/catalog/sync_to_site", {
         method: "POST",
@@ -768,18 +879,74 @@ export default function ProductsPage() {
                     ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
                     : "";
 
-  const statusTone =
-    error || createError
-      ? "error"
-      : pendingCreate
-        ? "loading"
-        : lastCreated || lastEdited || lastSynced
-          ? "success"
+  // Mirrors statusMessage's own priority order — an action that actually
+  // succeeded (lastCreated/lastDeleted/lastSynced/lastEdited) must win over
+  // `error`, which is just whatever the catalog's own background reload
+  // last reported. Without this, a create that succeeds but happens to
+  // trigger a reload that fails (e.g. offline right after) showed the
+  // correct "Created — new SKU: X" text in red, as if the create itself
+  // had failed — createError (the create's own failure) still takes
+  // priority over everything, since that's a real failure of the action.
+  const statusTone = createError
+    ? "error"
+    : pendingCreate
+      ? "loading"
+      : lastCreated || lastDeleted || lastSynced || lastEdited
+        ? "success"
+        : error
+          ? "error"
           : undefined;
 
   return (
     <>
-      <section className="toolbar card">
+      <section className="toolbar card grid gap-1">
+        {catalog && canEdit && (
+          <SearchComponent
+            groups={catalog.groups}
+            label="Find a product or variant to edit"
+            placeholder="e.g. black small, CLO, CHR-TEE-0001"
+            alwaysIncludeMatchedGroup
+            onSelect={(result: SearchResult) => {
+              if (result.kind === "row") {
+                setPendingEditVariant({ row: result.row, group: result.group });
+              } else {
+                setPendingEdit(result.group);
+              }
+            }}
+            renderResult={(result) => {
+              if (result.kind === "row") {
+                return (
+                  <span className="search-result-row">
+                    <span className="search-result-row__context">
+                      {result.group.displayName}
+                    </span>
+                    <span className="search-result-row__sku">
+                      {result.row.sku}
+                    </span>
+                    <span className="search-result-row__label clr-muted">
+                      {result.row.variantDetails || result.row.label}
+                    </span>
+                  </span>
+                );
+              }
+              return (
+                <span className="search-result-row">
+                  <span className="search-result-row__context">
+                    {result.group.displayName}
+                  </span>
+                  <span className="search-result-row__sku">
+                    {result.group.sku}
+                  </span>
+                  <span className="search-result-row__label clr-muted">
+                    {result.group.rowCount > 0
+                      ? `${result.group.rowCount} variant${result.group.rowCount !== 1 ? "s" : ""}`
+                      : "Simple product"}
+                  </span>
+                </span>
+              );
+            }}
+          />
+        )}
         <div className="row gap-1 jc-sb ai-cen fw-wrap">
           <div className="row gap-1 ai-cen fw-wrap">
             <p
@@ -814,7 +981,10 @@ export default function ProductsPage() {
               <button
                 type="button"
                 className="btn-secondary btn-lg row gap-half ai-cen"
-                onClick={() => setShowCreate(true)}
+                onClick={() => {
+                  setFailedCreateFields(null);
+                  setShowCreate(true);
+                }}
                 disabled={loading}
               >
                 <Plus aria-hidden="true" />
@@ -827,6 +997,7 @@ export default function ProductsPage() {
                 className="btn-primary btn-lg row gap-half ai-cen"
                 onClick={async () => {
                   setPublishDrafts(false);
+                  setStockOverrides({});
                   setPublishStatus("idle");
                   setPublishError(null);
                   setLastCreated(null);
@@ -916,6 +1087,16 @@ export default function ProductsPage() {
 
       {pendingEdit && (
         <DialogEditProduct
+          // Forces a full unmount/remount if pendingEdit is ever reassigned
+          // to a different product while already open (e.g. two edit
+          // triggers landing back-to-back) instead of reusing the same
+          // instance — the dialog's dirty-tracking (`original` ref +
+          // `form` state) only initializes once per mount, so without this
+          // key a reused instance would keep comparing the new product
+          // against the PREVIOUS product's original values, which is
+          // exactly the kind of "sometimes opens already dirty" bug this
+          // is meant to rule out.
+          key={pendingEdit.sku}
           group={pendingEdit}
           onClose={() => setPendingEdit(null)}
           onSaved={() => {
@@ -932,6 +1113,8 @@ export default function ProductsPage() {
 
       {pendingEditVariant && (
         <DialogEditVariant
+          // Same reasoning as DialogEditProduct's key above.
+          key={pendingEditVariant.row.sku}
           row={pendingEditVariant.row}
           group={pendingEditVariant.group}
           onClose={() => setPendingEditVariant(null)}
@@ -949,10 +1132,14 @@ export default function ProductsPage() {
 
       {showCreate && (
         <DialogCreateProduct
-          onClose={() => setShowCreate(false)}
+          onClose={() => {
+            setShowCreate(false);
+            setFailedCreateFields(null);
+          }}
           onCreated={handleCreated}
           onPending={handlePending}
           onFailed={handleFailed}
+          initialValues={failedCreateFields ?? undefined}
         />
       )}
 
@@ -1014,10 +1201,11 @@ export default function ProductsPage() {
             await loadCatalog();
             setPendingDeleteVariant(null);
             if (convertedToSimpleProductId) {
-              // Stock was tracked per-variation — the now-simple product has
-              // none of its own yet. Route through the same zero-stock
-              // confirm dialog used elsewhere instead of guessing a value.
-              setPendingSyncProductId(convertedToSimpleProductId);
+              // Dedicated trigger, not the generic pendingSyncProductId flow
+              // — this one skips the dialog entirely when the parent has no
+              // wooId (nothing to reconcile), and always shows/pre-fills the
+              // stock field when it does. See the effect's own comment.
+              setPendingConvertToSimpleId(convertedToSimpleProductId);
             }
           }}
           onDeleteProduct={async (group) => {
@@ -1203,10 +1391,15 @@ export default function ProductsPage() {
                   // communicated to Woo as a simple product — wooId-based
                   // checks wrongly treated that as "already established"
                   // and skipped the force-stock prompt entirely.
-                  const hasZeroStock = isSimple
-                    ? syncRequest.group.wooStock == null
-                    : syncRequest.group.rows.some((r) => r.wooStock == null);
+                  const hasZeroStock =
+                    syncRequest.forceStockPrompt ||
+                    (isSimple
+                      ? syncRequest.group.wooStock == null
+                      : syncRequest.group.rows.some((r) => r.wooStock == null));
                   if (!hasZeroStock) return null;
+                  const existingStock = isSimple
+                    ? (syncRequest.group.wooStock ?? syncRequest.group.stockQty)
+                    : null;
                   return isSimple ? (
                     <form>
                       <div className="form-group">
@@ -1217,8 +1410,9 @@ export default function ProductsPage() {
                           Initial stock
                         </label>
                         <p className="xsmall clr-warning">
-                          No stock set — will sync as out of stock unless you
-                          enter a quantity below.
+                          {existingStock != null
+                            ? "This product already shows a stock quantity below — confirm it's still correct before syncing."
+                            : "No stock set — will sync as out of stock unless you enter a quantity below."}
                         </p>
                         <input
                           id="stock-patch-simple"
@@ -1326,16 +1520,24 @@ export default function ProductsPage() {
         catalog &&
         (() => {
           const totalCount = catalog.groups.length;
-          const draftGroups = catalog.groups.filter(
+          // The sheet's own published_status column doesn't distinguish
+          // Unpublished from Draft (see README's "Publish state vocabulary")
+          // — both read "draft" there. Split it here so the two counts below
+          // use the right term for each: no wooId at all is Unpublished
+          // (nothing in Woo to reconcile); a wooId whose live Woo status
+          // Woo itself confirms is still "publish" is the ground-truth
+          // republish/unpublish-drift case, unrelated to Unpublished.
+          const sheetSaysDraft = catalog.groups.filter(
             (g) => g.publishedStatus === "draft",
           );
-          const draftCount = draftGroups.filter((g) => !g.wooId).length;
+          const unpublishedGroups = getFirstPublishCandidates(catalog);
+          const unpublishedCount = unpublishedGroups.length;
           const isChecking = syncRequest.wooStatuses === "loading";
           const wooStatuses = isChecking ? {} : syncRequest.wooStatuses;
           // Ground truth: only count products Woo directly confirms are
           // still "publish" — syncing them with the sheet's draft status
           // will actually take them offline.
-          const unpublishCount = draftGroups.filter(
+          const unpublishCount = sheetSaysDraft.filter(
             (g) => g.wooId && wooStatuses[Number(g.wooId)] === "publish",
           ).length;
           // Mirror-image drift: the sheet says published, but Woo confirms
@@ -1379,7 +1581,7 @@ export default function ProductsPage() {
                   status…
                 </p>
               )}
-              {!isChecking && draftCount > 0 && (
+              {!isChecking && unpublishedCount > 0 && (
                 <label className="row gap-half ai-cen small">
                   <input
                     type="checkbox"
@@ -1387,11 +1589,113 @@ export default function ProductsPage() {
                     onChange={(e) => setPublishDrafts(e.target.checked)}
                   />
                   <span>
-                    Also publish {draftCount} draft
-                    {draftCount !== 1 ? "s" : ""} that{" "}
-                    {draftCount !== 1 ? "haven't" : "hasn't"} been published yet
+                    Also publish {unpublishedCount} unpublished product
+                    {unpublishedCount !== 1 ? "s" : ""} to be live on the site
                   </span>
                 </label>
+              )}
+              {!isChecking && publishDrafts && unpublishedGroups.length > 0 && (
+                <form className="grid gap-1">
+                  <p className="bold small">
+                    Set initial stock for the product
+                    {unpublishedGroups.length !== 1 ? "s" : ""} going live for
+                    the first time
+                  </p>
+                  <p className="xsmall clr-muted">
+                    These have never had a stock number set — they'll go live as
+                    out of stock unless you enter a quantity below.
+                  </p>
+                  <ul className="grid gap-half stock-variant-list" role="list">
+                    {unpublishedGroups.map((g) => {
+                      const isSimple = g.rowCount === 0;
+                      if (isSimple) {
+                        return (
+                          <li
+                            key={g.sku}
+                            className="row gap-1 ai-cen padding-b-half border-be border-soft stock-variant-item"
+                          >
+                            <label
+                              className="flex-1"
+                              htmlFor={`stock-all-${g.sku}`}
+                            >
+                              {g.displayName}
+                              <span className="clr-muted xsmall">
+                                {" "}
+                                · {g.sku}
+                              </span>
+                            </label>
+                            <input
+                              id={`stock-all-${g.sku}`}
+                              type="number"
+                              min="0"
+                              step="1"
+                              className="stock-variant-input"
+                              value={stockOverrides[g.sku] ?? "0"}
+                              onChange={(e) =>
+                                setStockOverrides((prev) => ({
+                                  ...prev,
+                                  [g.sku]: e.target.value,
+                                }))
+                              }
+                              onKeyDown={(e) =>
+                                (e.key === "-" ||
+                                  e.key === "e" ||
+                                  e.key === ".") &&
+                                e.preventDefault()
+                              }
+                            />
+                          </li>
+                        );
+                      }
+                      return (
+                        <li key={g.sku} className="grid gap-quarter">
+                          <p className="small">
+                            {g.displayName}{" "}
+                            <span className="clr-muted xsmall">{g.sku}</span>
+                          </p>
+                          <ul
+                            className="grid gap-quarter stock-variant-list"
+                            role="list"
+                          >
+                            {g.rows.map((r) => (
+                              <li
+                                key={r.sku}
+                                className="row gap-1 ai-cen padding-b-half border-be border-soft stock-variant-item"
+                              >
+                                <label
+                                  className="flex-1"
+                                  htmlFor={`stock-all-${r.sku}`}
+                                >
+                                  {r.label ?? r.sku}
+                                </label>
+                                <input
+                                  id={`stock-all-${r.sku}`}
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  className="stock-variant-input"
+                                  value={stockOverrides[r.sku] ?? "0"}
+                                  onChange={(e) =>
+                                    setStockOverrides((prev) => ({
+                                      ...prev,
+                                      [r.sku]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(e) =>
+                                    (e.key === "-" ||
+                                      e.key === "e" ||
+                                      e.key === ".") &&
+                                    e.preventDefault()
+                                  }
+                                />
+                              </li>
+                            ))}
+                          </ul>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </form>
               )}
               {unpublishCount > 0 && (
                 <p className="small clr-warning">

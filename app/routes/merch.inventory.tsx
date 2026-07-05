@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/merch.inventory";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
@@ -115,6 +115,7 @@ export default function InventoryPage() {
   const canEdit = user?.canEdit === true;
   const { state, loadCatalog, setStockQty, syncSelectedSkus } = useCatalog();
   const { showToast } = useToast();
+  const [searchParams] = useSearchParams();
 
   const hasDirtyChanges = Object.keys(state.dirtyBySku).length > 0;
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
@@ -134,6 +135,30 @@ export default function InventoryPage() {
       void loadCatalog({ withStock: true });
     }
   }, [state.catalog, state.loading, loadCatalog]);
+
+  // Deep-link support (e.g. from the Dashboard's "Needs attention" stock
+  // list) — mirrors merch.products.tsx's identical ?highlight= handling.
+  useEffect(() => {
+    const productId = searchParams.get("highlight");
+    if (!productId || !state.catalog) return;
+    const el = document.getElementById(`inventory-product-${productId}`);
+    if (el instanceof HTMLDetailsElement) {
+      el.open = true;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("inventory-group--highlighted");
+      setTimeout(
+        () => el.classList.remove("inventory-group--highlighted"),
+        2500,
+      );
+    }
+    // Raw history strip, not setSearchParams — see merch.products.tsx's
+    // identical comment: <ScrollRestoration/> resets scroll on RR
+    // navigations, which would snap the page back up mid-animation.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("highlight");
+    window.history.replaceState(null, "", url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.catalog]);
 
   useEffect(() => {
     if (!state.catalog || selectedMode === "custom_selection") return;
@@ -512,6 +537,7 @@ export default function InventoryPage() {
           return (
             <details
               key={group.productId}
+              id={`inventory-product-${group.productId}`}
               className="toggle-group inventory-group card"
               open={i === 0}
             >

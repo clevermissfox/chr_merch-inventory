@@ -68,6 +68,10 @@ export default function DialogEditProduct({
     (k) => form[k] !== original.current[k],
   );
   const isDirty = dirtyFields.length > 0;
+  const salePriceValid = isSalePriceValid(
+    form.basePriceDollars,
+    form.salePriceDollars,
+  );
 
   const validate = (): string | null => {
     const orig = original.current;
@@ -176,8 +180,8 @@ export default function DialogEditProduct({
             <p className="small clr-muted">
               {group.sku}
               {group.wooId
-                ? ` · ${group.publishedStatus === "publish" ? "Published" : "Draft"} — use the Status button to change this`
-                : " · not yet on the site"}
+                ? ` · ${group.publishedStatus === "publish" ? "Published" : "Draft"} · use the Status button to change this`
+                : " · Unpublished · not yet on the site"}
             </p>
           </hgroup>
           <button
@@ -262,10 +266,7 @@ export default function DialogEditProduct({
               </div>
             </div>
 
-            {!isSalePriceValid(
-              form.basePriceDollars,
-              form.salePriceDollars,
-            ) && (
+            {!salePriceValid && (
               <p role="alert" className="xsmall clr-danger">
                 Sale price must be less than base price.
               </p>
@@ -375,7 +376,11 @@ export default function DialogEditProduct({
               type="submit"
               className="btn-primary row gap-half jc-cen ai-cen flex-1"
               disabled={
-                !isDirty || submitting || shortDescOverLimit || imageIsPending
+                !isDirty ||
+                submitting ||
+                shortDescOverLimit ||
+                imageIsPending ||
+                !salePriceValid
               }
             >
               {submitting ? (

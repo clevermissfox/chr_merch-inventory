@@ -35,6 +35,7 @@ import {
   parseUpdateVariantFields,
   updateDescriptionFields,
   pollForProductSku,
+  rollbackPartialProductCreate,
   readRefData,
   rowsToObjects,
   shapeToCatalogPayload,
@@ -1008,15 +1009,53 @@ app.post(
         );
       }
 
-      const { productId, sku } = await pollForProductSku(
-        sheets,
-        spreadsheetId,
-        sheetRow,
-      );
-      await updateDescriptionFields(sheets, spreadsheetId, sku, {
-        primaryDescription: fields.primaryDescription,
-        shortDescription: fields.shortDescription,
-      });
+      // From here on, a failure leaves a broken partial row (product_id/
+      // category/price written, but sku unconfirmed and/or no description) —
+      // roll it back rather than leaving it for someone to find later.
+      // Never reaches a Woo call either way: create_product doesn't call
+      // Woo at all, by design, so there's nothing on that side to undo.
+      let productId: string;
+      let sku: string;
+      try {
+        ({ productId, sku } = await pollForProductSku(
+          sheets,
+          spreadsheetId,
+          sheetRow,
+        ));
+      } catch (error: any) {
+        await rollbackPartialProductCreate(sheets, spreadsheetId, rowId).catch(
+          (rollbackErr) =>
+            console.error(
+              "create_product: rollback after sku-poll failure also failed:",
+              rollbackErr,
+            ),
+        );
+        throw new Error(
+          `Product creation failed before it could complete (${error?.message}). The incomplete row was removed — please review your entries and try again.`,
+        );
+      }
+
+      try {
+        await updateDescriptionFields(sheets, spreadsheetId, sku, {
+          primaryDescription: fields.primaryDescription,
+          shortDescription: fields.shortDescription,
+        });
+      } catch (error: any) {
+        await rollbackPartialProductCreate(
+          sheets,
+          spreadsheetId,
+          rowId,
+          sku,
+        ).catch((rollbackErr) =>
+          console.error(
+            "create_product: rollback after description-write failure also failed:",
+            rollbackErr,
+          ),
+        );
+        throw new Error(
+          `Product creation failed before it could complete (${error?.message}). The incomplete row was removed — please review your entries and try again.`,
+        );
+      }
 
       // Add the new product to inventory_index immediately so it appears
       // without waiting for a stock sync (draft products never get a Woo row).

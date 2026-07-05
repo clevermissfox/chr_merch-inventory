@@ -586,38 +586,25 @@ export async function createProductRow(
   }
   const prefix = `${categoryEntry.code}-`;
 
-  // A max-of-currently-live-rows approach (the original version of this
-  // fix) can still reuse an id: delete the highest-numbered product in a
-  // category and the next creation sees a lower max, handing out an id that
-  // was already used and may still be referenced elsewhere (old
-  // merch_app_logs rows, a stale deep link, etc). catLastProductNum is a
-  // persistent per-category counter — read, incremented, and written back
-  // here, and NEVER touched by delete — so it only ever goes up regardless
-  // of what gets deleted later.
-  const catRangeData = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId,
-    ranges: ["catCode", "catLastProductNum"],
-  });
-  const catVrs = catRangeData.data.valueRanges ?? [];
-  // Raw (unfiltered) so index position lines up row-for-row between the two
-  // ranges — filtering blanks out of either array first would desync them.
-  const rawCatCodes = (catVrs[0]?.values ?? []).flat().map(String);
-  const rawLastNums = (catVrs[1]?.values ?? []).flat().map(String);
-  const catRowIdx = rawCatCodes.findIndex(
-    (c) => c.trim().toUpperCase() === categoryEntry.code.toUpperCase(),
-  );
-  if (catRowIdx === -1) {
-    throw new Error(
-      `Could not find category "${fields.category}" (code ${categoryEntry.code}) in the catLastProductNum counter range`,
-    );
+  // Next id is read straight from what currently exists — the highest
+  // numeric suffix among this category's live product_ids, +1. A separate
+  // persistent counter (catLastProductNum) was tried instead so a deleted
+  // product's number could never be reused, but it silently drifted out of
+  // sync with reality (nothing kept it honest) and became more confusing
+  // than the id-reuse tradeoff it was meant to avoid. Reusing a deleted
+  // product's number is accepted as fine — the sheet is the source of
+  // truth, and if that number isn't attached to a live row anymore, nothing
+  // meaningfully still depends on it.
+  const productIdCol = col("product_id");
+  let maxNum = 0;
+  for (let i = 1; i < values.length; i++) {
+    const pid = String((values[i] as string[])[productIdCol] ?? "").trim();
+    if (!pid.startsWith(prefix)) continue;
+    const n = Number(pid.slice(prefix.length));
+    if (Number.isFinite(n) && n > maxNum) maxNum = n;
   }
-  const nextNum = (Number(rawLastNums[catRowIdx]) || 0) + 1;
+  const nextNum = maxNum + 1;
   const newProductId = `${prefix}${String(nextNum).padStart(4, "0")}`;
-  const lastNumMeta = parseA1(catVrs[1]?.range ?? "");
-  const counterWrite = {
-    range: `'${lastNumMeta.sheet}'!${lastNumMeta.col}${lastNumMeta.startRow + catRowIdx}`,
-    values: [[String(nextNum)]],
-  };
 
   // Write only the user-provided cells — never touch other formula/protected columns
   const cell = (name: string, value: string) => ({
@@ -652,7 +639,6 @@ export async function createProductRow(
     ...(fields.publishedStatus
       ? [cell("published_status", fields.publishedStatus)]
       : [cell("published_status", "draft")]),
-    counterWrite,
   ];
 
   await sheets.spreadsheets.values.batchUpdate({
@@ -664,6 +650,91 @@ export async function createProductRow(
   });
 
   return { sheetRow, rowId };
+}
+
+// Rolls back a create_product request that wrote the row (createProductRow
+// above) but failed on one of the steps after it — most commonly
+// pollForProductSku timing out because the sheet's sku formula never
+// resolved, or updateDescriptionFields failing on a network hiccup.
+//
+// Looks the row up by row_id, NOT by the sheet position it had at creation
+// time — a captured row number can go stale the instant another request
+// inserts or deletes a row anywhere above it before this rollback runs,
+// and deleting by a stale position risks removing a completely different
+// (possibly live) product. This is the exact bug class `product_id` itself
+// used to have as a live ARRAYFORMULA (see that field's own comment above);
+// row_id is a UUID we generate ourselves at creation time specifically
+// because it's stable regardless of position, so rollback re-reads the
+// sheet fresh and finds the row by that UUID right before deleting it.
+//
+// If a sku HAD become known before the failure, also cleans up any
+// descriptions/inventory_index rows already written for it, so no partial
+// row of any kind is left for the next create attempt to collide with or
+// for a human to find later and wonder about. Safe to call this without
+// ever having touched Woo — create_product doesn't call Woo at all
+// (sync-to-site is a separate, deliberate step), so there's nothing on
+// that side to undo.
+export async function rollbackPartialProductCreate(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  rowId: string,
+  sku?: string,
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  const sheetIdByName = new Map(
+    (meta.data.sheets ?? []).map((s) => [
+      s.properties?.title ?? "",
+      s.properties?.sheetId ?? 0,
+    ]),
+  );
+
+  const productsRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+  const productValues = productsRes.data.values ?? [];
+  const productHeaders = ((productValues[0] as string[]) ?? []).map((h) =>
+    String(h).trim(),
+  );
+  const rowIdCol = colByHeader(productHeaders, "row_id");
+  const rowIdx = productValues.findIndex(
+    (row, i) =>
+      i > 0 && String((row as string[])[rowIdCol] ?? "").trim() === rowId,
+  );
+  if (rowIdx === -1) {
+    // Already gone — nothing left to roll back.
+    return;
+  }
+
+  const targets: Array<{ sheetName: string; indices: number[] }> = [
+    { sheetName: "products", indices: [rowIdx] },
+  ];
+
+  if (sku) {
+    const [descRes, invRes] = await Promise.all([
+      sheets.spreadsheets.values.get({ spreadsheetId, range: "descriptions" }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "inventory_index",
+      }),
+    ]);
+    const skus = new Set([sku]);
+    targets.push(
+      {
+        sheetName: "descriptions",
+        indices: findRowIndicesBySku(descRes.data.values ?? [], skus),
+      },
+      {
+        sheetName: "inventory_index",
+        indices: findRowIndicesBySku(invRes.data.values ?? [], skus),
+      },
+    );
+  }
+
+  await deleteSheetRows(sheets, spreadsheetId, sheetIdByName, targets);
 }
 
 export interface UpdateProductFields {
@@ -1864,6 +1935,12 @@ export async function createVariantRows(
     }
   }
 
+  // Captured alongside rowData so a rollback (if a later step fails) can
+  // find these exact rows again by their own generated UUID instead of
+  // trusting startSheetRow to still point at them — see
+  // rollbackPartialVariantCreate's comment for why position isn't safe.
+  const newRowIds: string[] = [];
+  const rowIdColIdx = colIdx("row_id");
   const rowData: string[][] = variants.map(
     ({
       color,
@@ -1890,8 +1967,11 @@ export async function createVariantRows(
       if (pi >= 0 && priceVariant) row[pi] = priceVariant;
       const wi = colIdx("weight_oz_variant");
       if (wi >= 0 && weightOzVariant) row[wi] = weightOzVariant;
-      const ri = colIdx("row_id");
-      if (ri >= 0) row[ri] = crypto.randomUUID();
+      if (rowIdColIdx >= 0) {
+        const generatedId = crypto.randomUUID();
+        row[rowIdColIdx] = generatedId;
+        newRowIds.push(generatedId);
+      }
       return row;
     },
   );
@@ -1904,12 +1984,29 @@ export async function createVariantRows(
     },
   });
 
-  const skus = await pollForVariantSkus(
-    sheets,
-    spreadsheetId,
-    startSheetRow,
-    variants.length,
-  );
+  let skus: string[];
+  try {
+    skus = await pollForVariantSkus(
+      sheets,
+      spreadsheetId,
+      startSheetRow,
+      variants.length,
+    );
+  } catch (error) {
+    await rollbackPartialVariantCreate(
+      sheets,
+      spreadsheetId,
+      newRowIds,
+    ).catch((rollbackErr) =>
+      console.error(
+        "create_variants: rollback after sku-poll failure also failed:",
+        rollbackErr,
+      ),
+    );
+    throw new Error(
+      `Variant creation failed before it could complete (${(error as Error).message}). The incomplete row(s) were removed — please review your entries and try again.`,
+    );
+  }
 
   // Post-write safety net: the sheet formula resolved actual SKUs — check they're unique.
   // If a collision is found, we locate the newly-written row BY SKU (not by position),
@@ -2029,24 +2126,123 @@ export async function createVariantRows(
       fields.stock_qty = variants[i].stockQty as number;
     return { sku, fields };
   });
-  await Promise.all([
-    Promise.all(
-      skus.map((sku, i) =>
-        updateDescriptionFields(sheets, spreadsheetId, sku, {
-          descriptionVariant: variants[i].descriptionVariant,
-        }),
+  try {
+    await Promise.all([
+      Promise.all(
+        skus.map((sku, i) =>
+          updateDescriptionFields(sheets, spreadsheetId, sku, {
+            descriptionVariant: variants[i].descriptionVariant,
+          }),
+        ),
       ),
-    ),
-    ensureInventoryIndexRowsExist(
+      ensureInventoryIndexRowsExist(
+        sheets,
+        spreadsheetId,
+        invState,
+        invUpdates,
+        variantCatalogNameBySku,
+      ),
+    ]);
+  } catch (error) {
+    await rollbackPartialVariantCreate(
       sheets,
       spreadsheetId,
-      invState,
-      invUpdates,
-      variantCatalogNameBySku,
-    ),
-  ]);
+      newRowIds,
+      skus,
+    ).catch((rollbackErr) =>
+      console.error(
+        "create_variants: rollback after description/inventory write failure also failed:",
+        rollbackErr,
+      ),
+    );
+    throw new Error(
+      `Variant creation failed before it could complete (${(error as Error).message}). The incomplete row(s) were removed — please review your entries and try again.`,
+    );
+  }
 
   return { skus };
+}
+
+// Rolls back a create_variants request that wrote rows (the batchUpdate
+// above) but failed on a later step — pollForVariantSkus timing out (sku
+// formula never resolved), or the final description/inventory_index writes
+// failing after skus did resolve.
+//
+// Looks the rows up by row_id, NOT by the startSheetRow position they had
+// at write time — same reasoning as rollbackPartialProductCreate: another
+// request could shift rows around before this runs, and a stale position
+// risks deleting the wrong (possibly live) variants. row_id is a UUID we
+// generate ourselves per row before ever writing it (see createVariantRows'
+// `newRowIds`), so rollback re-reads the sheet fresh and matches on that.
+//
+// Pass `skus` only when they're actually known (post-poll failures) so any
+// descriptions/inventory_index rows that did get written are cleaned up
+// too; omit it for a pre-poll failure where nothing downstream could have
+// been written yet.
+export async function rollbackPartialVariantCreate(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  rowIds: string[],
+  skus?: string[],
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  const sheetIdByName = new Map(
+    (meta.data.sheets ?? []).map((s) => [
+      s.properties?.title ?? "",
+      s.properties?.sheetId ?? 0,
+    ]),
+  );
+
+  const rowIdSet = new Set(rowIds.filter(Boolean));
+  let variantIndices: number[] = [];
+  if (rowIdSet.size) {
+    const variantsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "variants_values",
+    });
+    const variantValues = variantsRes.data.values ?? [];
+    const variantHeaders = ((variantValues[0] as string[]) ?? []).map((h) =>
+      String(h).trim(),
+    );
+    const rowIdCol = colByHeader(variantHeaders, "row_id");
+    variantIndices = variantValues
+      .map((row, i) => ({ row: row as string[], i }))
+      .filter(
+        ({ row, i }) =>
+          i > 0 && rowIdSet.has(String(row[rowIdCol] ?? "").trim()),
+      )
+      .map(({ i }) => i);
+  }
+
+  const targets: Array<{ sheetName: string; indices: number[] }> = [
+    { sheetName: "variants", indices: variantIndices },
+  ];
+
+  const skuSet = new Set((skus ?? []).filter(Boolean));
+  if (skuSet.size) {
+    const [descRes, invRes] = await Promise.all([
+      sheets.spreadsheets.values.get({ spreadsheetId, range: "descriptions" }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "inventory_index",
+      }),
+    ]);
+    targets.push(
+      {
+        sheetName: "descriptions",
+        indices: findRowIndicesBySku(descRes.data.values ?? [], skuSet),
+      },
+      {
+        sheetName: "inventory_index",
+        indices: findRowIndicesBySku(invRes.data.values ?? [], skuSet),
+      },
+    );
+  }
+
+  await deleteSheetRows(sheets, spreadsheetId, sheetIdByName, targets);
 }
 
 // sessions headers:       timestamp | email | name | role | action | env
@@ -2234,11 +2430,21 @@ export function shapeToCatalogPayload(
     group.rows.push(buildCatalogRow(variant));
   }
 
-  const groups = Array.from(groupsMap.values()).map((group) => {
-    group.rows.sort(compareCatalogRows);
-    group.rowCount = group.rows.length;
-    return group;
-  });
+  // Sheet row order is no longer a reliable proxy for product_id order —
+  // product_id is self-assigned per-category max+1 now (not a live formula
+  // tied to row position), and a new create just appends wherever the next
+  // blank row happens to be, which can land anywhere relative to older rows
+  // that were shuffled by earlier deletes (e.g. HME-0005, HME-0001, HME-0006
+  // in raw sheet order). Sort explicitly by sku so every page reading off
+  // this catalog shows a stable, predictable order instead of whatever the
+  // sheet's current row order happens to be.
+  const groups = Array.from(groupsMap.values())
+    .map((group) => {
+      group.rows.sort(compareCatalogRows);
+      group.rowCount = group.rows.length;
+      return group;
+    })
+    .sort((a, b) => normalizeSortValue(a.sku).localeCompare(normalizeSortValue(b.sku)));
 
   const conflictGroups = buildConflictGroups(groups);
 
