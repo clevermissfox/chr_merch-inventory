@@ -28,7 +28,6 @@ interface FormState {
   subcategory: string;
   basePriceDollars: string;
   salePriceDollars: string;
-  publishedStatus: string;
   weightOz: string;
   displayName: string;
   design: string;
@@ -38,7 +37,6 @@ interface FormState {
   dimensionsDepth: string;
   primaryDescription: string;
   shortDescription: string;
-  initialStockQty: string;
 }
 
 const empty: FormState = {
@@ -46,7 +44,6 @@ const empty: FormState = {
   subcategory: "",
   basePriceDollars: "",
   salePriceDollars: "",
-  publishedStatus: "draft",
   weightOz: "",
   displayName: "",
   design: "",
@@ -56,7 +53,6 @@ const empty: FormState = {
   dimensionsDepth: "",
   primaryDescription: "",
   shortDescription: "",
-  initialStockQty: "",
 };
 
 export default function DialogCreateProduct({
@@ -120,7 +116,6 @@ export default function DialogCreateProduct({
       subcategory: form.subcategory,
       basePriceDollars: form.basePriceDollars,
       salePriceDollars: form.salePriceDollars || undefined,
-      publishedStatus: form.publishedStatus,
       weightOz: form.weightOz,
       displayName: form.displayName || undefined,
       design: form.design || undefined,
@@ -202,45 +197,6 @@ export default function DialogCreateProduct({
             // Non-fatal — product was created, image can be added via Edit
             showToast(
               `Image upload failed — you can add it via Edit. (${err instanceof Error ? err.message : "unknown error"})`,
-              "warning",
-            );
-          }
-        }
-
-        // Publish immediately if the user chose "publish" — skips the extra
-        // manual sync step on the Products page. A brand-new product is
-        // always a simple product (no variants yet), so its stock is a
-        // single number collected right here instead of routing through
-        // the multi-row zero-stock confirm dialog used elsewhere.
-        if (form.publishedStatus === "publish" && data.productId) {
-          try {
-            const qty = parseInt(form.initialStockQty, 10);
-            const stockOverrides =
-              Number.isFinite(qty) && qty > 0 ? { [sku]: qty } : undefined;
-            const syncRes = await fetch("/api/catalog/sync_to_site", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({
-                mode: "selected",
-                productIds: [data.productId],
-                publish: true,
-                ...(stockOverrides ? { stockOverrides } : {}),
-              }),
-            });
-            const syncData = await syncRes.json();
-            const result: { status: string; error?: string } | undefined =
-              syncData.results?.[0];
-            if (!syncData.ok || result?.status === "failed") {
-              showToast(
-                `Publish sync failed — retry from the Products page. (${result?.error || syncData.error || "unknown error"})`,
-                "warning",
-              );
-            }
-          } catch (err) {
-            // Non-fatal — product was created, sync can be retried from Products page
-            showToast(
-              `Publish sync failed — retry from the Products page. (${err instanceof Error ? err.message : "unknown error"})`,
               "warning",
             );
           }
@@ -511,45 +467,6 @@ export default function DialogCreateProduct({
             </div>
 
             <div className="form-group">
-              <label className="bold" htmlFor="cp-published-status">
-                Published status{" "}
-                <span className="clr-muted xsmall">
-                  (optional — defaults to draft)
-                </span>
-              </label>
-              <select
-                id="cp-published-status"
-                value={form.publishedStatus}
-                onChange={set("publishedStatus")}
-              >
-                <option value="draft">Draft</option>
-                <option value="publish">Published</option>
-                <option value="private">Private</option>
-              </select>
-            </div>
-
-            {form.publishedStatus === "publish" && (
-              <div className="form-group">
-                <label className="bold" htmlFor="cp-initial-stock">
-                  Initial stock quantity
-                </label>
-                <input
-                  id="cp-initial-stock"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={form.initialStockQty}
-                  onChange={setNumeric("initialStockQty")}
-                  placeholder="0"
-                />
-                <p className="xsmall clr-muted">
-                  Published products sync to the site immediately — set the
-                  stock now so it isn't published with zero inventory.
-                </p>
-              </div>
-            )}
-
-            <div className="form-group">
               <label className="bold" htmlFor="cp-display-name">
                 Display Name{" "}
                 <span className="clr-muted xsmall">(optional)</span>
@@ -752,21 +669,13 @@ export default function DialogCreateProduct({
               deferred
               onStagedChange={setStagedImage}
             />
-            {form.publishedStatus === "publish" ? (
-              <p className="xsmall clr-warning">
-                Images are added manually by dev after processing — this product
-                will go live with no image (even if you selected one) until
-                that's done. Choose Draft instead if you don't want it live yet.
+            {(stagedImage.mode === "file"
+              ? stagedImage.files.length > 0
+              : stagedImage.url.length > 0) && (
+              <p className="xsmall clr-muted">
+                Image will be sent to dev for processing after the product is
+                created.
               </p>
-            ) : (
-              (stagedImage.mode === "file"
-                ? stagedImage.files.length > 0
-                : stagedImage.url.length > 0) && (
-                <p className="xsmall clr-muted">
-                  Image will be sent to dev for processing after the product is
-                  created.
-                </p>
-              )
             )}
 
             {submitError && (
@@ -782,11 +691,7 @@ export default function DialogCreateProduct({
                 disabled={!canSubmit}
               >
                 <Plus aria-hidden="true" />
-                <span>
-                  {form.publishedStatus === "publish"
-                    ? "Create + Publish"
-                    : "Create Product"}
-                </span>
+                <span>Create Product</span>
               </button>
               <button
                 type="button"

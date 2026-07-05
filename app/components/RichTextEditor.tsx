@@ -1,4 +1,4 @@
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -146,12 +146,39 @@ export default function RichTextEditor({
     },
   });
 
-  // Sync value when it changes from outside (e.g. form reset)
+  // editor.isActive(...) read directly at render time only reflects
+  // whatever it was at the last render — nothing re-renders this component
+  // on a pure selection/cursor move (no doc change), so toolbar buttons went
+  // stale the instant you clicked somewhere without also editing. This hook
+  // re-renders specifically when the computed selector result changes,
+  // including on selection-only changes.
+  const toolbarState = useEditorState({
+    editor,
+    selector: ({ editor }) => ({
+      bold: editor?.isActive("bold") ?? false,
+      italic: editor?.isActive("italic") ?? false,
+      underline: editor?.isActive("underline") ?? false,
+      strike: editor?.isActive("strike") ?? false,
+      bulletList: editor?.isActive("bulletList") ?? false,
+      orderedList: editor?.isActive("orderedList") ?? false,
+      link: editor?.isActive("link") ?? false,
+    }),
+  });
+
+  // Sync value when it changes from outside (e.g. form reset). Explicitly
+  // silent (emitUpdate: false) — this call must never fire onUpdate itself,
+  // regardless of whether TipTap's reserialized HTML differs slightly from
+  // the raw stored string (quote style, whitespace, etc.). Relying on
+  // editor.isFocused to distinguish "programmatic" from "real" updates was
+  // unreliable: clicking a toolbar button re-focuses the editor via a
+  // command chain, and there's a race where isFocused can still read false
+  // for that same command's update — silently swallowing genuine formatting
+  // changes (bold/italic toggles) along with the mount-time resync.
   useEffect(() => {
     if (!editor) return;
     const current = editor.isEmpty ? "" : editor.getHTML();
     if (current !== value) {
-      editor.commands.setContent(value ?? "");
+      editor.commands.setContent(value ?? "", { emitUpdate: false });
     }
   }, [value, editor]);
 
@@ -190,7 +217,7 @@ export default function RichTextEditor({
     >
       <div className="rich-editor-toolbar" aria-label="Text formatting">
         <ToolbarButton
-          active={editor?.isActive("bold")}
+          active={toolbarState.bold}
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleBold().run()}
           title="Bold"
@@ -198,7 +225,7 @@ export default function RichTextEditor({
           <Bold size={14} />
         </ToolbarButton>
         <ToolbarButton
-          active={editor?.isActive("italic")}
+          active={toolbarState.italic}
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleItalic().run()}
           title="Italic"
@@ -206,7 +233,7 @@ export default function RichTextEditor({
           <Italic size={14} />
         </ToolbarButton>
         <ToolbarButton
-          active={editor?.isActive("underline")}
+          active={toolbarState.underline}
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleUnderline().run()}
           title="Underline"
@@ -216,7 +243,7 @@ export default function RichTextEditor({
         {!isSimple && (
           <>
             <ToolbarButton
-              active={editor?.isActive("strike")}
+              active={toolbarState.strike}
               disabled={disabled}
               onClick={() => editor?.chain().focus().toggleStrike().run()}
               title="Strikethrough"
@@ -225,7 +252,7 @@ export default function RichTextEditor({
             </ToolbarButton>
             <span className="rich-editor-divider" />
             <ToolbarButton
-              active={editor?.isActive("bulletList")}
+              active={toolbarState.bulletList}
               disabled={disabled}
               onClick={() => editor?.chain().focus().toggleBulletList().run()}
               title="Bullet list"
@@ -233,7 +260,7 @@ export default function RichTextEditor({
               <List size={14} />
             </ToolbarButton>
             <ToolbarButton
-              active={editor?.isActive("orderedList")}
+              active={toolbarState.orderedList}
               disabled={disabled}
               onClick={() => editor?.chain().focus().toggleOrderedList().run()}
               title="Numbered list"
@@ -242,7 +269,7 @@ export default function RichTextEditor({
             </ToolbarButton>
             <span className="rich-editor-divider" />
             <ToolbarButton
-              active={editor?.isActive("link")}
+              active={toolbarState.link}
               disabled={disabled}
               onClick={setLink}
               title="Add link"
@@ -251,7 +278,7 @@ export default function RichTextEditor({
             </ToolbarButton>
             <ToolbarButton
               active={false}
-              disabled={disabled || !editor?.isActive("link")}
+              disabled={disabled || !toolbarState.link}
               onClick={() => editor?.chain().focus().unsetLink().run()}
               title="Remove link"
             >

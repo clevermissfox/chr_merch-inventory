@@ -584,18 +584,40 @@ export async function createProductRow(
   if (!categoryEntry?.code) {
     throw new Error(`No category code found for category "${fields.category}"`);
   }
-  const productIdIdx = col("product_id");
-  const existingProductIds = values
-    .slice(1)
-    .map((row) => String((row as string[])[productIdIdx] ?? "").trim())
-    .filter(Boolean);
   const prefix = `${categoryEntry.code}-`;
-  const maxExisting = existingProductIds.reduce((max, id) => {
-    if (!id.startsWith(prefix)) return max;
-    const num = Number(id.slice(prefix.length));
-    return Number.isFinite(num) && num > max ? num : max;
-  }, 0);
-  const newProductId = `${prefix}${String(maxExisting + 1).padStart(4, "0")}`;
+
+  // A max-of-currently-live-rows approach (the original version of this
+  // fix) can still reuse an id: delete the highest-numbered product in a
+  // category and the next creation sees a lower max, handing out an id that
+  // was already used and may still be referenced elsewhere (old
+  // merch_app_logs rows, a stale deep link, etc). catLastProductNum is a
+  // persistent per-category counter — read, incremented, and written back
+  // here, and NEVER touched by delete — so it only ever goes up regardless
+  // of what gets deleted later.
+  const catRangeData = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: ["catCode", "catLastProductNum"],
+  });
+  const catVrs = catRangeData.data.valueRanges ?? [];
+  // Raw (unfiltered) so index position lines up row-for-row between the two
+  // ranges — filtering blanks out of either array first would desync them.
+  const rawCatCodes = (catVrs[0]?.values ?? []).flat().map(String);
+  const rawLastNums = (catVrs[1]?.values ?? []).flat().map(String);
+  const catRowIdx = rawCatCodes.findIndex(
+    (c) => c.trim().toUpperCase() === categoryEntry.code.toUpperCase(),
+  );
+  if (catRowIdx === -1) {
+    throw new Error(
+      `Could not find category "${fields.category}" (code ${categoryEntry.code}) in the catLastProductNum counter range`,
+    );
+  }
+  const nextNum = (Number(rawLastNums[catRowIdx]) || 0) + 1;
+  const newProductId = `${prefix}${String(nextNum).padStart(4, "0")}`;
+  const lastNumMeta = parseA1(catVrs[1]?.range ?? "");
+  const counterWrite = {
+    range: `'${lastNumMeta.sheet}'!${lastNumMeta.col}${lastNumMeta.startRow + catRowIdx}`,
+    values: [[String(nextNum)]],
+  };
 
   // Write only the user-provided cells — never touch other formula/protected columns
   const cell = (name: string, value: string) => ({
@@ -630,6 +652,7 @@ export async function createProductRow(
     ...(fields.publishedStatus
       ? [cell("published_status", fields.publishedStatus)]
       : [cell("published_status", "draft")]),
+    counterWrite,
   ];
 
   await sheets.spreadsheets.values.batchUpdate({
@@ -809,7 +832,7 @@ export function parseUpdateProductFields(
     fields.salePriceDollars = body.salePriceDollars.trim();
   if (
     typeof body.publishedStatus === "string" &&
-    ["draft", "publish", "private"].includes(body.publishedStatus)
+    ["draft", "publish"].includes(body.publishedStatus)
   )
     fields.publishedStatus = body.publishedStatus;
   if (typeof body.weightOz === "string") fields.weightOz = body.weightOz.trim();
@@ -871,7 +894,7 @@ export function parseNewProductFields(
     salePriceDollars: body.salePriceDollars,
     publishedStatus:
       body.publishedStatus &&
-      ["draft", "publish", "private"].includes(body.publishedStatus)
+      ["draft", "publish"].includes(body.publishedStatus)
         ? body.publishedStatus
         : "draft",
   };
@@ -2028,11 +2051,12 @@ export async function createVariantRows(
 
 // sessions headers:       timestamp | email | name | role | action | env
 // merch_app_logs headers: timestamp | email | action | detail | env
+// bug_reports headers:    timestamp | email | page | severity | what_happened | what_did_you_expect | what_had_you_done_before | screenshot_link | env
 // Add these as row 1 manually in each sheet once — writeSheetLog only appends data rows.
 export async function writeSheetLog(
   sheets: SheetsClient,
   spreadsheetId: string,
-  sheetName: "sessions" | "merch_app_logs",
+  sheetName: "sessions" | "merch_app_logs" | "bug_reports",
   row: string[],
 ): Promise<void> {
   await sheets.spreadsheets.values.append({
@@ -2161,9 +2185,20 @@ export function buildConflictGroups(
 ): CatalogConflictGroup[] {
   return groups
     .map((group) => {
-      const count = group.rows.filter(
-        (row) => row.stockQty !== row.wooStock,
-      ).length;
+      // A product with no wooId has no real Woo stock to conflict with —
+      // matches the per-row `data-mismatch` indicator on the Inventory
+      // page, which already gates on `!!group.wooId` for the same reason.
+      if (!group.wooId) return null;
+
+      // Simple products (no variant rows) track stock on the group itself,
+      // not in `rows` — checking only `rows` silently ignored every simple
+      // product's own mismatch. Mirrors the Inventory page's per-row check.
+      const count =
+        group.rows.length > 0
+          ? group.rows.filter((row) => row.stockQty !== row.wooStock).length
+          : group.stockQty !== group.wooStock
+            ? 1
+            : 0;
 
       if (count <= 0) return null;
 

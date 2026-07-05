@@ -127,9 +127,7 @@ export default function DialogDeleteVariant({
 
           {row.wooVariantId && (
             <p className="small clr-warning">
-              This variant is{" "}
-              {group.publishedStatus === "draft" ? "stored" : "live"} on the
-              site — it will also be permanently deleted from WooCommerce.
+              This variant will also be permanently deleted from WooCommerce.
             </p>
           )}
         </div>
@@ -172,14 +170,6 @@ export default function DialogDeleteVariant({
               </span>
             </button>
           )}
-          {/* <button
-            type="button"
-            className="btn-ghost"
-            onClick={onClose}
-            disabled={inFlight}
-          >
-            Cancel
-          </button> */}
         </div>
       </div>
     </dialog>

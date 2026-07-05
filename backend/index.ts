@@ -49,6 +49,8 @@ import type { RefAddType, UpdateProductFields } from "./catalogManager";
 import { DupeSkuError } from "./catalogManager";
 import {
   syncCatalogGroupsToWoo,
+  syncProductGroupToWoo,
+  loadCategoryWooIdMaps,
   deleteProductFromWoo,
   deleteVariationFromWoo,
   convertWooProductToSimple,
@@ -56,8 +58,10 @@ import {
   removeWooProductImage,
   getWooVariationImages,
   removeWooVariationImage,
+  getWooProductStatus,
+  getWooProductStatuses,
 } from "./wooSyncManager";
-import { sendImageNotification } from "./mailer";
+import { sendImageNotification, sendBugReportNotification } from "./mailer";
 
 import {
   applyWooStockMapToCatalogGroups,
@@ -1167,6 +1171,57 @@ app.delete(
 );
 
 app.get(
+  "/api/catalog/product/:sku/woo_status",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const sku = req.params.sku?.trim();
+      if (!sku)
+        return res.status(400).json({ ok: false, error: "Missing sku" });
+
+      const { sheets, spreadsheetId } = getSheets();
+      const wooId = await getProductWooId(sheets, spreadsheetId, sku);
+      if (!wooId) return res.json({ ok: true, status: null });
+
+      const status = await getWooProductStatus(wooId);
+      return res.json({ ok: true, status });
+    } catch (error: any) {
+      console.error("GET /api/catalog/product/:sku/woo_status failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to fetch site status",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/catalog/woo_statuses",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const { wooIds } = req.body as { wooIds?: number[] };
+      if (!Array.isArray(wooIds) || !wooIds.length) {
+        return res.json({ ok: true, statuses: {} });
+      }
+      const statusMap = await getWooProductStatuses(
+        wooIds.filter((id) => Number.isFinite(id)),
+      );
+      return res.json({
+        ok: true,
+        statuses: Object.fromEntries(statusMap),
+      });
+    } catch (error: any) {
+      console.error("POST /api/catalog/woo_statuses failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to fetch site statuses",
+      });
+    }
+  },
+);
+
+app.get(
   "/api/catalog/product/:sku/woo_images",
   requireAuth,
   async (req: Request, res: Response) => {
@@ -1478,6 +1533,28 @@ app.delete(
                 hash: computeProductSyncHash(parentGroup),
               },
             ]);
+
+            // Deleting a variant removes that one Woo variation object, but
+            // the parent's `attributes` list is separate, explicit data —
+            // Woo never prunes it automatically just because the variant
+            // that used a particular value is gone. Push a fresh parent
+            // payload (recomputed from the surviving rows) so an attribute
+            // no longer used by anything remaining (e.g. "Size") actually
+            // disappears instead of lingering as a stale dropdown.
+            if (wooDeleted && parentGroup.wooId) {
+              try {
+                const categoryMaps = await loadCategoryWooIdMaps(
+                  sheets,
+                  spreadsheetId,
+                );
+                await syncProductGroupToWoo(parentGroup, categoryMaps, true);
+              } catch (e: any) {
+                console.error(
+                  `Parent attribute refresh after variant delete failed for ${sku}:`,
+                  e?.message,
+                );
+              }
+            }
           }
         } catch (e: any) {
           console.error(
@@ -1651,12 +1728,24 @@ app.post(
         );
       }
 
+      // `publish` above is only the INPUT flag the frontend sent — it says
+      // nothing about what each product's status actually ended up as.
+      // skipped_draft/skipped_unchanged are skip-REASON counts, not state
+      // counts, and were easy to misread as if they described how many
+      // products are currently draft. Log the real per-product outcome
+      // instead, so this line answers "what did each SKU end up as," not
+      // just "how many things did or didn't happen."
+      const statusSummary = summary.results
+        .filter((r) => r.publishedStatus)
+        .map((r) => `${r.sku}:${r.publishedStatus}`)
+        .join(",");
+
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor.email,
         "sync_to_site",
-        `mode=${syncMode} publish=${Boolean(publish)} synced=${summary.syncedCount} skipped_draft=${summary.skippedDraftCount} skipped_unchanged=${summary.skippedUnchangedCount} failed=${summary.failedCount} missing=${missing.join(",")}`,
+        `mode=${syncMode} publish=${Boolean(publish)} synced=${summary.syncedCount} skipped_draft=${summary.skippedDraftCount} skipped_unchanged=${summary.skippedUnchangedCount} failed=${summary.failedCount} statuses=${statusSummary} missing=${missing.join(",")}`,
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1867,6 +1956,123 @@ app.post(
     }
 
     return res.json({ ok: true });
+  },
+);
+
+app.post(
+  "/api/bug_report",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        page,
+        severity,
+        whatDidYouExpect,
+        whatHadYouDoneBefore,
+        whatHappened,
+        screenshot,
+      } = req.body as {
+        page?: string;
+        severity?: string;
+        whatDidYouExpect?: string;
+        whatHadYouDoneBefore?: string;
+        whatHappened?: string;
+        screenshot?: { fileName: string; fileData: string; mimeType: string };
+      };
+
+      if (!whatDidYouExpect?.trim() || !whatHappened?.trim()) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "\"What did you expect to happen\" and \"What happened\" are required",
+        });
+      }
+
+      const reporterEmail = req.session.user!.email;
+      const resolvedSeverity = severity?.trim() || "medium";
+      const resolvedPage = page?.trim() || "unknown";
+
+      let screenshotLink: string | undefined;
+      let driveError: string | null = null;
+      if (screenshot) {
+        try {
+          const folderId = process.env.DRIVE_IMAGES_FOLDER_ID;
+          if (!folderId)
+            throw new Error("DRIVE_IMAGES_FOLDER_ID is not configured");
+          const drive = google.drive({ version: "v3", auth: serviceAuth });
+          const { Readable } = await import("stream");
+          const ts = Date.now();
+          const ext = screenshot.fileName.split(".").pop() ?? "png";
+          const uploadedName = `bugreport-${ts}.${ext}`;
+          const uploaded = await drive.files.create({
+            supportsAllDrives: true,
+            requestBody: { name: uploadedName, parents: [folderId] },
+            media: {
+              mimeType: screenshot.mimeType,
+              body: Readable.from(Buffer.from(screenshot.fileData, "base64")),
+            },
+            fields: "id,webViewLink",
+          });
+          screenshotLink =
+            uploaded.data.webViewLink ??
+            `https://drive.google.com/file/d/${uploaded.data.id}/view`;
+        } catch (e: any) {
+          driveError = e?.message || "Screenshot upload failed";
+          console.error("Bug report screenshot upload failed:", e?.message);
+        }
+      }
+
+      const { sheets, spreadsheetId } = getSheets();
+
+      let emailSent = false;
+      let emailError: string | null = null;
+      try {
+        await sendBugReportNotification({
+          reporterEmail,
+          page: resolvedPage,
+          severity: resolvedSeverity,
+          whatDidYouExpect: whatDidYouExpect.trim(),
+          whatHadYouDoneBefore: whatHadYouDoneBefore?.trim() || "",
+          whatHappened: whatHappened.trim(),
+          screenshotLink,
+        });
+        emailSent = true;
+      } catch (e: any) {
+        emailError = e?.message || "Failed to send email";
+        console.error("Bug report email failed:", e?.message);
+      }
+
+      writeSheetLog(sheets, spreadsheetId, "bug_reports", [
+        new Date().toISOString(),
+        reporterEmail,
+        resolvedPage,
+        resolvedSeverity,
+        whatHappened.trim(),
+        whatDidYouExpect.trim(),
+        whatHadYouDoneBefore?.trim() || "",
+        screenshotLink ?? "",
+        TARGET_ENV,
+      ]).catch((e) => console.error("bug_report log failed:", e));
+
+      if (!emailSent) {
+        return res.status(502).json({
+          ok: false,
+          error: `Report saved, but the notification email failed: ${emailError}`,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        ...(driveError ? { warning: `Screenshot upload failed: ${driveError}` } : {}),
+      });
+    } catch (error: any) {
+      console.error("POST /api/bug_report failed:", error);
+      tryLogError(req, "bug_report", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to submit bug report",
+      });
+    }
   },
 );
 

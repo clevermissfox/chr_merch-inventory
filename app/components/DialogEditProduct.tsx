@@ -1,4 +1,4 @@
-import { Globe, Save, X } from "lucide-react";
+import { Globe, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
@@ -10,14 +10,12 @@ interface DialogEditProductProps {
   group: CatalogGroup;
   onClose: () => void;
   onSaved: () => void;
-  onSavedThenSync: () => void;
 }
 
 interface FormState {
   displayName: string;
   basePriceDollars: string;
   salePriceDollars: string;
-  publishedStatus: string;
   weightOz: string;
   primaryDescription: string;
   shortDescription: string;
@@ -31,7 +29,6 @@ function initForm(group: CatalogGroup): FormState {
     displayName: group.displayName ?? "",
     basePriceDollars: (group.basePriceDollars ?? "").replace(/[^0-9.]/g, ""),
     salePriceDollars: (group.salePriceDollars ?? "").replace(/[^0-9.]/g, ""),
-    publishedStatus: group.publishedStatus ?? "draft",
     weightOz: group.weightOz ?? "",
     primaryDescription: group.primaryDescription ?? "",
     shortDescription: group.shortDescription ?? "",
@@ -45,14 +42,12 @@ export default function DialogEditProduct({
   group,
   onClose,
   onSaved,
-  onSavedThenSync,
 }: DialogEditProductProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const original = useRef<FormState>(initForm(group));
   const [form, setForm] = useState<FormState>(original.current);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
   const [imageIsPending, setImageIsPending] = useState(false);
 
@@ -73,22 +68,6 @@ export default function DialogEditProduct({
     (k) => form[k] !== original.current[k],
   );
   const isDirty = dirtyFields.length > 0;
-
-  // Temporary diagnostic for an intermittent bug: Save/Save & Sync appear
-  // enabled on open with zero user interaction, self-resolving without any
-  // state change we've been able to catch. Logs every time isDirty flips so
-  // the next occurrence shows exactly which field(s) original vs form
-  // disagreed on, and whether it happened on mount or after some render.
-  useEffect(() => {
-    console.log("[DialogEditProduct] isDirty changed", {
-      sku: group.sku,
-      isDirty,
-      dirtyFields,
-      form,
-      original: original.current,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDirty]);
 
   const validate = (): string | null => {
     const orig = original.current;
@@ -119,8 +98,6 @@ export default function DialogEditProduct({
       payload.basePriceDollars = form.basePriceDollars.trim();
     if (form.salePriceDollars !== orig.salePriceDollars)
       payload.salePriceDollars = form.salePriceDollars.trim();
-    if (form.publishedStatus !== orig.publishedStatus)
-      payload.publishedStatus = form.publishedStatus;
     if (form.weightOz !== orig.weightOz)
       payload.weightOz = form.weightOz.trim();
     if (form.primaryDescription !== orig.primaryDescription)
@@ -150,6 +127,11 @@ export default function DialogEditProduct({
     if (!data.ok) throw new Error(data.error || "Failed to update product");
   };
 
+  // Editing a product always saves AND syncs — there's no longer a
+  // content-only "Save" that can leave the sheet ahead of Woo. This is safe
+  // even for a still-draft product: pushing content never changes its
+  // draft/published visibility, only the card's dedicated Publish/Unpublish
+  // action does that (with its own ground-truth check and confirm step).
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
@@ -162,33 +144,26 @@ export default function DialogEditProduct({
     setSubmitError(null);
     try {
       await saveToSheet();
+      const res = await fetch("/api/catalog/sync_to_site", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          mode: "selected",
+          productIds: [group.productId],
+          publish: false,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Sync failed");
+      const result = data.results?.[0];
+      if (result?.status === "failed")
+        throw new Error(result.error || "Sync failed");
       onSaved();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleSaveAndSync = async () => {
-    if (!isDirty && !group.wooId) return;
-    const err = isDirty ? validate() : null;
-    if (err) {
-      setSubmitError(err);
-      return;
-    }
-    setSyncing(true);
-    setSubmitError(null);
-    try {
-      if (isDirty) await saveToSheet();
-      // Sync itself happens in the parent, which opens the same zero-stock
-      // confirm prompt used by the Products page's own sync button, instead
-      // of pushing to Woo unconditionally here.
-      onSavedThenSync();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -198,7 +173,12 @@ export default function DialogEditProduct({
         <div className="row jc-sb ai-cen">
           <hgroup>
             <h2>Edit product</h2>
-            <p className="small clr-muted">{group.sku}</p>
+            <p className="small clr-muted">
+              {group.sku}
+              {group.wooId
+                ? ` · ${group.publishedStatus === "publish" ? "Published" : "Draft"} — use the Status button to change this`
+                : " · not yet on the site"}
+            </p>
           </hgroup>
           <button
             type="button"
@@ -290,22 +270,6 @@ export default function DialogEditProduct({
                 Sale price must be less than base price.
               </p>
             )}
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="ep-published-status" className="bold">
-              Published status
-            </label>
-            <select
-              id="ep-published-status"
-              value={form.publishedStatus}
-              onChange={set("publishedStatus")}
-              disabled={submitting}
-            >
-              <option value="draft">Draft</option>
-              <option value="publish">Published</option>
-              <option value="private">Private</option>
-            </select>
           </div>
 
           <fieldset className="form-fieldset grid gap-half">
@@ -411,50 +375,23 @@ export default function DialogEditProduct({
               type="submit"
               className="btn-primary row gap-half jc-cen ai-cen flex-1"
               disabled={
-                !isDirty ||
-                submitting ||
-                syncing ||
-                shortDescOverLimit ||
-                imageIsPending
+                !isDirty || submitting || shortDescOverLimit || imageIsPending
               }
             >
               {submitting ? (
-                <span className="render-loader">Saving…</span>
+                <span className="render-loader">Syncing…</span>
               ) : (
                 <>
-                  <Save aria-hidden="true" />
-                  <span>Save</span>
+                  <Globe aria-hidden="true" />
+                  <span>Sync changes</span>
                 </>
               )}
             </button>
-            {group.wooId && (
-              <button
-                type="button"
-                className="btn-secondary row gap-half jc-cen ai-cen flex-1"
-                onClick={handleSaveAndSync}
-                disabled={
-                  !isDirty ||
-                  submitting ||
-                  syncing ||
-                  shortDescOverLimit ||
-                  imageIsPending
-                }
-              >
-                {syncing ? (
-                  <span className="render-loader">Saving…</span>
-                ) : (
-                  <>
-                    <Globe aria-hidden="true" />
-                    <span>Save &amp; Sync</span>
-                  </>
-                )}
-              </button>
-            )}
             <button
               type="button"
               className="btn-secondary flex-1"
               onClick={onClose}
-              disabled={submitting || syncing}
+              disabled={submitting}
             >
               Cancel
             </button>

@@ -633,12 +633,13 @@ export function buildStockSyncPlan(
     if (variantMatch) {
       const { group, row } = variantMatch;
 
-      // No woo_id — nothing to sync regardless of published status
+      // No woo_id — nothing to sync regardless of published status. The
+      // sheet's published_status doesn't distinguish anything meaningful
+      // here (a product with no wooId was never "draft but on the site" —
+      // it's simply not on the site at all yet), so this is always the
+      // same reason.
       if (!group.wooId) {
-        skipped.push({
-          sku,
-          reason: group.publishedStatus === "draft" ? "draft_unpublished" : "no_woo_id",
-        });
+        skipped.push({ sku, reason: "no_woo_id" });
         continue;
       }
 
@@ -670,12 +671,10 @@ export function buildStockSyncPlan(
     const simpleMatch = productsBySimpleSku.get(sku);
 
     if (simpleMatch) {
-      // No woo_id — nothing to sync regardless of published status
+      // No woo_id — nothing to sync regardless of published status (see
+      // the identical comment in the variant branch above).
       if (!simpleMatch.wooId) {
-        skipped.push({
-          sku,
-          reason: simpleMatch.publishedStatus === "draft" ? "draft_unpublished" : "no_woo_id",
-        });
+        skipped.push({ sku, reason: "no_woo_id" });
         continue;
       }
 

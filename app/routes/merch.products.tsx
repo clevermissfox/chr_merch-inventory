@@ -38,20 +38,59 @@ export const handle = {
   eyebrow: "Manage products",
 };
 
-// A product can have a wooId while sitting in draft on Woo (previously
-// published, then taken down) — hasWooId alone is NOT the same as
-// "currently live", which the sync-confirm logic used to assume. When the
-// sheet says draft and nothing has changed since the last confirmed sync
-// (contentUnsynced false), Woo already reflects that draft state — there's
-// nothing left to "take offline", so the useful action is republishing.
-// contentUnsynced true means the draft flag itself is a fresh, unsynced
-// edit — Woo may still be live, so that's the real "take it offline" moment.
-function getSyncMode(group: CatalogGroup): "publish" | "unpublish" | "sync" {
-  const isLive = Boolean(group.wooId);
-  const isDraft = !group.publishedStatus || group.publishedStatus === "draft";
-  if (!isLive) return isDraft ? "sync" : "publish";
-  if (!isDraft) return "sync";
-  return group.contentUnsynced ? "unpublish" : "publish";
+// The sheet's published_status is only what we last wrote there — it's
+// allowed to drift from Woo's actual current status any time someone edits
+// without also syncing (e.g. "Save" vs "Save & Sync"), so "has a wooId" is
+// not the same as "currently live", and the sheet saying "draft" doesn't
+// tell us whether Woo is still published. wooLiveStatus is the ground
+// truth, fetched directly from Woo right before the confirm dialog opens —
+// null means either there's no wooId yet, or the check itself failed
+// (network error), in which case we fall back to asking the user
+// explicitly rather than guessing wrong in either direction.
+function getSyncMode(
+  group: CatalogGroup,
+  wooLiveStatus: string | null | "loading",
+): "publish" | "confirmed" | "ambiguous-draft" | "loading" {
+  // No Woo product exists at all yet — the only button available for this
+  // case is literally labeled "Publish to site" (see getSyncButtonLabel), so
+  // clicking it is unambiguous: it always means "make this live now,"
+  // regardless of what the sheet's published_status currently says. It must
+  // NOT resolve to "sync" here — that used to silently push a still-hidden
+  // Woo copy without ever asking, which is exactly the bug where clicking
+  // "Publish to site" on a never-synced draft left it a draft on Woo too.
+  if (!group.wooId) return "publish";
+  if (wooLiveStatus === "loading") return "loading";
+  // Ground truth check itself failed — we genuinely don't know the current
+  // status, so ask explicitly rather than assume either way.
+  if (wooLiveStatus === null) return "ambiguous-draft";
+  // Ground truth is known. Draft/published is purely a card-level decision
+  // now (Edit Product never writes published_status), so the sheet's stored
+  // value can't be trusted as "the" current state either — always resolve to
+  // "confirmed" and let the dialog offer both "stay as-is, just sync" and
+  // "flip to the opposite state," driven entirely by what Woo just reported.
+  return "confirmed";
+}
+
+function getSyncButtonLabel(group: CatalogGroup): string {
+  return group.wooId ? "Publish status" : "Publish to site";
+}
+
+// Ground truth fetch — null on no wooId, not-found, or a failed request
+// (network error), all of which fall back to getSyncMode's safe
+// "ambiguous-draft" path rather than assuming a status we don't actually
+// know.
+async function fetchWooLiveStatus(group: CatalogGroup): Promise<string | null> {
+  if (!group.wooId) return null;
+  try {
+    const res = await fetch(
+      `/api/catalog/product/${encodeURIComponent(group.sku)}/woo_status`,
+      { credentials: "include" },
+    );
+    const data = await res.json();
+    return data.ok ? (data.status ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 function PriceDisplay({
@@ -227,13 +266,7 @@ function ProductGroup({
                 onClick={() => onPublishRequest(group)}
               >
                 <Globe aria-hidden="true" />
-                <span>
-                  {getSyncMode(group) === "publish"
-                    ? group.wooId
-                      ? "Republish to site"
-                      : "Publish to site"
-                    : "Sync to site"}
-                </span>
+                <span>{getSyncButtonLabel(group)}</span>
               </button>
               {wooSiteUrl &&
                 group.wooId &&
@@ -386,7 +419,13 @@ export default function ProductsPage() {
     row: CatalogRow;
     group: CatalogGroup;
   } | null>(null);
-  type SyncRequest = { type: "single"; group: CatalogGroup } | { type: "all" };
+  type SyncRequest =
+    | {
+        type: "single";
+        group: CatalogGroup;
+        wooLiveStatus: string | null | "loading";
+      }
+    | { type: "all"; wooStatuses: Record<number, string> | "loading" };
   const [syncRequest, setSyncRequest] = useState<SyncRequest | null>(null);
   const [pendingSyncProductId, setPendingSyncProductId] = useState<
     string | null
@@ -456,7 +495,18 @@ export default function ProductsPage() {
     );
     setPendingSyncProductId(null);
     if (freshGroup) {
-      setSyncRequest({ type: "single", group: freshGroup });
+      setSyncRequest({
+        type: "single",
+        group: freshGroup,
+        wooLiveStatus: "loading",
+      });
+      void fetchWooLiveStatus(freshGroup).then((wooLiveStatus) => {
+        setSyncRequest((prev) =>
+          prev?.type === "single" && prev.group.sku === freshGroup.sku
+            ? { ...prev, wooLiveStatus }
+            : prev,
+        );
+      });
     }
   }, [catalog, loading, pendingSyncProductId]);
 
@@ -515,34 +565,44 @@ export default function ProductsPage() {
     }
   };
 
-  const handlePublishConfirm = async () => {
+  // publishTarget is the decided end state for this sync, always driven by
+  // ground truth (Woo's real status), never the sheet's stored value:
+  //   - mode "publish" (no wooId yet): always true, no choice involved.
+  //   - mode "confirmed" (wooId exists, Woo status known): the dialog's
+  //     primary button passes the CURRENT known status (stay as-is, just
+  //     sync content); the secondary button passes the opposite (the
+  //     explicit "Unpublish"/"Publish" flip).
+  //   - mode "ambiguous-draft" (ground truth check failed): "Publish"
+  //     passes true, "Keep as Draft, sync changes" passes false.
+  // Sync All doesn't use this at all (undefined) — it has its own
+  // publishDrafts checkbox.
+  const handlePublishConfirm = async (publishTarget?: boolean) => {
     if (!syncRequest) return;
     setPublishStatus("confirming");
     setPublishError(null);
     try {
-      // Republishing a product that's already draft on both the sheet and
-      // Woo (see getSyncMode) needs the sheet's own published_status flipped
-      // first — the backend always pushes whatever that field currently
-      // says, so without this the sync below would just push "draft" again.
-      if (
-        syncRequest.type === "single" &&
-        getSyncMode(syncRequest.group) === "publish" &&
-        syncRequest.group.publishedStatus === "draft"
-      ) {
-        const updateRes = await fetch(
-          `/api/catalog/product/${encodeURIComponent(syncRequest.group.sku)}`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ publishedStatus: "publish" }),
-          },
-        );
-        const updateData = await updateRes.json();
-        if (!updateData.ok)
-          throw new Error(
-            updateData.error || "Failed to update published status",
+      // Always reaffirm the sheet's published_status to match the decided
+      // target before syncing — the sheet's stored value can't be trusted
+      // (Edit Product never writes it after creation), so every sync is a
+      // chance to self-heal it to whatever was actually just decided/known.
+      if (syncRequest.type === "single" && publishTarget !== undefined) {
+        const desired = publishTarget ? "publish" : "draft";
+        if (syncRequest.group.publishedStatus !== desired) {
+          const updateRes = await fetch(
+            `/api/catalog/product/${encodeURIComponent(syncRequest.group.sku)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ publishedStatus: desired }),
+            },
           );
+          const updateData = await updateRes.json();
+          if (!updateData.ok)
+            throw new Error(
+              updateData.error || "Failed to update published status",
+            );
+        }
       }
 
       // Convert string inputs to numbers, dropping blanks/zeros
@@ -557,7 +617,7 @@ export default function ProductsPage() {
           ? {
               mode: "selected" as const,
               productIds: [syncRequest.group.productId],
-              publish: syncRequest.group.publishedStatus === "draft",
+              publish: publishTarget === true,
               ...(Object.keys(parsedOverrides).length
                 ? { stockOverrides: parsedOverrides }
                 : {}),
@@ -765,14 +825,43 @@ export default function ProductsPage() {
               <button
                 type="button"
                 className="btn-primary btn-lg row gap-half ai-cen"
-                onClick={() => {
-                  setSyncRequest({ type: "all" });
+                onClick={async () => {
                   setPublishDrafts(false);
                   setPublishStatus("idle");
                   setPublishError(null);
                   setLastCreated(null);
                   setLastDeleted(null);
                   setLastEdited(null);
+                  // Check every wooId'd product's ground truth, not just
+                  // ones the sheet currently marks draft — the sheet's
+                  // published_status can drift in either direction (e.g. a
+                  // product manually unpublished in wp-admin while the sheet
+                  // still says "publish"), and only checking sheet-drafts
+                  // would silently miss that direction of drift entirely.
+                  const allWooIds = (catalog?.groups ?? [])
+                    .filter((g) => g.wooId)
+                    .map((g) => Number(g.wooId));
+                  setSyncRequest({ type: "all", wooStatuses: "loading" });
+                  let wooStatuses: Record<number, string> = {};
+                  if (allWooIds.length) {
+                    try {
+                      const res = await fetch("/api/catalog/woo_statuses", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ wooIds: allWooIds }),
+                      });
+                      const data = await res.json();
+                      if (data.ok) wooStatuses = data.statuses;
+                    } catch {
+                      // Leave wooStatuses empty — those products just won't
+                      // be counted as confirmed-live below, same as any
+                      // other status we couldn't confirm.
+                    }
+                  }
+                  setSyncRequest((prev) =>
+                    prev?.type === "all" ? { type: "all", wooStatuses } : prev,
+                  );
                 }}
                 disabled={loading || !catalog?.groups.length}
               >
@@ -800,14 +889,24 @@ export default function ProductsPage() {
               onEditVariantRequest={(row, grp) =>
                 setPendingEditVariant({ row, group: grp })
               }
-              onPublishRequest={(grp) => {
-                setSyncRequest({ type: "single", group: grp });
+              onPublishRequest={async (grp) => {
                 setPublishStatus("idle");
                 setPublishError(null);
                 setLastCreated(null);
                 setLastDeleted(null);
                 setLastSynced(null);
                 setStockOverrides({});
+                setSyncRequest({
+                  type: "single",
+                  group: grp,
+                  wooLiveStatus: "loading",
+                });
+                const wooLiveStatus = await fetchWooLiveStatus(grp);
+                setSyncRequest((prev) =>
+                  prev?.type === "single" && prev.group.sku === grp.sku
+                    ? { ...prev, wooLiveStatus }
+                    : prev,
+                );
               }}
               onEditRequest={setPendingEdit}
             />
@@ -825,19 +924,8 @@ export default function ProductsPage() {
             setLastCreated(null);
             setLastDeleted(null);
             setLastEdited(sku);
-            showToast(`Saved — ${sku}`, "success");
+            showToast(`Synced — ${sku}`, "success");
             loadCatalog();
-          }}
-          onSavedThenSync={() => {
-            const sku = pendingEdit.sku;
-            const productId = pendingEdit.productId;
-            setPendingEdit(null);
-            setLastCreated(null);
-            setLastDeleted(null);
-            setLastEdited(sku);
-            showToast(`Saved — ${sku}`, "success");
-            loadCatalog();
-            setPendingSyncProductId(productId);
           }}
         />
       )}
@@ -961,14 +1049,11 @@ export default function ProductsPage() {
             {pendingDelete.rowCount > 0
               ? `, its ${pendingDelete.rowCount} variant${pendingDelete.rowCount !== 1 ? "s" : ""},`
               : ","}{" "}
-            its descriptions, and its inventory index entries from the sheet.
+            its descriptions, and its inventory entries from the sheet.
           </p>
           {pendingDelete.wooId && (
             <p className="small clr-warning">
-              This product is{" "}
-              {pendingDelete.publishedStatus === "draft" ? "stored" : "live"}{" "}
-              on the site — it will also be permanently deleted from
-              WooCommerce.
+              This product will also be permanently deleted from WooCommerce.
             </p>
           )}
         </DialogConfirm>
@@ -976,52 +1061,151 @@ export default function ProductsPage() {
 
       {syncRequest?.type === "single" &&
         (() => {
-          const mode = getSyncMode(syncRequest.group);
+          const mode = getSyncMode(
+            syncRequest.group,
+            syncRequest.wooLiveStatus,
+          );
+          const isAmbiguous = mode === "ambiguous-draft";
+          const isChecking = mode === "loading";
+          const isConfirmed = mode === "confirmed";
+          const isCurrentlyLive =
+            isConfirmed && syncRequest.wooLiveStatus === "publish";
+          // Any path whose outcome is "goes/stays live" needs the no-image
+          // warning: first publish, the ambiguous fallback's publish choice,
+          // or confirmed-mode's secondary flip when currently hidden.
+          const canGoLive =
+            mode === "publish" ||
+            isAmbiguous ||
+            (isConfirmed && !isCurrentlyLive);
 
           return (
             <DialogConfirm
               title={
-                mode === "publish"
-                  ? "Publish this product?"
-                  : mode === "unpublish"
-                    ? "Take this product offline?"
-                    : "Sync changes to the site?"
+                isChecking
+                  ? "Checking current site status…"
+                  : mode === "publish"
+                    ? "Publish this product?"
+                    : isAmbiguous
+                      ? "Couldn't confirm the site's current status"
+                      : "Sync changes to the site?"
               }
               confirmIcon={<Globe aria-hidden="true" />}
               confirmLabel={
-                mode === "publish"
-                  ? "Publish & sync"
-                  : mode === "unpublish"
-                    ? "Unpublish"
-                    : "Sync now"
+                isChecking
+                  ? "Checking…"
+                  : mode === "publish"
+                    ? "Publish"
+                    : isAmbiguous
+                      ? "Publish"
+                      : "Sync changes"
               }
-              confirmingIcon={<RefreshCw aria-hidden="true" className="spin" />}
-              confirmingLabel="Syncing…"
-              confirmVariant={mode === "unpublish" ? "danger" : "primary"}
+              confirmingLabel={
+                mode === "publish" || isAmbiguous ? "Publishing…" : "Syncing…"
+              }
+              confirmVariant="primary"
+              confirmDisabled={isChecking}
               status={publishStatus}
               successMessage="Synced — reloading catalog…"
               error={publishError}
-              onConfirm={() => void handlePublishConfirm()}
+              onConfirm={() =>
+                void handlePublishConfirm(
+                  mode === "publish" || isAmbiguous
+                    ? true
+                    : isConfirmed
+                      ? isCurrentlyLive
+                      : undefined,
+                )
+              }
               onCancel={() => setSyncRequest(null)}
+              secondaryLabel={
+                isAmbiguous
+                  ? "Keep as Draft, sync changes"
+                  : isConfirmed
+                    ? isCurrentlyLive
+                      ? "Unpublish"
+                      : "Publish"
+                    : undefined
+              }
+              secondaryIcon={
+                isAmbiguous || isConfirmed ? (
+                  <RefreshCw aria-hidden="true" />
+                ) : undefined
+              }
+              secondaryConfirmingLabel={
+                isAmbiguous
+                  ? "Syncing…"
+                  : isCurrentlyLive
+                    ? "Unpublishing…"
+                    : "Publishing…"
+              }
+              onSecondary={
+                isAmbiguous
+                  ? () => void handlePublishConfirm(false)
+                  : isConfirmed
+                    ? () => void handlePublishConfirm(!isCurrentlyLive)
+                    : undefined
+              }
             >
               <p className="small">
                 <strong>{syncRequest.group.displayName}</strong>
                 <span className="clr-muted"> · {syncRequest.group.sku}</span>
               </p>
-              {mode === "publish" && (
-                <p className="small clr-warning">
-                  This product is currently a draft. Publishing will make it
-                  live on the site.
+              {isChecking && (
+                <p className="small clr-muted">
+                  Checking WooCommerce for this product's current status…
                 </p>
               )}
-              {mode !== "unpublish" &&
+              {mode === "publish" && (
+                <p className="small clr-muted">
+                  This product has never been published to site. Publish it to
+                  make it visible on the site.
+                </p>
+              )}
+              {isConfirmed && (
+                <p className="small clr-muted">
+                  Currently{" "}
+                  <strong>{isCurrentlyLive ? "Published" : "Draft"}</strong> on
+                  the site. <strong>Both</strong> options below push your latest
+                  name, description, price, sale price, category, subcategory,
+                  dimensions, and child variants to WooCommerce —{" "}
+                  {isCurrentlyLive
+                    ? "they only differ on whether it stays published or goes offline afterward."
+                    : "they only differ on whether it stays hidden or goes live afterward."}
+                </p>
+              )}
+              {isAmbiguous && (
+                <p className="small clr-muted">
+                  We couldn't confirm WooCommerce's current status for this
+                  product (the check itself failed). <strong>Either</strong>{" "}
+                  option will sync your changes — choose{" "}
+                  <strong>Publish</strong> to also make it visible on the site,
+                  or <strong>Keep as Draft</strong> to leave it hidden.
+                </p>
+              )}
+              {canGoLive && (
+                <p className="xsmall clr-warning">
+                  Images are added manually by dev after processing — if this
+                  product doesn't have one on the site yet, publishing will make
+                  it visible with no image until that's done.
+                </p>
+              )}
+              {!isChecking &&
                 (() => {
                   const isSimple = syncRequest.group.rowCount === 0;
+                  // The real question is "has Woo ever actually been told a
+                  // stock number for this exact row" — wooStock === null
+                  // means it hasn't, wooStock === 0 means it has (and is
+                  // genuinely, legitimately sold out, so don't re-nag).
+                  // wooId/wooVariantId existence is NOT the same thing:
+                  // converting the last variant back to a simple product
+                  // keeps the parent's existing wooId (inherited from its
+                  // variable past), but its OWN stock has never been
+                  // communicated to Woo as a simple product — wooId-based
+                  // checks wrongly treated that as "already established"
+                  // and skipped the force-stock prompt entirely.
                   const hasZeroStock = isSimple
-                    ? (syncRequest.group.stockQty ?? 0) === 0
-                    : syncRequest.group.rows.some(
-                        (r) => (r.stockQty ?? 0) === 0,
-                      );
+                    ? syncRequest.group.wooStock == null
+                    : syncRequest.group.rows.some((r) => r.wooStock == null);
                   if (!hasZeroStock) return null;
                   return isSimple ? (
                     <form>
@@ -1059,7 +1243,7 @@ export default function ProductsPage() {
                     <form>
                       <div className="form-group">
                         <p className="bold small">Stock per variant</p>
-                        <p className="xsmall clr-warning">
+                        <p className="xsmall clr-muted">
                           Some variants have no stock — they'll sync as out of
                           stock unless you set quantities below.
                         </p>
@@ -1068,7 +1252,7 @@ export default function ProductsPage() {
                           role="list"
                         >
                           {syncRequest.group.rows
-                            .filter((r) => (r.stockQty ?? 0) === 0)
+                            .filter((r) => r.wooStock == null)
                             .map((r) => (
                               <li
                                 key={r.sku}
@@ -1107,19 +1291,6 @@ export default function ProductsPage() {
                     </form>
                   );
                 })()}
-              {mode === "unpublish" && (
-                <p className="small clr-warning">
-                  This product is currently live. Taking it offline will hide it
-                  from the site immediately.
-                </p>
-              )}
-              {mode === "sync" && (
-                <p className="small clr-muted">
-                  Pushes name, description, price, sale price, category,
-                  subcategory, and dimensions to WooCommerce, including child
-                  variants.
-                </p>
-              )}
             </DialogConfirm>
           );
         })()}
@@ -1159,14 +1330,37 @@ export default function ProductsPage() {
             (g) => g.publishedStatus === "draft",
           );
           const draftCount = draftGroups.filter((g) => !g.wooId).length;
-          const unpublishCount = draftGroups.filter((g) => g.wooId).length;
+          const isChecking = syncRequest.wooStatuses === "loading";
+          const wooStatuses = isChecking ? {} : syncRequest.wooStatuses;
+          // Ground truth: only count products Woo directly confirms are
+          // still "publish" — syncing them with the sheet's draft status
+          // will actually take them offline.
+          const unpublishCount = draftGroups.filter(
+            (g) => g.wooId && wooStatuses[Number(g.wooId)] === "publish",
+          ).length;
+          // Mirror-image drift: the sheet says published, but Woo confirms
+          // it's actually NOT currently live (e.g. manually unpublished in
+          // wp-admin) — a routine sync always re-asserts the sheet's status,
+          // so this silently republishes it unless surfaced here first.
+          const republishCount = catalog.groups.filter(
+            (g) =>
+              g.wooId &&
+              g.publishedStatus !== "draft" &&
+              wooStatuses[Number(g.wooId)] !== undefined &&
+              wooStatuses[Number(g.wooId)] !== "publish",
+          ).length;
           return (
             <DialogConfirm
-              title="Sync all products to the site?"
+              title={
+                isChecking
+                  ? "Checking current site status…"
+                  : "Sync all products to the site?"
+              }
               confirmIcon={<Globe aria-hidden="true" />}
-              confirmLabel="Sync all"
+              confirmLabel={isChecking ? "Checking…" : "Sync all"}
               confirmingLabel="Syncing…"
               confirmVariant="primary"
+              confirmDisabled={isChecking}
               status={publishStatus}
               successMessage="Synced — reloading catalog…"
               error={publishError}
@@ -1179,7 +1373,13 @@ export default function ProductsPage() {
                 that's changed since its last sync. Unchanged products are
                 skipped automatically. Stock is not affected.
               </p>
-              {draftCount > 0 && (
+              {isChecking && (
+                <p className="small clr-muted">
+                  Checking WooCommerce for every synced product's current
+                  status…
+                </p>
+              )}
+              {!isChecking && draftCount > 0 && (
                 <label className="row gap-half ai-cen small">
                   <input
                     type="checkbox"
@@ -1189,16 +1389,26 @@ export default function ProductsPage() {
                   <span>
                     Also publish {draftCount} draft
                     {draftCount !== 1 ? "s" : ""} that{" "}
-                    {draftCount !== 1 ? "haven't" : "hasn't"} gone live yet
+                    {draftCount !== 1 ? "haven't" : "hasn't"} been published yet
                   </span>
                 </label>
               )}
               {unpublishCount > 0 && (
                 <p className="small clr-warning">
                   {unpublishCount} product{unpublishCount !== 1 ? "s" : ""}{" "}
-                  {unpublishCount !== 1 ? "are" : "is"} live but now marked
-                  draft — {unpublishCount !== 1 ? "they" : "it"} will be taken
-                  offline.
+                  {unpublishCount !== 1 ? "are" : "is"} currently Published on
+                  the site but marked Draft in the sheet —{" "}
+                  {unpublishCount !== 1 ? "they" : "it"} will be unpublished
+                  when synced.
+                </p>
+              )}
+              {republishCount > 0 && (
+                <p className="small clr-warning">
+                  {republishCount} product{republishCount !== 1 ? "s" : ""}{" "}
+                  {republishCount !== 1 ? "are" : "is"} marked Published in the
+                  sheet but currently Draft on the site (e.g. manually
+                  unpublished) — {republishCount !== 1 ? "they" : "it"} will be
+                  republished when synced.
                 </p>
               )}
             </DialogConfirm>

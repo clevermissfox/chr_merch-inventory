@@ -145,16 +145,40 @@ export default function InventoryPage() {
     } else if (selectedMode === "standard_sync") {
       setSelectedSkus(new Set(Object.keys(state.dirtyBySku)));
     } else if (selectedMode === "resolve_conflicts") {
+      // Only products actually on the site (wooId) have real Woo stock to
+      // conflict with — same rule as buildConflictGroups (backend) and the
+      // per-row data-mismatch indicators. Also has to check the simple
+      // (rowCount === 0) case explicitly: a simple product tracks its own
+      // stockQty/wooStock on the group itself, not in `rows`, so checking
+      // only `rows` silently skipped every simple product's own conflict.
       setSelectedSkus(new Set(
-        state.catalog.groups.flatMap((g) =>
-          g.rows.filter((r) => {
-            const dirty = state.dirtyBySku[r.sku];
-            const displayQty = dirty?.stockQty !== undefined ? dirty.stockQty : r.stockQty;
-            const ws = displayQty === "" || displayQty == null ? null : Number(displayQty);
-            const woo = r.wooStock == null ? null : Number(r.wooStock);
-            return ws !== woo;
-          }).map((r) => r.sku)
-        )
+        state.catalog.groups.flatMap((g) => {
+          if (!g.wooId) return [];
+          if (g.rowCount === 0) {
+            const dirty = state.dirtyBySku[g.sku];
+            const displayQty =
+              dirty?.stockQty !== undefined ? dirty.stockQty : g.stockQty;
+            const ws =
+              displayQty === "" || displayQty == null
+                ? null
+                : Number(displayQty);
+            const woo = g.wooStock == null ? null : Number(g.wooStock);
+            return ws !== woo ? [g.sku] : [];
+          }
+          return g.rows
+            .filter((r) => {
+              const dirty = state.dirtyBySku[r.sku];
+              const displayQty =
+                dirty?.stockQty !== undefined ? dirty.stockQty : r.stockQty;
+              const ws =
+                displayQty === "" || displayQty == null
+                  ? null
+                  : Number(displayQty);
+              const woo = r.wooStock == null ? null : Number(r.wooStock);
+              return ws !== woo;
+            })
+            .map((r) => r.sku);
+        })
       ));
     }
   }, [state.catalog, state.dirtyBySku, selectedMode]);
@@ -215,8 +239,12 @@ export default function InventoryPage() {
   const toggleGroup = (group: CatalogGroup, willBeChecked: boolean) => {
     setSelectedSkus((prev) => {
       const next = new Set(prev);
-      for (const row of group.rows) {
-        willBeChecked ? next.add(row.sku) : next.delete(row.sku);
+      // A simple product has no rows — its own sku is the group's only
+      // selectable item.
+      const skus =
+        group.rowCount === 0 ? [group.sku] : group.rows.map((r) => r.sku);
+      for (const sku of skus) {
+        willBeChecked ? next.add(sku) : next.delete(sku);
       }
       return next;
     });
@@ -289,6 +317,7 @@ export default function InventoryPage() {
     {
       label: "Stock Conflicts",
       value: catalog.summary.conflictGroups.length,
+      dangerIfPositive: true,
       renderExtra: () =>
         catalog.summary.conflictGroups.length > 0 && (
           <ul
@@ -312,7 +341,15 @@ export default function InventoryPage() {
           {metrics.map((metric) => (
             <div key={metric.label} className="metric">
               <p className="metric-label">{metric.label}</p>
-              <p className="metric-value">{metric.value}</p>
+              <p
+                className={`metric-value${
+                  metric.dangerIfPositive && Number(metric.value) > 0
+                    ? " clr-danger"
+                    : ""
+                }`}
+              >
+                {metric.value}
+              </p>
               {metric.renderExtra?.()}
             </div>
           ))}
@@ -463,7 +500,8 @@ export default function InventoryPage() {
 
       <section className="grid gap-1">
         {catalog.groups.map((group, i) => {
-          const groupSkus = group.rows.map((r) => r.sku);
+          const groupSkus =
+            group.rowCount === 0 ? [group.sku] : group.rows.map((r) => r.sku);
           const selectedInGroup = groupSkus.filter((sku) =>
             selectedSkus.has(sku),
           );
@@ -604,7 +642,10 @@ export default function InventoryPage() {
                       const normalizedWooStock =
                         row.wooStock == null ? null : Number(row.wooStock);
 
+                      // Only flag mismatch when the product is actually on the site;
+                      // an unpublished product with no wooId has no Woo counterpart to conflict with.
                       const mismatch =
+                        !!group.wooId &&
                         normalizedDisplayStockQty !== normalizedWooStock;
 
                       const isSelected = selectedSkus.has(row.sku);

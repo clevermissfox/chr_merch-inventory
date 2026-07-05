@@ -1,4 +1,4 @@
-import { CircleQuestionMark, Globe, Save, X } from "lucide-react";
+import { CircleQuestionMark, Globe, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, CatalogRow } from "~/types/catalog";
 import { isSalePriceValid } from "~/utils/priceUtils";
@@ -37,7 +37,6 @@ export default function DialogEditVariant({
   const original = useRef<FormState>(initForm(row));
   const [form, setForm] = useState<FormState>(original.current);
   const [submitting, setSubmitting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showPriceHelp, setShowPriceHelp] = useState(false);
   const [showSalePriceHelp, setShowSalePriceHelp] = useState(false);
@@ -69,9 +68,8 @@ export default function DialogEditVariant({
     form.salePriceVariant,
   );
 
-  // Shared by "Save" and "Save & Sync". Returns true on a successful sheet
-  // write; false means it already set submitError/blocked, so callers just
-  // bail out.
+  // Returns true on a successful sheet write; false means it already set
+  // submitError/blocked, so the caller just bails out.
   const saveToSheet = async (): Promise<boolean> => {
     if (!salePriceValid) {
       setSubmitError("Sale price must be less than the regular price.");
@@ -109,24 +107,18 @@ export default function DialogEditVariant({
     }
   };
 
+  // Editing a variant always saves AND syncs, same as DialogEditProduct —
+  // there's no content-only "Save" left that can leave the sheet ahead of
+  // Woo. Variants never touch draft/published status at all (only the
+  // parent product does, via the card's dedicated Publish/Unpublish
+  // action), so this never needs to read or send published_status.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
     setSubmitting(true);
-    const ok = await saveToSheet();
-    setSubmitting(false);
-    if (ok) await onSaved();
-  };
-
-  const handleSaveAndSync = async () => {
-    if (!isDirty) return;
-    setSubmitting(true);
-    const ok = await saveToSheet();
-    setSubmitting(false);
-    if (!ok) return;
-
-    setSyncing(true);
     try {
+      const ok = await saveToSheet();
+      if (!ok) return;
       const res = await fetch("/api/catalog/sync_to_site", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -134,7 +126,7 @@ export default function DialogEditVariant({
         body: JSON.stringify({
           mode: "selected",
           productIds: [group.productId],
-          publish: group.publishedStatus !== "draft",
+          publish: false,
         }),
       });
       const data = await res.json();
@@ -143,17 +135,16 @@ export default function DialogEditVariant({
         data.results?.[0];
       if (result?.status === "failed")
         throw new Error(result.error || "Sync failed");
-      setSyncing(false);
       await onSaved();
     } catch (err) {
       // Sheet write already succeeded — leave the dialog open showing the
-      // sync error instead of closing it, same as DialogEditProduct and
-      // DialogCreateVariant's Save & Sync. Sync can be retried from the
+      // sync error instead of closing it. Sync can be retried from the
       // Products page.
-      setSyncing(false);
       setSubmitError(
-        `Saved, but sync failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        err instanceof Error ? `Saved, but sync failed: ${err.message}` : "Sync failed",
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -347,41 +338,22 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={!isDirty || submitting || syncing || descOverLimit}
+              disabled={!isDirty || submitting || descOverLimit}
             >
               {submitting ? (
-                <>
-                  <span className="render-loader">Saving…</span>
-                </>
+                <span className="render-loader">Syncing…</span>
               ) : (
                 <>
-                  <Save aria-hidden="true" />
-                  <span>Save changes</span>
+                  <Globe aria-hidden="true" />
+                  <span>Sync changes</span>
                 </>
               )}
             </button>
-            {group.wooId && (
-              <button
-                type="button"
-                className="btn-secondary row gap-half ai-cen"
-                onClick={() => void handleSaveAndSync()}
-                disabled={!isDirty || submitting || syncing || descOverLimit}
-              >
-                {syncing ? (
-                  <span className="render-loader">Syncing…</span>
-                ) : (
-                  <>
-                    <Globe aria-hidden="true" />
-                    <span>Save &amp; Sync</span>
-                  </>
-                )}
-              </button>
-            )}
             <button
               type="button"
               className="btn-secondary"
               onClick={onClose}
-              disabled={submitting || syncing}
+              disabled={submitting}
             >
               Cancel
             </button>

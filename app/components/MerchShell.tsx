@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, useMatches } from "react-router";
 import { useAuth } from "~/context/AuthContext";
 import DialogUserProfile from "./DialogUserProfile";
-import { LogOut, Menu, User, X } from "lucide-react";
+import DialogFAQ from "./DialogFAQ";
+import DialogBugReport from "./DialogBugReport";
+import { Bug, CircleHelp, LogOut, Menu, User, X } from "lucide-react";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -22,6 +24,8 @@ export function MerchShell({ children }: MerchShellProps) {
   const canEdit = user?.canEdit;
 
   const [showProfile, setShowProfile] = useState(false);
+  const [showFAQ, setShowFAQ] = useState(false);
+  const [showBugReport, setShowBugReport] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
@@ -80,6 +84,16 @@ export function MerchShell({ children }: MerchShellProps) {
     setShowProfile(true);
   };
 
+  const openFAQ = () => {
+    popoverRef.current?.hidePopover();
+    setShowFAQ(true);
+  };
+
+  const openBugReport = () => {
+    popoverRef.current?.hidePopover();
+    setShowBugReport(true);
+  };
+
   return (
     <div className="merch-page" data-role={user?.role}>
       <header className="merch-topbar surface-primary ">
@@ -128,6 +142,26 @@ export function MerchShell({ children }: MerchShellProps) {
                     >
                       <User aria-hidden="true" />
                       <span>Profile</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="row ai-cen gap-quarter"
+                      onClick={openFAQ}
+                    >
+                      <CircleHelp aria-hidden="true" />
+                      <span>FAQ</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      className="row ai-cen gap-quarter"
+                      onClick={openBugReport}
+                    >
+                      <Bug aria-hidden="true" />
+                      <span>Report a bug</span>
                     </button>
                   </li>
                   <li>
@@ -211,6 +245,10 @@ export function MerchShell({ children }: MerchShellProps) {
 
       {showProfile && user && (
         <DialogUserProfile onClose={() => setShowProfile(false)} />
+      )}
+      {showFAQ && <DialogFAQ onClose={() => setShowFAQ(false)} />}
+      {showBugReport && (
+        <DialogBugReport onClose={() => setShowBugReport(false)} />
       )}
     </div>
   );

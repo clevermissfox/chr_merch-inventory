@@ -1,4 +1,4 @@
-import { AlertTriangle, Globe, Plus, X } from "lucide-react";
+import { AlertTriangle, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CatalogGroup, RefData } from "~/types/catalog";
 import { sizeRank } from "~/utils/sizeUtils";
@@ -223,25 +223,30 @@ export default function DialogCreateVariant({
     }
   };
 
+  // Adding variants always saves to the sheet, and always also syncs to Woo
+  // when the parent already exists there — same "always sync" rule as Edit
+  // Product/Edit Variant. There's no separate "just save, don't sync" choice
+  // to make anymore; a parent with no wooId yet simply has nothing to push
+  // (sync itself would no-op), so it's sheet-only by necessity, not by
+  // choice.
+  const finishWithSync = useRef(false);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    setSubmitting(true);
-    const skus = await createVariants();
-    setSubmitting(false);
-    if (skus) onCreated(skus);
-  };
-
-  const handleAddAndSync = async () => {
-    if (!canSubmit) return;
+    finishWithSync.current = Boolean(group.wooId);
     setSubmitting(true);
     const skus = await createVariants();
     setSubmitting(false);
     if (!skus) return;
-    // Sync itself happens in the parent, which opens the same zero-stock
-    // confirm prompt used by the Products page's own sync button — new
-    // variants have no stock yet, so that prompt is required, not optional.
-    onCreatedThenSync(skus);
+    if (finishWithSync.current) {
+      // Sync itself happens in the parent, which opens the same zero-stock
+      // confirm prompt used by the Products page's own sync button — new
+      // variants have no stock yet, so that prompt is required, not optional.
+      onCreatedThenSync(skus);
+    } else {
+      onCreated(skus);
+    }
   };
 
   const resolveDupe = async (
@@ -266,7 +271,11 @@ export default function DialogCreateVariant({
       setPendingDupes(remaining);
       setResolvedSkus(nowResolved);
       if (remaining.length === 0) {
-        onCreated(nowResolved);
+        if (finishWithSync.current) {
+          onCreatedThenSync(nowResolved);
+        } else {
+          onCreated(nowResolved);
+        }
       }
     } catch (err) {
       setDupeResolveError(
@@ -673,17 +682,6 @@ export default function DialogCreateVariant({
                   </>
                 )}
               </button>
-              {group.wooId && (
-                <button
-                  type="button"
-                  className="btn-secondary row gap-half ai-cen"
-                  onClick={() => void handleAddAndSync()}
-                  disabled={!canSubmit || submitting || pendingDupes !== null}
-                >
-                  <Globe aria-hidden="true" />
-                  <span>Add &amp; Sync</span>
-                </button>
-              )}
               <button
                 type="button"
                 className="btn-secondary"

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type DialogConfirmStatus = "idle" | "confirming" | "success";
 
@@ -7,7 +7,7 @@ interface DialogConfirmProps {
   children: React.ReactNode;
   confirmIcon?: React.ReactNode;
   confirmLabel: string;
-  confirmingIcon?: React.ReactNode;
+  /** Shown via the shared render-loader spinner while the confirm button's own action is in flight. */
   confirmingLabel?: string;
   confirmVariant?: "danger" | "primary";
   status: DialogConfirmStatus;
@@ -15,6 +15,14 @@ interface DialogConfirmProps {
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Optional second choice alongside confirm/cancel, for a genuine either/or decision (not just confirm-or-abort) */
+  secondaryIcon?: React.ReactNode;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  /** Shown via the shared render-loader spinner while the secondary button's own action is in flight — falls back to confirmingLabel if the two actions share the same in-flight wording. */
+  secondaryConfirmingLabel?: string;
+  /** Disables just the confirm button (e.g. while background data needed to know what "confirm" even does is still loading) — unlike status="confirming", Cancel stays clickable since nothing is in-flight that a cancel would interrupt. */
+  confirmDisabled?: boolean;
 }
 
 export default function DialogConfirm({
@@ -22,7 +30,6 @@ export default function DialogConfirm({
   children,
   confirmIcon,
   confirmLabel,
-  confirmingIcon,
   confirmingLabel,
   confirmVariant = "primary",
   status,
@@ -30,12 +37,28 @@ export default function DialogConfirm({
   error,
   onConfirm,
   onCancel,
+  secondaryIcon,
+  secondaryLabel,
+  onSecondary,
+  secondaryConfirmingLabel,
+  confirmDisabled,
 }: DialogConfirmProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  // status is a single shared value the caller sets regardless of which
+  // button triggered it — track which one locally so only the button that
+  // was actually clicked shows the "confirming" swap, not always the
+  // primary one.
+  const [activeButton, setActiveButton] = useState<"confirm" | "secondary" | null>(
+    null,
+  );
 
   useEffect(() => {
     ref.current?.showModal();
   }, []);
+
+  useEffect(() => {
+    if (status === "idle") setActiveButton(null);
+  }, [status]);
 
   const handleNativeCancel = (e: React.SyntheticEvent<HTMLDialogElement>) => {
     if (status !== "idle") {
@@ -46,6 +69,8 @@ export default function DialogConfirm({
   };
 
   const inFlight = status === "confirming" || status === "success";
+  const confirmActive = activeButton === "confirm";
+  const secondaryActive = activeButton === "secondary";
 
   return (
     <dialog
@@ -74,20 +99,45 @@ export default function DialogConfirm({
           <button
             type="button"
             className={`btn-primary btn-${confirmVariant} row ai-cen gap-half`}
-            onClick={onConfirm}
-            disabled={inFlight}
+            onClick={() => {
+              setActiveButton("confirm");
+              onConfirm();
+            }}
+            disabled={inFlight || confirmDisabled}
           >
-            {status !== "confirming"
-              ? confirmIcon
-              : confirmingIcon
-                ? confirmingIcon
-                : confirmIcon}
-            <span>
-              {status === "confirming" && confirmingLabel
-                ? confirmingLabel
-                : confirmLabel}
-            </span>
+            {status === "confirming" && confirmActive ? (
+              <span className="render-loader">
+                {confirmingLabel ?? confirmLabel}
+              </span>
+            ) : (
+              <>
+                {confirmIcon}
+                <span>{confirmLabel}</span>
+              </>
+            )}
           </button>
+          {secondaryLabel && onSecondary && (
+            <button
+              type="button"
+              className="btn-secondary row ai-cen gap-half"
+              onClick={() => {
+                setActiveButton("secondary");
+                onSecondary();
+              }}
+              disabled={inFlight}
+            >
+              {status === "confirming" && secondaryActive ? (
+                <span className="render-loader">
+                  {secondaryConfirmingLabel ?? confirmingLabel ?? secondaryLabel}
+                </span>
+              ) : (
+                <>
+                  {secondaryIcon}
+                  <span>{secondaryLabel}</span>
+                </>
+              )}
+            </button>
+          )}
           <button
             type="button"
             className="btn-ghost"

@@ -6,23 +6,24 @@ export interface SkipReasonFormatted {
 }
 
 export function formatSkipReason(reason: string): SkipReasonFormatted {
-  if (reason === "no_woo_id") {
+  // "Unpublished" = no wooId at all — nothing exists in WooCommerce yet.
+  // draft_unpublished is kept as an alias for backward compatibility (older
+  // clients/cached responses may still send it) but means the exact same
+  // thing as no_woo_id: the sheet's published_status was never a reliable
+  // signal here (this branch only fires when there's no wooId regardless of
+  // what that field says), so there's no real "exists but hidden" case to
+  // distinguish. A wooId'd draft product syncs its stock normally — this
+  // skip only ever means "not created on WooCommerce yet."
+  if (reason === "no_woo_id" || reason === "draft_unpublished") {
     return {
-      label: "Not yet published to site",
-      hint: "Stock is saved to the sheet. Publish this product to WooCommerce to enable site sync.",
-      cta: "Review & publish on Products page →",
-    };
-  }
-  if (reason === "draft_unpublished") {
-    return {
-      label: "Draft — not published to site",
-      hint: "Stock is saved to the sheet. Publish this product to WooCommerce to enable site sync.",
+      label: "Unpublished",
+      hint: "Stock is saved to the sheet. This product hasn't been created on WooCommerce yet — publish it from the Products page to enable site sync.",
       cta: "Review & publish on Products page →",
     };
   }
   if (reason.toLowerCase().includes("missing woo parent product")) {
     return {
-      label: "Not yet published to site",
+      label: "Unpublished",
       hint: "Stock is recorded in the sheet and will sync automatically once the product is published to WooCommerce.",
       cta: "Review on Products page →",
     };

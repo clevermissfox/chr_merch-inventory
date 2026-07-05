@@ -161,3 +161,118 @@ export async function sendImageNotification(
 
   if (error) throw new Error(`Resend error: ${error.message}`);
 }
+
+export interface BugReportNotificationParams {
+  reporterEmail: string;
+  page: string;
+  severity: string;
+  whatDidYouExpect: string;
+  whatHadYouDoneBefore: string;
+  whatHappened: string;
+  screenshotLink?: string;
+}
+
+const SEVERITY_COLOR: Record<string, string> = {
+  low: "#82d6ab",
+  medium: "#ffd293",
+  high: "#ff9ca4",
+  critical: "#ff9ca4",
+};
+
+export async function sendBugReportNotification(
+  params: BugReportNotificationParams,
+): Promise<void> {
+  const {
+    reporterEmail,
+    page,
+    severity,
+    whatDidYouExpect,
+    whatHadYouDoneBefore,
+    whatHappened,
+    screenshotLink,
+  } = params;
+
+  const devEmail = process.env.DEV_EMAIL;
+  if (!devEmail) {
+    throw new Error(
+      "Email not configured — set DEV_EMAIL environment variable.",
+    );
+  }
+
+  const resend = getResend();
+  const severityColor = SEVERITY_COLOR[severity.toLowerCase()] ?? "#d3aae6";
+
+  const field = (label: string, value: string) => `
+    <tr><td style="padding:16px 0;border-bottom:1px solid #e8e4dc;">
+      <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">${label}</p>
+      <p style="margin:0;font-size:14px;color:#282828;white-space:pre-wrap;">${escapeHtml(value) || "—"}</p>
+    </td></tr>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f0ede6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#282828;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0ede6;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+
+        <!-- Header -->
+        <tr><td style="background:#282828;border-radius:12px 12px 0 0;padding:24px 32px;">
+          <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${severityColor};font-weight:600;">CHR Merch Hub · Bug report</p>
+          <h1 style="margin:8px 0 0;font-size:20px;font-weight:700;color:#ffffff;line-height:1.3;">
+            ${severity.toUpperCase()} severity
+          </h1>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="background:#ffffff;padding:0 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr><td style="padding:20px 0;border-bottom:1px solid #e8e4dc;">
+              <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">Reported by</p>
+              <p style="margin:0;font-size:14px;color:#282828;">${escapeHtml(reporterEmail)}</p>
+              <p style="margin:4px 0 0;font-size:12px;color:#999;font-family:monospace;">${escapeHtml(page)}</p>
+            </td></tr>
+            ${field("What happened", whatHappened)}
+            ${field("What did you expect to happen", whatDidYouExpect)}
+            ${field("What had you done previously", whatHadYouDoneBefore)}
+            ${
+              screenshotLink
+                ? `<tr><td style="padding:20px 0;">
+              <a href="${screenshotLink}" style="display:inline-block;background:#282828;color:#d3aae6;text-decoration:none;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;">View screenshot →</a>
+            </td></tr>`
+                : ""
+            }
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f7f4ef;border-radius:0 0 12px 12px;padding:16px 32px;border-top:1px solid #e8e4dc;">
+          <p style="margin:0;font-size:12px;color:#999;line-height:1.5;">
+            Sent from <strong style="color:#666;">CHR Merch Hub</strong> bug report form.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const textLines = [
+    `${reporterEmail} filed a ${severity} severity bug report on ${page}.`,
+    `What happened: ${whatHappened}`,
+    `What did you expect to happen: ${whatDidYouExpect}`,
+    `What had you done previously: ${whatHadYouDoneBefore}`,
+    screenshotLink ? `Screenshot: ${screenshotLink}` : "",
+  ].filter(Boolean);
+
+  const { error } = await resend.emails.send({
+    from: "CHR Merch Hub <onboarding@resend.dev>",
+    to: devEmail,
+    subject: `[CHR Merch] Bug report (${severity}) — ${reporterEmail}`,
+    html,
+    text: textLines.join("\n\n"),
+  });
+
+  if (error) throw new Error(`Resend error: ${error.message}`);
+}

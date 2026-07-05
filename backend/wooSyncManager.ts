@@ -537,6 +537,57 @@ export async function verifyWooProductId(wooId: number): Promise<boolean> {
   return product.id === wooId;
 }
 
+// Ground truth for "is this actually live on Woo right now" — the sheet's
+// published_status is only what we last wrote there, and the sheet is
+// allowed to drift from Woo any time someone edits without also syncing
+// (e.g. plain "Save" vs "Save & Sync"). Returns null if the product can't
+// be found or the request fails, so callers can distinguish "confirmed not
+// found/error" from a real status.
+export async function getWooProductStatus(
+  wooId: number,
+): Promise<string | null> {
+  const woo = getWooConfig();
+  const url = buildWooUrl(woo, `products/${wooId}`, {
+    _fields: "id,status",
+    _: String(Date.now()),
+  });
+  const res = await fetch(url, {
+    headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+  });
+  if (!res.ok) return null;
+  const product = (await res.json()) as { id?: number; status?: string };
+  return product.status ?? null;
+}
+
+// Batched version for Sync All — one request instead of N. Woo's list
+// endpoint caps at 100 per page, same as the variation-listing helpers
+// elsewhere in this file.
+export async function getWooProductStatuses(
+  wooIds: number[],
+): Promise<Map<number, string>> {
+  const result = new Map<number, string>();
+  const woo = getWooConfig();
+  for (let i = 0; i < wooIds.length; i += 100) {
+    const batch = wooIds.slice(i, i + 100);
+    if (!batch.length) continue;
+    const url = buildWooUrl(woo, "products", {
+      include: batch.join(","),
+      per_page: "100",
+      _fields: "id,status",
+      _: String(Date.now()),
+    });
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    });
+    if (!res.ok) continue;
+    const arr = (await res.json()) as Array<{ id: number; status?: string }>;
+    for (const p of arr) {
+      if (p.status) result.set(p.id, p.status);
+    }
+  }
+  return result;
+}
+
 // Default product list/lookup excludes trashed items — Woo still reserves
 // the SKU for a trashed product, so a plain SKU lookup won't explain a
 // "SKU already in use" error caused by one. Only called as a fallback when

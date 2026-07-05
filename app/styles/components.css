@@ -582,6 +582,15 @@ menu.user-menu {
   animation: product-highlight-ring 2.5s ease-out 1;
 }
 
+.faq-entry summary {
+  cursor: pointer;
+  display: list-item;
+}
+
+.faq-entry summary::-webkit-details-marker {
+  display: initial;
+}
+
 @keyframes product-highlight-ring {
   0% {
     box-shadow: 0 0 0 0.2rem var(--clr-accent);
