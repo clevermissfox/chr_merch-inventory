@@ -222,7 +222,7 @@ export default function ActivityPanel() {
 
   const loadActivity = useCallback(async () => {
     try {
-      const r = await fetch("/api/catalog/recent_activity?limit=20", {
+      const r = await fetch("/api/catalog/recent_activity?limit=5", {
         credentials: "include",
       });
       const data = await r.json();
