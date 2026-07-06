@@ -75,6 +75,10 @@
   color: var(--clr-text-inverse);
 }
 
+.clr-accent {
+  color: var(--clr-accent);
+}
+
 .clr-info {
   color: var(--clr-info, #3b82f6);
 }
@@ -84,7 +88,7 @@
 }
 
 .clr-warning {
-  color: var(--clr-warning);
+  color: var(--clr-warning, #d3aa56);
 }
 
 :is(.clr-danger, .clr-error) {
@@ -93,6 +97,11 @@
 
 :is(.default-border) {
   border: var(--default-border);
+}
+
+:is(.default-border__soft) {
+  border: var(--default-border);
+  border-color: var(--clr-border-soft);
 }
 
 :is(.border-block-start, .border-bs) {
@@ -332,31 +341,31 @@
 }
 
 /* 0.75em */
-.padding-three-forths {
+.padding-three-fourths {
   padding: var(--spacing-075, 0.75em);
 }
 
-.padding-b-three-forths {
+.padding-b-three-fourths {
   padding-block: var(--spacing-075, 0.75em);
 }
 
-.padding-bs-three-forths1 {
+.padding-bs-three-fourths {
   padding-block-start: var(--spacing-075, 0.75em);
 }
 
-.padding-be-three-forths {
+.padding-be-three-fourths {
   padding-block-end: var(--spacing-075, 0.75em);
 }
 
-.padding-i-three-forths {
+.padding-i-three-fourths {
   padding-inline: var(--spacing-075, 0.75em);
 }
 
-.padding-is-three-forths {
+.padding-is-three-fourths {
   padding-inline-start: var(--spacing-075, 0.75em);
 }
 
-.padding-ie-three-forths {
+.padding-ie-three-fourths {
   padding-inline-end: var(--spacing-075, 0.75em);
 }
 

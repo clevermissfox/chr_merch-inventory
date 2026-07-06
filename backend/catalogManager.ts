@@ -2245,7 +2245,7 @@ export async function rollbackPartialVariantCreate(
   await deleteSheetRows(sheets, spreadsheetId, sheetIdByName, targets);
 }
 
-// sessions headers:       timestamp | email | name | role | action | env
+// sessions headers:       timestamp | email | name | given_name | family_name | role | action | env
 // merch_app_logs headers: timestamp | email | action | detail | env
 // bug_reports headers:    timestamp | email | page | severity | what_happened | what_did_you_expect | what_had_you_done_before | screenshot_link | env
 // Add these as row 1 manually in each sheet once — writeSheetLog only appends data rows.
@@ -2297,6 +2297,35 @@ export async function getRecentActivity(
       action: String((row as string[])[2] ?? ""),
       detail: String((row as string[])[3] ?? ""),
     }));
+}
+
+// Reads the "sessions" log (written on every login/logout, [timestamp,
+// email, name, given_name, family_name, role, action, env]) to build an
+// email -> given name map — no Drive API permissions lookup needed, we
+// already capture this ourselves at login (straight from Google's own
+// given_name field, not a whitespace split of the full name — "Mary Lou"
+// stays "Mary Lou", not "Mary"). Only reads the first 4 columns; family_name
+// onward is irrelevant here. Rows logged before the given_name column
+// existed fall back to splitting the full name, wrong for compound first
+// names but better than nothing for old data.
+export async function getEmailNameMap(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+): Promise<Map<string, string>> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "sessions",
+  });
+  const values = res.data.values ?? [];
+  const map = new Map<string, string>();
+  for (const row of values.slice(1)) {
+    const email = String((row as string[])[1] ?? "").trim();
+    const name = String((row as string[])[2] ?? "").trim();
+    const givenName = String((row as string[])[3] ?? "").trim();
+    const resolved = givenName || (name ? name.split(" ")[0] : "");
+    if (email && resolved) map.set(email.toLowerCase(), resolved);
+  }
+  return map;
 }
 
 export function rowsToObjects<T>(rawValues: string[][]): T[] {

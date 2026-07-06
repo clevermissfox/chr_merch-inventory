@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import type { Route } from "./+types/merch._index";
 import SearchComponent from "~/components/SearchComponent";
 import type { SearchResult } from "~/components/SearchComponent";
+import ActivityPanel from "~/components/ActivityPanel";
 import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
 import type { CatalogGroup, CatalogPayload, CatalogRow } from "~/types/catalog";
@@ -17,6 +18,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export const handle = {
+  page: "dashboard",
   title: "Dashboard",
   eyebrow: "Manage shop",
 };
@@ -116,11 +118,14 @@ function buildAttentionLists(catalog: CatalogPayload): AttentionLists {
       : group.rows.some(
           (r) => group.wooId != null && Number(r.wooStock ?? -1) === 0,
         );
-    if (isOutOfStock) addReason(stockByProductId, group, "out of stock on site");
+    if (isOutOfStock)
+      addReason(stockByProductId, group, "out of stock on site");
   }
 
   for (const conflict of catalog.summary.conflictGroups) {
-    const group = catalog.groups.find((g) => g.productId === conflict.productId);
+    const group = catalog.groups.find(
+      (g) => g.productId === conflict.productId,
+    );
     if (group) {
       addReason(
         stockByProductId,
@@ -161,7 +166,7 @@ function AttentionPanel({
         {shown.map((item) => (
           <li
             key={item.productId}
-            className="row jc-sb ai-cen gap-1 fw-wrap padding-half surface-secondary"
+            className="row jc-sb ai-cen gap-1 fw-wrap padding-half surface-secondary default-border__soft"
           >
             <div className="grid gap-quarter">
               <p className="row gap-half ai-cen fw-wrap">
@@ -177,9 +182,7 @@ function AttentionPanel({
         ))}
       </ul>
       {items.length > shown.length && (
-        <p className="xsmall clr-muted">
-          +{items.length - shown.length} more
-        </p>
+        <p className="xsmall clr-muted">+{items.length - shown.length} more</p>
       )}
     </div>
   );
@@ -196,9 +199,13 @@ export default function MerchDashboard() {
   }, []);
 
   const catalog = state.catalog;
-  const publishedCount = groups.filter((g) => classifyGroup(g) === "published").length;
+  const publishedCount = groups.filter(
+    (g) => classifyGroup(g) === "published",
+  ).length;
   const draftCount = groups.filter((g) => classifyGroup(g) === "draft").length;
-  const neverPublishedCount = groups.filter((g) => classifyGroup(g) === "never").length;
+  const neverPublishedCount = groups.filter(
+    (g) => classifyGroup(g) === "never",
+  ).length;
   const attentionLists = catalog
     ? buildAttentionLists(catalog)
     : { content: [], stock: [] };
@@ -236,7 +243,11 @@ export default function MerchDashboard() {
           originalStockQty: target.currentStock ?? null,
         },
       };
-      const result = await syncSelectedSkus([target.sku], overrideDirty);
+      const result = await syncSelectedSkus(
+        [target.sku],
+        overrideDirty,
+        "quick_update",
+      );
       const skippedEntry = result.skipped.find((s) => s.sku === target.sku);
       setSavedSku(target.sku);
       setSavedSheetOnly(!!skippedEntry);
@@ -320,45 +331,45 @@ export default function MerchDashboard() {
         </hgroup>
 
         <SearchComponent
-            groups={groups}
-            label="Find a SKU or product"
-            placeholder="e.g. black small, CLO, CHR-TEE-0001"
-            onSelect={handleSelect}
-            renderResult={(result) => {
-              if (result.kind === "row") {
-                return (
-                  <span className="search-result-row">
-                    <span className="search-result-row__context">
-                      {result.group.displayName}
-                    </span>
-                    <span className="search-result-row__sku">
-                      {result.row.sku}
-                    </span>
-                    <span className="search-result-row__label clr-muted">
-                      {result.row.variantDetails || result.row.label}
-                    </span>
-                  </span>
-                );
-              }
+          groups={groups}
+          label="Find a SKU or product"
+          placeholder="e.g. black small, CLO, CHR-TEE-0001"
+          onSelect={handleSelect}
+          renderResult={(result) => {
+            if (result.kind === "row") {
               return (
                 <span className="search-result-row">
-                  {result.group.subcategory && (
-                    <span className="search-result-row__context">
-                      {result.group.subcategory}
-                    </span>
-                  )}
+                  <span className="search-result-row__context">
+                    {result.group.displayName}
+                  </span>
                   <span className="search-result-row__sku">
-                    {result.group.sku}
+                    {result.row.sku}
                   </span>
                   <span className="search-result-row__label clr-muted">
-                    {result.group.displayName}
+                    {result.row.variantDetails || result.row.label}
                   </span>
                 </span>
               );
-            }}
-          />
+            }
+            return (
+              <span className="search-result-row">
+                {result.group.subcategory && (
+                  <span className="search-result-row__context">
+                    {result.group.subcategory}
+                  </span>
+                )}
+                <span className="search-result-row__sku">
+                  {result.group.sku}
+                </span>
+                <span className="search-result-row__label clr-muted">
+                  {result.group.displayName}
+                </span>
+              </span>
+            );
+          }}
+        />
 
-          {target && (
+        {target && (
           <div className="quick-update card surface-secondary grid gap-1">
             <div className="row jc-sb ai-start">
               <div className="grid gap-quarter">
@@ -506,6 +517,8 @@ export default function MerchDashboard() {
           <p className="small clr-muted">Nothing needs attention right now.</p>
         )}
       </section>
+
+      <ActivityPanel />
     </>
   );
 }

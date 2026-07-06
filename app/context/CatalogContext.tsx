@@ -10,6 +10,7 @@ import type {
   CatalogPayload,
   CatalogState,
   DirtyStockChange,
+  StockSyncMode,
   SyncResult,
 } from "../types/catalog";
 
@@ -40,12 +41,11 @@ interface CatalogContextValue {
     originalStockQty?: number | null,
   ) => void;
   clearDirty: () => void;
-  syncCatalogStock: (
-    mode?: "standard_sync" | "resolve_conflicts" | "sync_all",
-  ) => Promise<void>;
+  syncCatalogStock: (mode?: StockSyncMode) => Promise<void>;
   syncSelectedSkus: (
     skus: string[],
     overrideDirty?: Record<string, DirtyStockChange>,
+    mode?: StockSyncMode,
   ) => Promise<SyncResult>;
   resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
@@ -227,12 +227,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
    * confirmed result rather than re-reading a second time.
    */
   const syncCatalogStock = useCallback(
-    async (
-      mode:
-        | "standard_sync"
-        | "resolve_conflicts"
-        | "sync_all" = "standard_sync",
-    ) => {
+    async (mode: StockSyncMode = "standard_sync") => {
       if (!state.catalog) {
         return;
       }
@@ -265,6 +260,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     async (
       skus: string[],
       overrideDirty?: Record<string, DirtyStockChange>,
+      mode: StockSyncMode = "standard_sync",
     ): Promise<SyncResult> => {
       if (!state.catalog || skus.length === 0) {
         return { updatedCount: 0, skippedCount: 0, skipped: [] };
@@ -309,7 +305,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         const data = await postCatalogStockSync({
           catalog: state.catalog,
           dirtyBySku: syntheticDirty,
-          mode: "standard_sync",
+          mode,
         });
 
         if (data?.catalog) {
@@ -434,7 +430,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   }: {
     catalog: CatalogPayload;
     dirtyBySku: CatalogState["dirtyBySku"];
-    mode?: "standard_sync" | "resolve_conflicts" | "sync_all";
+    mode?: StockSyncMode;
   }) {
     const response = await fetch("/api/catalog/inventory/sync_stock", {
       method: "POST",

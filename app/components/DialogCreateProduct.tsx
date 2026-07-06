@@ -620,7 +620,7 @@ export default function DialogCreateProduct({
                 </button>
               </div>
               {showPrimaryDescHelp && (
-                <p id="cp-primary-desc-help" className="xsmall clr-warning">
+                <p id="cp-primary-desc-help" className="xsmall clr-info">
                   The full product description shown on the product page —
                   materials, care, sizing notes, story, etc. This is the main
                   body of content.
@@ -653,7 +653,7 @@ export default function DialogCreateProduct({
                 </button>
               </div>
               {showShortDescHelp && (
-                <p id="cp-short-desc-help" className="xsmall clr-warning">
+                <p id="cp-short-desc-help" className="xsmall clr-info">
                   A 1–2 sentence summary shown in product listings and previews.
                   Keep it brief — this is not where the full story goes. Max 100
                   characters.

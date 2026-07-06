@@ -5,7 +5,11 @@ import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
 import { useToast } from "~/context/ToastContext";
 import DialogConfirm from "~/components/DialogConfirm";
-import type { CatalogGroup, CatalogPayload } from "~/types/catalog";
+import type {
+  CatalogGroup,
+  CatalogPayload,
+  StockSyncMode,
+} from "~/types/catalog";
 import { ArrowDownUp, RefreshCw } from "lucide-react";
 import { formatSkipReason } from "~/utils/skipReason";
 
@@ -74,6 +78,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export const handle = {
+  page: "inventory",
   title: "Inventory Solution",
   eyebrow: "Manage stock",
 };
@@ -121,7 +126,7 @@ export default function InventoryPage() {
   const dirtyChangeCount = Object.keys(state.dirtyBySku).length;
 
   const [selectMode, setSelectMode] = useState(false);
-  const [selectedMode, setSelectedMode] = useState("sync_all");
+  const [selectedMode, setSelectedMode] = useState<StockSyncMode>("sync_all");
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -243,7 +248,7 @@ export default function InventoryPage() {
   const { catalog } = state;
 
   const handleSelectMode = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const mode = e.target.value;
+    const mode = e.target.value as StockSyncMode;
     setSelectedMode(mode);
     setSyncFeedback(null);
     setSyncFeedbackTone(null);
@@ -291,7 +296,7 @@ export default function InventoryPage() {
     setSyncFeedbackTone("loading");
     setSyncSkipped([]);
     try {
-      const result = await syncSelectedSkus(skusToSync);
+      const result = await syncSelectedSkus(skusToSync, undefined, selectedMode);
       const message = `Pushed ${result.updatedCount} SKU${result.updatedCount !== 1 ? "s" : ""} to website.`;
       setSyncFeedback(message);
       setSyncFeedbackTone("success");

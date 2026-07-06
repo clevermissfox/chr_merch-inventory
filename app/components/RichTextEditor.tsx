@@ -1,8 +1,6 @@
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import Link from "@tiptap/extension-link";
-import Underline from "@tiptap/extension-underline";
 import Placeholder from "@tiptap/extension-placeholder";
 
 // Allow style attributes on block-level elements so HTML-mode edits aren't
@@ -83,6 +81,18 @@ function ToolbarButton({
   );
 }
 
+// TipTap trims leading/trailing whitespace inside a block when it re-parses
+// stored HTML (e.g. "<p>Text! </p>" -> "<p>Text!</p>") — a real, unavoidable
+// normalization, not a bug. If we save the untrimmed version, the very next
+// time this content loads it "changes" on its own with zero user input,
+// tripping the edit dialog's dirty-check. Trimming here, at the source, so
+// what's saved already matches what TipTap will reproduce on its own.
+function normalizeHtml(html: string): string {
+  return html
+    .replace(/(<(?:p|li|h[1-6]|blockquote)(?:\s[^>]*)?>)\s+/gi, "$1")
+    .replace(/\s+(<\/(?:p|li|h[1-6]|blockquote)>)/gi, "$1");
+}
+
 export default function RichTextEditor({
   value,
   onChange,
@@ -107,8 +117,9 @@ export default function RichTextEditor({
       setShowHtml(true);
     } else {
       // Apply whatever the user typed back to the editor
-      editor.commands.setContent(htmlDraft);
-      onChange(htmlDraft);
+      const normalized = normalizeHtml(htmlDraft);
+      editor.commands.setContent(normalized);
+      onChange(normalized);
       setShowHtml(false);
     }
   };
@@ -124,24 +135,32 @@ export default function RichTextEditor({
         horizontalRule: false,
         codeBlock: false,
         code: false,
+        // StarterKit bundles Link and Underline itself (as of v3) — configuring
+        // them here instead of adding separate instances avoids the
+        // "Duplicate extension names" warning, which came with two competing
+        // registrations resolving unpredictably.
+        //
+        // Always enabled, even for the "simple" variant (no toolbar button
+        // to add one — see `!isSimple` below) — some variant/short
+        // descriptions already contain a real <a href> (e.g. crediting an
+        // artist's site), and disabling the mark entirely doesn't just hide
+        // the toolbar button, it makes the schema unable to represent a link
+        // at all: TipTap silently drops the <a> tag (keeping only its text)
+        // the moment it parses stored content that has one, destroying the
+        // link on every load.
+        link: {
+          openOnClick: false,
+          HTMLAttributes: { rel: "noopener noreferrer" },
+        },
       }),
       PreserveStyleAttr,
-      Underline,
-      ...(isSimple
-        ? []
-        : [
-            Link.configure({
-              openOnClick: false,
-              HTMLAttributes: { rel: "noopener noreferrer" },
-            }),
-          ]),
       Placeholder.configure({ placeholder: placeholder ?? "" }),
     ],
     content: value,
     editable: !disabled,
     onUpdate({ editor }) {
       if (!editorCreated.current) return;
-      const html = editor.isEmpty ? "" : editor.getHTML();
+      const html = editor.isEmpty ? "" : normalizeHtml(editor.getHTML());
       onChange(html);
     },
   });

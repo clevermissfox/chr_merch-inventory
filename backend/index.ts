@@ -27,7 +27,9 @@ import {
   ensureCategoryWooId,
   ensureDescriptionRowsExist,
   ensureDimensionExists,
+  getEmailNameMap,
   getProductWooId,
+  getRecentActivity,
   toTitleCase,
   parseCreateVariantsBody,
   parseNewProductFields,
@@ -75,6 +77,7 @@ import {
   refreshWooStockForCatalog,
   syncStockSyncPlanToWoo,
   upsertInventoryIndexFields,
+  type StockSyncMode,
 } from "./inventoryManager";
 
 dotenv.config({ path: "./backend/.env" });
@@ -204,7 +207,7 @@ function tryLogError(req: Request, action: string, error: any) {
       new Date().toISOString(),
       req.session?.user?.email ?? "",
       `error_${action}`,
-      String(error?.message ?? "unknown"),
+      JSON.stringify({ error: String(error?.message ?? "unknown") }),
       TARGET_ENV,
     ]).catch(() => {});
   } catch {}
@@ -321,6 +324,8 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
         new Date().toISOString(),
         user.email,
         user.name ?? "",
+        user.givenName ?? "",
+        user.familyName ?? "",
         user.role ?? "",
         "login",
         TARGET_ENV,
@@ -349,6 +354,8 @@ app.post("/api/auth/logout", (req: Request, res: Response) => {
         new Date().toISOString(),
         user.email,
         user.name ?? "",
+        user.givenName ?? "",
+        user.familyName ?? "",
         user.role ?? "",
         "logout",
         TARGET_ENV,
@@ -627,7 +634,11 @@ app.get(
         new Date().toISOString(),
         actor?.email ?? "",
         "inventory_get_stock",
-        `groups=${payload.groups.length} skus=${payload.summary.rowCount} unsynced=${payload.summary.unsyncedCount}`,
+        JSON.stringify({
+          groups: payload.groups.length,
+          skus: payload.summary.rowCount,
+          unsynced: payload.summary.unsyncedCount,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -657,10 +668,7 @@ app.post(
       const { sheets, spreadsheetId } = getSheets();
 
       const catalog = req.body?.catalog as CatalogPayload | undefined;
-      const mode = String(req.body?.mode || "standard_sync") as
-        | "standard_sync"
-        | "resolve_conflicts"
-        | "sync_all";
+      const mode = String(req.body?.mode || "standard_sync") as StockSyncMode;
       const dirtyBySku = (req.body?.dirtyBySku || {}) as Record<
         string,
         { sku: string; stockQty: number | ""; originalStockQty?: number | null }
@@ -755,7 +763,10 @@ app.post(
             new Date().toISOString(),
             actor?.email ?? "",
             "inventory_sync_hash_write_failed",
-            `skus=${hashEntries.map((h) => h.sku).join(",")} error=${String(e?.message ?? "unknown")}`,
+            JSON.stringify({
+              skus: hashEntries.map((h) => h.sku),
+              error: String(e?.message ?? "unknown"),
+            }),
             TARGET_ENV,
           ]).catch(() => {});
         }
@@ -772,19 +783,22 @@ app.post(
       const { groups: confirmedGroups, contentUnsyncedCount } =
         computeContentUnsyncedFlags(stockPatchedGroups);
 
-      const skuQtyLog = wooResult.updatedSkus
-        .map((sku) => {
-          const reqQty = plan.changeMap.get(sku);
-          const wooQty = refreshResult.wooQtyBySku.get(sku);
-          return `${sku}(req=${String(reqQty ?? "?")},woo=${String(wooQty ?? "?")})`;
-        })
-        .join("|");
+      const skuQtyDetails = wooResult.updatedSkus.map((sku) => ({
+        sku,
+        requestedQty: plan.changeMap.get(sku) ?? null,
+        wooQty: refreshResult.wooQtyBySku.get(sku) ?? null,
+      }));
 
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor?.email ?? "",
         `inventory_sync_stock_${mode}`,
-        `pushed=${wooResult.updatedProducts} skus=${skuQtyLog || wooResult.updatedSkus.join(",")} skipped=${wooResult.skipped.length} index_updated=${refreshResult.updated}`,
+        JSON.stringify({
+          pushed: wooResult.updatedProducts,
+          skus: skuQtyDetails,
+          skipped: wooResult.skipped.length,
+          indexUpdated: refreshResult.updated,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -842,6 +856,37 @@ app.get("/api/catalog/get_meta", async (req: Request, res: Response) => {
     });
   }
 });
+
+// Read-only, requireAuth only (no requireCanEdit) — view-only users should
+// see recent activity same as editors, they just can't act on it.
+app.get(
+  "/api/catalog/recent_activity",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(
+        Number(req.query.limit) || 5,
+        20,
+      );
+      const { sheets, spreadsheetId } = getSheets();
+      const [entries, nameMap] = await Promise.all([
+        getRecentActivity(sheets, spreadsheetId, limit),
+        getEmailNameMap(sheets, spreadsheetId),
+      ]);
+      const enriched = entries.map((entry) => ({
+        ...entry,
+        givenName: nameMap.get(entry.email.toLowerCase()) ?? null,
+      }));
+      return res.status(200).json({ ok: true, entries: enriched });
+    } catch (error: any) {
+      console.error("GET /api/catalog/recent_activity failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || "Failed to load recent activity",
+      });
+    }
+  },
+);
 
 app.post(
   "/api/catalog/ref/add",
@@ -927,7 +972,18 @@ app.post(
           new Date().toISOString(),
           actorEmail,
           `ref_add_${type}`,
-          `value=${normalizedValue} label=${sheetLabel} code=${safeCode.toUpperCase()} wooId=${wooId}${type === "subcategory" ? ` parentWooId=${resolvedParentWooId} parentCode=${parentCode!.trim().toUpperCase()}` : ""}`,
+          JSON.stringify({
+            value: normalizedValue,
+            label: sheetLabel,
+            code: safeCode.toUpperCase(),
+            wooId,
+            ...(type === "subcategory"
+              ? {
+                  parentWooId: resolvedParentWooId,
+                  parentCode: parentCode!.trim().toUpperCase(),
+                }
+              : {}),
+          }),
           TARGET_ENV,
         ]).catch((e) => console.error("log failed:", e));
         return res.status(200).json({
@@ -957,7 +1013,7 @@ app.post(
         new Date().toISOString(),
         actorEmail,
         `ref_add_${type}`,
-        `value=${entry.value} code=${entry.code ?? ""}`,
+        JSON.stringify({ value: entry.value, code: entry.code ?? "" }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
       return res.status(200).json({ ok: true, ...entry });
@@ -1078,7 +1134,7 @@ app.post(
         new Date().toISOString(),
         actor.email,
         "create_product",
-        `sku=${sku} product_id=${productId} row_id=${rowId}`,
+        JSON.stringify({ sku, productId, rowId }),
         TARGET_ENV,
       ]).catch((e) => console.error("action log failed:", e));
 
@@ -1145,7 +1201,7 @@ app.put(
         new Date().toISOString(),
         actor.email,
         "update_product",
-        `sku=${sku} fields=${Object.keys(fields).join(",")}`,
+        JSON.stringify({ sku, fields: Object.keys(fields) }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1195,7 +1251,14 @@ app.delete(
         new Date().toISOString(),
         actor.email,
         "delete_product",
-        `sku=${sku} wooId=${result.wooId ?? "none"} variants=${result.variantsDeleted} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
+        JSON.stringify({
+          sku,
+          wooId: result.wooId ?? null,
+          variantsDeleted: result.variantsDeleted,
+          descriptionsDeleted: result.descriptionsDeleted,
+          inventoryIndexDeleted: result.inventoryIndexDeleted,
+          wooDeleted,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1319,7 +1382,7 @@ app.delete(
         new Date().toISOString(),
         actor.email,
         "remove_woo_image",
-        `sku=${sku} wooId=${wooId} imageId=${imageId}`,
+        JSON.stringify({ sku, wooId, imageId }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1353,13 +1416,23 @@ app.delete(
 
       await removeWooVariationImage(wooId, wooVariantId);
 
+      // sku/parentSku/imageName are passed by the frontend for logging
+      // purposes only (it already has them loaded for the gallery display) —
+      // wooId/wooVariantId alone aren't enough to tell which product/variant
+      // this was, from the activity log.
+      const sku = typeof req.query.sku === "string" ? req.query.sku : null;
+      const parentSku =
+        typeof req.query.parentSku === "string" ? req.query.parentSku : null;
+      const imageName =
+        typeof req.query.imageName === "string" ? req.query.imageName : null;
+
       const { sheets, spreadsheetId } = getSheets();
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor.email,
         "remove_woo_variant_image",
-        `wooId=${wooId} wooVariantId=${wooVariantId}`,
+        JSON.stringify({ sku, parentSku, imageName, wooId, wooVariantId }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1413,7 +1486,11 @@ app.post(
         new Date().toISOString(),
         actor.email,
         "create_variants",
-        `parentSku=${parentSku} count=${result.skus.length} skus=${result.skus.join(",")}`,
+        JSON.stringify({
+          parentSku,
+          count: result.skus.length,
+          skus: result.skus,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1463,7 +1540,7 @@ app.put(
         new Date().toISOString(),
         actor.email,
         "update_variant",
-        `sku=${sku} fields=${Object.keys(fields).join(",")}`,
+        JSON.stringify({ sku, fields: Object.keys(fields) }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1610,7 +1687,15 @@ app.delete(
         new Date().toISOString(),
         actor.email,
         "delete_variant",
-        `sku=${sku} wooVariantId=${result.wooVariantId ?? "none"} parentWooId=${result.parentWooId ?? "none"} wasLastVariant=${result.wasLastVariant} descriptions=${result.descriptionsDeleted} inventory_index=${result.inventoryIndexDeleted} wooDeleted=${wooDeleted}`,
+        JSON.stringify({
+          sku,
+          wooVariantId: result.wooVariantId ?? null,
+          parentWooId: result.parentWooId ?? null,
+          wasLastVariant: result.wasLastVariant,
+          descriptionsDeleted: result.descriptionsDeleted,
+          inventoryIndexDeleted: result.inventoryIndexDeleted,
+          wooDeleted,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1788,17 +1873,27 @@ app.post(
       // products are currently draft. Log the real per-product outcome
       // instead, so this line answers "what did each SKU end up as," not
       // just "how many things did or didn't happen."
-      const statusSummary = summary.results
-        .filter((r) => r.publishedStatus)
-        .map((r) => `${r.sku}:${r.publishedStatus}`)
-        .join(",");
+      const statuses = Object.fromEntries(
+        summary.results
+          .filter((r) => r.publishedStatus)
+          .map((r) => [r.sku, r.publishedStatus]),
+      );
 
       const actor = req.session.user!;
       writeSheetLog(sheets, spreadsheetId, "merch_app_logs", [
         new Date().toISOString(),
         actor.email,
         "sync_to_site",
-        `mode=${syncMode} publish=${Boolean(publish)} synced=${summary.syncedCount} skipped_draft=${summary.skippedDraftCount} skipped_unchanged=${summary.skippedUnchangedCount} failed=${summary.failedCount} statuses=${statusSummary} missing=${missing.join(",")}`,
+        JSON.stringify({
+          mode: syncMode,
+          publish: Boolean(publish),
+          synced: summary.syncedCount,
+          skippedDraft: summary.skippedDraftCount,
+          skippedUnchanged: summary.skippedUnchangedCount,
+          failed: summary.failedCount,
+          statuses,
+          missing,
+        }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
 
@@ -1838,7 +1933,7 @@ app.post(
         new Date().toISOString(),
         req.session.user.email,
         "set_woo_id",
-        `sku=${sku} wooId=${wooId}`,
+        JSON.stringify({ sku, wooId }),
         TARGET_ENV,
       ]).catch(() => {});
       return res.json({ ok: true });

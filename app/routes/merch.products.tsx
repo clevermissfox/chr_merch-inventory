@@ -37,6 +37,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export const handle = {
+  page: "products",
   title: "Catalog",
   eyebrow: "Manage products",
 };
@@ -88,7 +89,12 @@ function getFirstPublishCandidates(catalog: CatalogPayload): CatalogGroup[] {
 }
 
 function getSyncButtonLabel(group: CatalogGroup): string {
-  return group.wooId ? "Publish status" : "Publish to site";
+  // "Status" once a Woo product exists — this button doesn't always publish
+  // or unpublish, it just as often reaffirms the current status or pushes
+  // unsynced content, so "Publish status" overpromised what clicking it
+  // does. "Publish to site" stays for the one case where that's literally
+  // true: nothing exists in Woo yet.
+  return group.wooId ? "Status" : "Publish to site";
 }
 
 // Ground truth fetch — null on no wooId, not-found, or a failed request
@@ -121,7 +127,7 @@ function PriceDisplay({
   return (
     <>
       <s className="clr-muted">{price}</s>{" "}
-      <span className="clr-warning">{sale}</span>
+      <span className="clr-info">{sale}</span>
     </>
   );
 }
@@ -193,9 +199,9 @@ function ProductGroup({
         <span className="toggle-label">Toggle</span>
       </summary>
 
-      <div className="product-body row fw-wrap-reverse gap-1 padding-b-three-forths padding-i-1quarter">
+      <div className="product-body row fw-wrap-reverse gap-1 padding-b-three-fourths padding-i-1quarter">
         <div className="product-info flex-1 grid gap-1">
-          <dl className="product-meta row fw-wrap">
+          <dl className="meta product-meta row fw-wrap">
             <div>
               <dt>SKU</dt>
               <dd>{group.sku}</dd>
@@ -244,7 +250,7 @@ function ProductGroup({
           </dl>
 
           {(group.primaryDescription || group.shortDescription) && (
-            <dl className="product-meta product-desc col">
+            <dl className="meta product-meta product-desc col">
               {group.primaryDescription && (
                 <div>
                   <dt>Description</dt>
@@ -277,7 +283,7 @@ function ProductGroup({
           >
             <button
               type="button"
-              className="btn-secondary row gap-half ai-cen"
+              className={`btn-secondary row gap-half ai-cen ${group.contentUnsynced ? "btn-warning" : ""}`}
               onClick={() => onPublishRequest(group)}
               disabled={!canEdit}
             >
@@ -330,7 +336,7 @@ function ProductGroup({
 
       {!isSimple && (
         <details className="variants-group">
-          <summary className="row ai-cen jc-sb gap-1 padding-b-three-forths padding-i-1quarter">
+          <summary className="row ai-cen jc-sb gap-1 padding-b-three-fourths padding-i-1quarter">
             <span className="small">
               {group.rowCount} variant{group.rowCount !== 1 ? "s" : ""}
             </span>
@@ -466,6 +472,15 @@ export default function ProductsPage() {
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState<CatalogGroup | null>(null);
   const [lastEdited, setLastEdited] = useState<string | null>(null);
+  // Mirrors pendingCreate's pattern: the edit dialog closes as soon as the
+  // save+sync request is fired (not when it resolves), so a slow Woo call
+  // doesn't leave the user staring at a blocked modal — this holds the SKU
+  // for the page-level "Saving…" status while that request finishes in the
+  // background. Unlike create, a failure here doesn't need to reopen the
+  // dialog pre-filled: saveToSheet() always completes before the Woo sync
+  // call, so a failure only ever means "saved, but the site push hiccuped,"
+  // not "nothing happened, retype it."
+  const [pendingEditSku, setPendingEditSku] = useState<string | null>(null);
   const [stockOverrides, setStockOverrides] = useState<Record<string, string>>(
     {},
   );
@@ -918,21 +933,23 @@ export default function ProductsPage() {
     ? "Loading catalog…"
     : pendingCreate
       ? "Creating product… this may take a minute"
-      : createError
-        ? `Create failed — ${createError}`
-        : lastCreated
-          ? lastCreated
-          : lastDeleted
-            ? `Deleted — SKU: ${lastDeleted}`
-            : lastSynced
-              ? lastSynced
-              : lastEdited
-                ? `Saved — ${lastEdited}`
-                : error
-                  ? error
-                  : catalog
-                    ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
-                    : "";
+      : pendingEditSku
+        ? `Saving ${pendingEditSku}… this may take a minute`
+        : createError
+          ? `Create failed — ${createError}`
+          : lastCreated
+            ? lastCreated
+            : lastDeleted
+              ? `Deleted — SKU: ${lastDeleted}`
+              : lastSynced
+                ? lastSynced
+                : lastEdited
+                  ? `Saved — ${lastEdited}`
+                  : error
+                    ? error
+                    : catalog
+                      ? `${catalog.summary.productCount} products · ${catalog.summary.rowCount} variants`
+                      : "";
 
   // Mirrors statusMessage's own priority order — an action that actually
   // succeeded (lastCreated/lastDeleted/lastSynced/lastEdited) must win over
@@ -944,13 +961,15 @@ export default function ProductsPage() {
   // priority over everything, since that's a real failure of the action.
   const statusTone = createError
     ? "error"
-    : pendingCreate
+    : pendingCreate || pendingEditSku
       ? "loading"
-      : lastCreated || lastDeleted || lastSynced || lastEdited
-        ? "success"
-        : error
-          ? "error"
-          : undefined;
+      : loading
+        ? "loading"
+        : lastCreated || lastDeleted || lastSynced || lastEdited
+          ? "success"
+          : error
+            ? "error"
+            : undefined;
 
   return (
     <>
@@ -1154,13 +1173,31 @@ export default function ProductsPage() {
           key={pendingEdit.sku}
           group={pendingEdit}
           onClose={() => setPendingEdit(null)}
-          onSaved={() => {
-            const sku = pendingEdit.sku;
+          onPending={() => {
+            setPendingEditSku(pendingEdit.sku);
             setPendingEdit(null);
+          }}
+          onSaved={() => {
+            // Captures `pendingEdit.sku` directly (this closure's own render
+            // still has the non-null pendingEdit reference) rather than
+            // reading the `pendingEditSku` state var, which onPending just
+            // scheduled an update for — that update hasn't landed yet by the
+            // time this closure was created, so it'd still read stale/null.
+            const sku = pendingEdit.sku;
+            setPendingEditSku(null);
             setLastCreated(null);
             setLastDeleted(null);
             setLastEdited(sku);
             showToast(`Synced — ${sku}`, "success");
+            loadCatalog();
+          }}
+          onFailed={(errorMessage) => {
+            const sku = pendingEdit.sku;
+            setPendingEditSku(null);
+            showToast(
+              `Saved ${sku}, but syncing to the site failed — ${errorMessage}. Try Sync from the card.`,
+              "warning",
+            );
             loadCatalog();
           }}
         />
@@ -1173,14 +1210,27 @@ export default function ProductsPage() {
           row={pendingEditVariant.row}
           group={pendingEditVariant.group}
           onClose={() => setPendingEditVariant(null)}
+          onPending={() => {
+            setPendingEditSku(pendingEditVariant.row.sku);
+            setPendingEditVariant(null);
+          }}
           onSaved={async () => {
             const sku = pendingEditVariant.row.sku;
-            setPendingEditVariant(null);
+            setPendingEditSku(null);
             setLastCreated(null);
             setLastDeleted(null);
             setLastEdited(sku);
             showToast(`Saved — ${sku}`, "success");
             await loadCatalog();
+          }}
+          onFailed={(errorMessage) => {
+            const sku = pendingEditVariant.row.sku;
+            setPendingEditSku(null);
+            showToast(
+              `Saved ${sku}, but syncing to the site failed — ${errorMessage}. Try Sync from the card.`,
+              "warning",
+            );
+            loadCatalog();
           }}
         />
       )}
@@ -1323,10 +1373,14 @@ export default function ProductsPage() {
           // Content already auto-syncs on every edit (Edit Product/Variant,
           // Add Variants) — by the time this dialog opens there's usually
           // nothing new to push, so "Sync changes" as the primary label is
-          // misleading outside the one case where it's actually true: a
-          // stock decision is being made (new/never-confirmed rows). In
-          // every other confirmed-mode case, the primary action is really
-          // just "reaffirm the current status," not "sync."
+          // misleading outside two cases where it's actually true: a stock
+          // decision is being made (new/never-confirmed rows), or the sheet
+          // shows content changed since the last sync (contentUnsynced) —
+          // e.g. edited directly on the sheet rather than through Edit
+          // Product/Variant, which is the one path that bypasses the normal
+          // auto-sync-on-save. In every other confirmed-mode case, the
+          // primary action is really just "reaffirm the current status,"
+          // not "sync."
           const isSimple = syncRequest.group.rowCount === 0;
           const hasZeroStock =
             syncRequest.type === "single" &&
@@ -1334,6 +1388,9 @@ export default function ProductsPage() {
               (isSimple
                 ? syncRequest.group.wooStock == null
                 : syncRequest.group.rows.some((r) => r.wooStock == null)));
+          const hasUnsyncedContent =
+            syncRequest.type === "single" && syncRequest.group.contentUnsynced;
+          const showSyncLabel = hasZeroStock || hasUnsyncedContent;
 
           return (
             <DialogConfirm
@@ -1344,7 +1401,7 @@ export default function ProductsPage() {
                     ? "Publish this product?"
                     : isAmbiguous
                       ? "Couldn't confirm the site's current status"
-                      : hasZeroStock
+                      : showSyncLabel
                         ? "Sync changes to the site?"
                         : isCurrentlyLive
                           ? "Keep this product published?"
@@ -1358,7 +1415,7 @@ export default function ProductsPage() {
                     ? "Publish"
                     : isAmbiguous
                       ? "Publish"
-                      : hasZeroStock
+                      : showSyncLabel
                         ? "Sync changes"
                         : isCurrentlyLive
                           ? "Keep it Published"
@@ -1448,7 +1505,7 @@ export default function ProductsPage() {
                 </p>
               )}
               {canGoLive && (
-                <p className="xsmall clr-warning">
+                <p className="xsmall clr-info">
                   Images are added manually by dev after processing — if this
                   product doesn't have one on the site yet, publishing will make
                   it visible with no image until that's done.

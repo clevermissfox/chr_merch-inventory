@@ -8,7 +8,12 @@ interface DialogEditVariantProps {
   row: CatalogRow;
   group: CatalogGroup;
   onClose: () => void;
+  // See DialogEditProduct's matching prop — closes the dialog as soon as
+  // validation passes, before the save+sync request is sent, instead of
+  // blocking the user in a modal for however long the Woo sync call takes.
+  onPending: () => void;
   onSaved: () => Promise<void>;
+  onFailed: (error: string) => void;
 }
 
 interface FormState {
@@ -31,13 +36,14 @@ export default function DialogEditVariant({
   row,
   group,
   onClose,
+  onPending,
   onSaved,
+  onFailed,
 }: DialogEditVariantProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const original = useRef<FormState>(initForm(row));
   const [form, setForm] = useState<FormState>(original.current);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [showPriceHelp, setShowPriceHelp] = useState(false);
   const [showSalePriceHelp, setShowSalePriceHelp] = useState(false);
   const [showWeightHelp, setShowWeightHelp] = useState(false);
@@ -52,9 +58,10 @@ export default function DialogEditVariant({
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
-  const isDirty = (Object.keys(form) as Array<keyof FormState>).some(
+  const dirtyFields = (Object.keys(form) as Array<keyof FormState>).filter(
     (k) => form[k] !== original.current[k],
   );
+  const isDirty = dirtyFields.length > 0;
 
   const basePriceDollars = (group.basePriceDollars ?? "").replace(
     /[^0-9.]/g,
@@ -68,43 +75,29 @@ export default function DialogEditVariant({
     form.salePriceVariant,
   );
 
-  // Returns true on a successful sheet write; false means it already set
-  // submitError/blocked, so the caller just bails out.
-  const saveToSheet = async (): Promise<boolean> => {
-    if (!salePriceValid) {
-      setSubmitError("Sale price must be less than the regular price.");
-      return false;
-    }
-    setSubmitError(null);
+  const saveToSheet = async (): Promise<void> => {
+    const orig = original.current;
+    const payload: Record<string, string> = {};
+    if (form.priceVariant !== orig.priceVariant)
+      payload.priceVariant = form.priceVariant.trim();
+    if (form.salePriceVariant !== orig.salePriceVariant)
+      payload.salePriceVariant = form.salePriceVariant.trim();
+    if (form.weightOzVariant !== orig.weightOzVariant)
+      payload.weightOzVariant = form.weightOzVariant.trim();
+    if (form.descriptionVariant !== orig.descriptionVariant)
+      payload.descriptionVariant = form.descriptionVariant.trim();
 
-    try {
-      const orig = original.current;
-      const payload: Record<string, string> = {};
-      if (form.priceVariant !== orig.priceVariant)
-        payload.priceVariant = form.priceVariant.trim();
-      if (form.salePriceVariant !== orig.salePriceVariant)
-        payload.salePriceVariant = form.salePriceVariant.trim();
-      if (form.weightOzVariant !== orig.weightOzVariant)
-        payload.weightOzVariant = form.weightOzVariant.trim();
-      if (form.descriptionVariant !== orig.descriptionVariant)
-        payload.descriptionVariant = form.descriptionVariant.trim();
-
-      const res = await fetch(
-        `/api/catalog/variant/${encodeURIComponent(row.sku)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify(payload),
-        },
-      );
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update variant");
-      return true;
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Save failed");
-      return false;
-    }
+    const res = await fetch(
+      `/api/catalog/variant/${encodeURIComponent(row.sku)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      },
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to update variant");
   };
 
   // Editing a variant always saves AND syncs, same as DialogEditProduct —
@@ -112,40 +105,41 @@ export default function DialogEditVariant({
   // Woo. Variants never touch draft/published status at all (only the
   // parent product does, via the card's dedicated Publish/Unpublish
   // action), so this never needs to read or send published_status.
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
-    setSubmitting(true);
-    try {
-      const ok = await saveToSheet();
-      if (!ok) return;
-      const res = await fetch("/api/catalog/sync_to_site", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          mode: "selected",
-          productIds: [group.productId],
-          publish: false,
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Sync failed");
-      const result: { status: string; error?: string } | undefined =
-        data.results?.[0];
-      if (result?.status === "failed")
-        throw new Error(result.error || "Sync failed");
-      await onSaved();
-    } catch (err) {
-      // Sheet write already succeeded — leave the dialog open showing the
-      // sync error instead of closing it. Sync can be retried from the
-      // Products page.
-      setSubmitError(
-        err instanceof Error ? `Saved, but sync failed: ${err.message}` : "Sync failed",
-      );
-    } finally {
-      setSubmitting(false);
+    if (!salePriceValid) {
+      setValidationError("Sale price must be less than the regular price.");
+      return;
     }
+    // Close the dialog now — see onPending's doc comment. Everything past
+    // this point runs in the background; the parent shows a page-level
+    // "Saving…" status and reports the outcome via toast when it settles.
+    onPending();
+    (async () => {
+      try {
+        await saveToSheet();
+        const res = await fetch("/api/catalog/sync_to_site", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            mode: "selected",
+            productIds: [group.productId],
+            publish: false,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Sync failed");
+        const result: { status: string; error?: string } | undefined =
+          data.results?.[0];
+        if (result?.status === "failed")
+          throw new Error(result.error || "Sync failed");
+        await onSaved();
+      } catch (err) {
+        onFailed(err instanceof Error ? err.message : "Save failed");
+      }
+    })();
   };
 
   return (
@@ -156,17 +150,12 @@ export default function DialogEditVariant({
             <h2>Edit variant</h2>
             <p className="xsmall clr-muted">{row.sku}</p>
           </hgroup>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            disabled={submitting}
-          >
+          <button type="button" aria-label="Close" onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         </div>
 
-        <dl className="product-meta row fw-wrap">
+        <dl className="meta product-meta row fw-wrap">
           <div>
             <dt>Product</dt>
             <dd>{group.displayName}</dd>
@@ -209,7 +198,6 @@ export default function DialogEditVariant({
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
                   placeholder={basePriceDollars || "0.00"}
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -243,7 +231,6 @@ export default function DialogEditVariant({
                   placeholder={
                     group.salePriceDollars?.replace(/[^0-9.]/g, "") || "0.00"
                   }
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -273,21 +260,20 @@ export default function DialogEditVariant({
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
                   placeholder={group.weightOz ?? "0.0"}
-                  disabled={submitting}
                 />
               </div>
             </div>
             {showPriceHelp && (
-              <p id="ev-price-help" className="xsmall clr-warning">
+              <p id="ev-price-help" className="xsmall clr-info">
                 This value <strong>overrides</strong> the base price. Leave
                 blank to use the product's base price ($
                 {basePriceDollars || "—"}).
               </p>
             )}
             {showSalePriceHelp && group.salePriceDollars && (
-              <p id="ev-sale-price-help" className="xsmall clr-warning">
-                This value <strong>overrides</strong> the product's sale
-                price. Leave blank to use the product's sale price ($
+              <p id="ev-sale-price-help" className="xsmall clr-info">
+                This value <strong>overrides</strong> the product's sale price.
+                Leave blank to use the product's sale price ($
                 {group.salePriceDollars.replace(/[^0-9.]/g, "")}).
               </p>
             )}
@@ -298,7 +284,7 @@ export default function DialogEditVariant({
               </p>
             )}
             {showWeightHelp && group.weightOz && (
-              <p id="ev-weight-help" className="xsmall clr-warning">
+              <p id="ev-weight-help" className="xsmall clr-info">
                 This value <strong>overrides</strong> the base weight. Leave
                 blank to use the product's base weight ({group.weightOz}oz).
               </p>
@@ -315,7 +301,6 @@ export default function DialogEditVariant({
                 setForm((prev) => ({ ...prev, descriptionVariant: html }))
               }
               onOverLimit={setDescOverLimit}
-              disabled={submitting}
               placeholder="What's unique about this variant…"
               variant="simple"
               maxChars={150}
@@ -328,9 +313,9 @@ export default function DialogEditVariant({
             change. Images are managed at the product level — see Edit product.
           </p>
 
-          {submitError && (
+          {validationError && (
             <p role="alert" className="status-line" data-tone="error">
-              {submitError}
+              {validationError}
             </p>
           )}
 
@@ -338,25 +323,12 @@ export default function DialogEditVariant({
             <button
               type="submit"
               className="btn-primary row gap-half ai-cen"
-              disabled={
-                !isDirty || submitting || descOverLimit || !salePriceValid
-              }
+              disabled={!isDirty || descOverLimit || !salePriceValid}
             >
-              {submitting ? (
-                <span className="render-loader">Syncing…</span>
-              ) : (
-                <>
-                  <Globe aria-hidden="true" />
-                  <span>Sync changes</span>
-                </>
-              )}
+              <Globe aria-hidden="true" />
+              <span>Sync changes</span>
             </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-              disabled={submitting}
-            >
+            <button type="button" className="btn-secondary" onClick={onClose}>
               Cancel
             </button>
           </div>

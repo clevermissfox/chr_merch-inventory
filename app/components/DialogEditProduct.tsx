@@ -9,7 +9,15 @@ import WooImageGallery from "./WooImageGallery";
 interface DialogEditProductProps {
   group: CatalogGroup;
   onClose: () => void;
+  // Called synchronously as soon as validation passes, before the
+  // save+sync request is even sent — the parent closes the dialog right
+  // then (mirroring DialogCreateProduct's onPending) instead of blocking the
+  // user in a modal for however long the Woo sync call takes. The request
+  // itself keeps running in this component's own closure after that,
+  // unaffected by the parent unmounting it.
+  onPending: () => void;
   onSaved: () => void;
+  onFailed: (error: string) => void;
 }
 
 interface FormState {
@@ -41,13 +49,14 @@ function initForm(group: CatalogGroup): FormState {
 export default function DialogEditProduct({
   group,
   onClose,
+  onPending,
   onSaved,
+  onFailed,
 }: DialogEditProductProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const original = useRef<FormState>(initForm(group));
   const [form, setForm] = useState<FormState>(original.current);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [shortDescOverLimit, setShortDescOverLimit] = useState(false);
   const [imageIsPending, setImageIsPending] = useState(false);
 
@@ -68,6 +77,7 @@ export default function DialogEditProduct({
     (k) => form[k] !== original.current[k],
   );
   const isDirty = dirtyFields.length > 0;
+
   const salePriceValid = isSalePriceValid(
     form.basePriceDollars,
     form.salePriceDollars,
@@ -136,39 +146,41 @@ export default function DialogEditProduct({
   // even for a still-draft product: pushing content never changes its
   // draft/published visibility, only the card's dedicated Publish/Unpublish
   // action does that (with its own ground-truth check and confirm step).
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
     const err = validate();
     if (err) {
-      setSubmitError(err);
+      setValidationError(err);
       return;
     }
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      await saveToSheet();
-      const res = await fetch("/api/catalog/sync_to_site", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          mode: "selected",
-          productIds: [group.productId],
-          publish: false,
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Sync failed");
-      const result = data.results?.[0];
-      if (result?.status === "failed")
-        throw new Error(result.error || "Sync failed");
-      onSaved();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSubmitting(false);
-    }
+    // Close the dialog now — see onPending's doc comment. Everything past
+    // this point runs in the background; the parent shows a page-level
+    // "Saving…" status and reports the outcome via toast when it settles.
+    onPending();
+    (async () => {
+      try {
+        await saveToSheet();
+        const res = await fetch("/api/catalog/sync_to_site", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            mode: "selected",
+            productIds: [group.productId],
+            publish: false,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Sync failed");
+        const result = data.results?.[0];
+        if (result?.status === "failed")
+          throw new Error(result.error || "Sync failed");
+        onSaved();
+      } catch (err) {
+        onFailed(err instanceof Error ? err.message : "Save failed");
+      }
+    })();
   };
 
   return (
@@ -184,12 +196,7 @@ export default function DialogEditProduct({
                 : " · Unpublished · not yet on the site"}
             </p>
           </hgroup>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            disabled={submitting}
-          >
+          <button type="button" aria-label="Close" onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         </div>
@@ -205,7 +212,6 @@ export default function DialogEditProduct({
               value={form.displayName}
               onChange={set("displayName")}
               placeholder={group.productName}
-              disabled={submitting}
             />
           </div>
           <div className="grid gap-half">
@@ -225,7 +231,6 @@ export default function DialogEditProduct({
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
                   required
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -243,7 +248,6 @@ export default function DialogEditProduct({
                   onKeyDown={(e) =>
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -261,7 +265,6 @@ export default function DialogEditProduct({
                     (e.key === "-" || e.key === "e") && e.preventDefault()
                   }
                   required
-                  disabled={submitting}
                 />
               </div>
             </div>
@@ -287,7 +290,6 @@ export default function DialogEditProduct({
                   step="0.01"
                   value={form.dimensionsWidth}
                   onChange={set("dimensionsWidth")}
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -301,7 +303,6 @@ export default function DialogEditProduct({
                   step="0.01"
                   value={form.dimensionsHeight}
                   onChange={set("dimensionsHeight")}
-                  disabled={submitting}
                 />
               </div>
               <div className="form-group flex-1">
@@ -315,7 +316,6 @@ export default function DialogEditProduct({
                   step="0.01"
                   value={form.dimensionsDepth}
                   onChange={set("dimensionsDepth")}
-                  disabled={submitting}
                 />
               </div>
             </div>
@@ -331,7 +331,6 @@ export default function DialogEditProduct({
               onChange={(html) =>
                 setForm((prev) => ({ ...prev, primaryDescription: html }))
               }
-              disabled={submitting}
               placeholder="Full product description…"
               variant="full"
             />
@@ -348,7 +347,6 @@ export default function DialogEditProduct({
                 setForm((prev) => ({ ...prev, shortDescription: html }))
               }
               onOverLimit={setShortDescOverLimit}
-              disabled={submitting}
               placeholder="One or two sentences shown in the shop listing…"
               variant="simple"
             />
@@ -357,17 +355,14 @@ export default function DialogEditProduct({
           <ImageUploadSection
             sku={group.sku}
             productName={group.displayName}
-            disabled={submitting}
             onPendingChange={setImageIsPending}
           />
 
-          {group.wooId && (
-            <WooImageGallery group={group} disabled={submitting} />
-          )}
+          {group.wooId && <WooImageGallery group={group} />}
 
-          {submitError && (
+          {validationError && (
             <p role="alert" className="status-line" data-tone="error">
-              {submitError}
+              {validationError}
             </p>
           )}
 
@@ -377,26 +372,18 @@ export default function DialogEditProduct({
               className="btn-primary row gap-half jc-cen ai-cen flex-1"
               disabled={
                 !isDirty ||
-                submitting ||
                 shortDescOverLimit ||
                 imageIsPending ||
                 !salePriceValid
               }
             >
-              {submitting ? (
-                <span className="render-loader">Syncing…</span>
-              ) : (
-                <>
-                  <Globe aria-hidden="true" />
-                  <span>Sync changes</span>
-                </>
-              )}
+              <Globe aria-hidden="true" />
+              <span>Sync changes</span>
             </button>
             <button
               type="button"
               className="btn-secondary flex-1"
               onClick={onClose}
-              disabled={submitting}
             >
               Cancel
             </button>

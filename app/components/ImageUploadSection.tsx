@@ -161,7 +161,7 @@ export default function ImageUploadSection({
         </button>
       </legend>
       {showHint && (
-        <p className="xsmall clr-warning margin-be-half">
+        <p className="xsmall clr-info margin-be-half">
           Upload one or more images for this product. Developer is notified to
           optimize, watermark, and attach them. Allow 1–2 business days.
         </p>

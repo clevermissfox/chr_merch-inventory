@@ -52,6 +52,7 @@
   --clr-border: color-mix(in oklch, var(--clr-neutral-0) 30%, transparent);
   --clr-border-soft: color-mix(in oklch, var(--clr-neutral-0) 18%, transparent);
 
+  --clr-info: #70b2f4;
   --clr-success: #82d6ab;
   --clr-danger: #ff9ca4;
   --clr-warning: #ffd293;
@@ -455,6 +456,11 @@ button:disabled {
   --_clr-btn-border: var(--clr-border-soft);
   --_btn-br: var(--br-round);
   --_clr-btn-txt: var(--clr-text-muted);
+}
+
+.btn-warning {
+  --_clr-btn-bg: var(--clr-warning);
+  --_clr-btn-txt: var(--clr-neutral-900);
 }
 
 .btn-danger {

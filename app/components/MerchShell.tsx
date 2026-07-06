@@ -62,6 +62,7 @@ export function MerchShell({ children }: MerchShellProps) {
     .find((match) => (match.handle as any)?.title);
 
   const currentHandle = (currentMatch?.handle as any) || {};
+  const routePage = currentHandle.page || "";
   const routeTitle = currentHandle.title || "Merch Dashboard";
   const routeEyebrow = currentHandle.eyebrow || "";
   const routeKicker = currentHandle.kicker || "";
@@ -95,7 +96,11 @@ export function MerchShell({ children }: MerchShellProps) {
   };
 
   return (
-    <div className="merch-page" data-role={user?.role}>
+    <div
+      className="merch-page"
+      data-role={user?.role}
+      data-page={routePage || undefined}
+    >
       <header className="merch-topbar surface-primary ">
         <div
           className="wrapper grid gap-2 padding-i-default padding-b-2"

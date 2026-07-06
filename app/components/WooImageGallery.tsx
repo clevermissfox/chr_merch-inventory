@@ -80,8 +80,15 @@ export default function WooImageGallery({
   const handleRemoveVariantImage = async (wooVariantId: number) => {
     setRemovingKey(`variant:${wooVariantId}`);
     try {
+      const variantImage = (variantImages ?? []).find(
+        (vi) => vi.wooVariantId === wooVariantId,
+      );
+      const params = new URLSearchParams({ parentSku: group.sku });
+      if (variantImage?.sku) params.set("sku", variantImage.sku);
+      if (variantImage?.image.name)
+        params.set("imageName", variantImage.image.name);
       const res = await fetch(
-        `/api/catalog/woo_variant_image/${group.wooId}/${wooVariantId}`,
+        `/api/catalog/woo_variant_image/${group.wooId}/${wooVariantId}?${params.toString()}`,
         { method: "DELETE", credentials: "include" },
       );
       const data = await res.json();

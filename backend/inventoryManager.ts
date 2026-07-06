@@ -41,7 +41,18 @@ interface RefreshWooStockOptions {
   stockQtyBySku?: Map<string, SyncQty>;
 }
 
-type StockSyncMode = "standard_sync" | "resolve_conflicts" | "sync_all";
+// "custom_selection" (Inventory page's arbitrary multi-SKU picker) and
+// "quick_update" (Dashboard's single-SKU search-and-save) behave identically
+// to "standard_sync" here — both just push whatever's in dirtyBySku, same as
+// the fallback branch below. They exist as distinct values purely so the
+// activity log can tell these apart from an actual bulk "Sync All"/"Resolve
+// Conflicts" action; only those two ever take their own branch.
+export type StockSyncMode =
+  | "standard_sync"
+  | "resolve_conflicts"
+  | "sync_all"
+  | "custom_selection"
+  | "quick_update";
 
 interface StockSyncRequestChange {
   sku: string;

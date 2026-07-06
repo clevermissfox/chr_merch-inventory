@@ -262,6 +262,35 @@ menu.user-menu {
   }
 }
 
+.hero-grid {
+  --_hero-grid-max-size: 20ch;
+  --_hero-grid-gap: var(--spacing-075, 0.75rem);
+  --_hero-grid-max-cols: 3;
+  display: grid;
+  gap: var(--_hero-grid-gap, 0.75em);
+
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(
+      min(
+        100%,
+        max(
+          var(--_hero-grid-max-size, 20ch),
+          (
+              100% -
+                (
+                  calc(var(--_hero-grid-max-cols, 4) - 1) *
+                    var(--_hero-grid-gap, 0.75em)
+                )
+            ) /
+            var(--_hero-grid-max-cols, 4)
+        )
+      ),
+      1fr
+    )
+  );
+}
+
 .toolbar-actions button {
   min-inline-size: fit-content;
 }
@@ -304,15 +333,6 @@ menu.user-menu {
 
 .merch-card--dark {
   background: var(--clr-surface-tertiary);
-}
-
-.hero-grid {
-  display: grid;
-  gap: var(--spacing-075, 0.75rem);
-}
-
-.hero-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .metric-label {
@@ -529,6 +549,7 @@ menu.user-menu {
   background: var(--clr-surface-secondary);
   border: var(--default-border);
   border-color: var(--clr-border-soft);
+  outline-offset: 0;
 }
 
 .toggle-group summary::-webkit-details-marker {
@@ -603,10 +624,10 @@ menu.user-menu {
   display: initial;
 }
 
-.faq-content,
-.faq-content *,
-.faq-content.small,
-.faq-content .small {
+:is(.faq-content, .activity-content),
+:is(.faq-content, .activity-content) *,
+:is(.faq-content, .activity-content).small,
+:is(.faq-content, .activity-content) .small {
   line-height: var(--lh-400);
 }
 
@@ -732,7 +753,7 @@ menu.user-menu {
   margin-block-start: var(--spacing-100, 1em);
 }
 
-.product-meta {
+:is(.meta, .product-meta) {
   gap: var(--spacing-050, 0.5rem) var(--spacing-125, 1.25rem);
 
   & > div {
@@ -751,6 +772,14 @@ menu.user-menu {
   & dd {
     font-size: var(--fs-300);
   }
+}
+
+/* Forces a dt/dd pair onto its own full-width line within a wrapping flex
+   row of .meta entries — for a value that's a list (per-SKU breakdowns in
+   ActivityPanel), sitting shoulder-to-shoulder with short fields like a
+   count crowds both. */
+.meta-row-full {
+  flex: 1 0 100%;
 }
 
 .product-actions-wrapper {
@@ -1225,10 +1254,6 @@ dialog::backdrop {
 }
 
 @media (max-width: 980px) {
-  .hero-grid {
-    grid-template-columns: 1fr;
-  }
-
   .dashboard-panels {
     grid-template-columns: 1fr;
   }

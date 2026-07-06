@@ -113,6 +113,18 @@ export interface SyncResult {
   skipped: Array<{ sku: string; reason: string }>;
 }
 
+// Mirrors backend/inventoryManager.ts's StockSyncMode — kept in sync
+// manually since frontend/backend don't share a types module. Only
+// "resolve_conflicts"/"sync_all" change what actually gets synced;
+// "custom_selection"/"quick_update" behave like "standard_sync" and exist
+// purely so the activity log can tell these apart.
+export type StockSyncMode =
+  | "standard_sync"
+  | "resolve_conflicts"
+  | "sync_all"
+  | "custom_selection"
+  | "quick_update";
+
 export interface RefData {
   categories: Array<{ value: string; code: string; wooId: number | null }>;
   subcategories: Array<{ value: string; code: string; label: string; wooId: number | null; parentCode: string }>;
