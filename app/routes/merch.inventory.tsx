@@ -125,7 +125,9 @@ export default function InventoryPage() {
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [showConfirm, setShowConfirm] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
-  const [syncFeedbackTone, setSyncFeedbackTone] = useState<"success" | "loading" | "warning" | "error" | null>(null);
+  const [syncFeedbackTone, setSyncFeedbackTone] = useState<
+    "success" | "loading" | "warning" | "error" | null
+  >(null);
   const [syncSkipped, setSyncSkipped] = useState<
     Array<{ sku: string; reason: string }>
   >([]);
@@ -163,10 +165,14 @@ export default function InventoryPage() {
   useEffect(() => {
     if (!state.catalog || selectedMode === "custom_selection") return;
     if (selectedMode === "sync_all") {
-      setSelectedSkus(new Set([
-        ...state.catalog.groups.flatMap((g) => g.rows.map((r) => r.sku)),
-        ...state.catalog.groups.filter((g) => g.rowCount === 0).map((g) => g.sku),
-      ]));
+      setSelectedSkus(
+        new Set([
+          ...state.catalog.groups.flatMap((g) => g.rows.map((r) => r.sku)),
+          ...state.catalog.groups
+            .filter((g) => g.rowCount === 0)
+            .map((g) => g.sku),
+        ]),
+      );
     } else if (selectedMode === "standard_sync") {
       setSelectedSkus(new Set(Object.keys(state.dirtyBySku)));
     } else if (selectedMode === "resolve_conflicts") {
@@ -176,35 +182,37 @@ export default function InventoryPage() {
       // (rowCount === 0) case explicitly: a simple product tracks its own
       // stockQty/wooStock on the group itself, not in `rows`, so checking
       // only `rows` silently skipped every simple product's own conflict.
-      setSelectedSkus(new Set(
-        state.catalog.groups.flatMap((g) => {
-          if (!g.wooId) return [];
-          if (g.rowCount === 0) {
-            const dirty = state.dirtyBySku[g.sku];
-            const displayQty =
-              dirty?.stockQty !== undefined ? dirty.stockQty : g.stockQty;
-            const ws =
-              displayQty === "" || displayQty == null
-                ? null
-                : Number(displayQty);
-            const woo = g.wooStock == null ? null : Number(g.wooStock);
-            return ws !== woo ? [g.sku] : [];
-          }
-          return g.rows
-            .filter((r) => {
-              const dirty = state.dirtyBySku[r.sku];
+      setSelectedSkus(
+        new Set(
+          state.catalog.groups.flatMap((g) => {
+            if (!g.wooId) return [];
+            if (g.rowCount === 0) {
+              const dirty = state.dirtyBySku[g.sku];
               const displayQty =
-                dirty?.stockQty !== undefined ? dirty.stockQty : r.stockQty;
+                dirty?.stockQty !== undefined ? dirty.stockQty : g.stockQty;
               const ws =
                 displayQty === "" || displayQty == null
                   ? null
                   : Number(displayQty);
-              const woo = r.wooStock == null ? null : Number(r.wooStock);
-              return ws !== woo;
-            })
-            .map((r) => r.sku);
-        })
-      ));
+              const woo = g.wooStock == null ? null : Number(g.wooStock);
+              return ws !== woo ? [g.sku] : [];
+            }
+            return g.rows
+              .filter((r) => {
+                const dirty = state.dirtyBySku[r.sku];
+                const displayQty =
+                  dirty?.stockQty !== undefined ? dirty.stockQty : r.stockQty;
+                const ws =
+                  displayQty === "" || displayQty == null
+                    ? null
+                    : Number(displayQty);
+                const woo = r.wooStock == null ? null : Number(r.wooStock);
+                return ws !== woo;
+              })
+              .map((r) => r.sku);
+          }),
+        ),
+      );
     }
   }, [state.catalog, state.dirtyBySku, selectedMode]);
 
@@ -304,7 +312,9 @@ export default function InventoryPage() {
       displayName: group.displayName,
       skuCount:
         group.rowCount === 0
-          ? selectedSkus.has(group.sku) ? 1 : 0
+          ? selectedSkus.has(group.sku)
+            ? 1
+            : 0
           : group.rows.filter((row) => selectedSkus.has(row.sku)).length,
       sheetOnly: !group.wooId,
     }))
@@ -315,7 +325,13 @@ export default function InventoryPage() {
 
   let statusMessage = "";
   let showLoader = false;
-  let statusTone: "success" | "loading" | "warning" | "error" | "accent" | undefined;
+  let statusTone:
+    | "success"
+    | "loading"
+    | "warning"
+    | "error"
+    | "accent"
+    | undefined;
 
   if (state.loading) {
     statusMessage = "Refreshing website stock…";
@@ -503,9 +519,7 @@ export default function InventoryPage() {
                           Affected SKUs: {skus.join(", ")}
                         </span>
                       )}
-                      {hint && (
-                        <span className="xsmall clr-muted">{hint}</span>
-                      )}
+                      {hint && <span className="xsmall clr-muted">{hint}</span>}
                       {group && cta && (
                         <Link
                           to={`/products?highlight=${encodeURIComponent(group.productId)}`}
@@ -556,9 +570,13 @@ export default function InventoryPage() {
                   <div className="summary-title">
                     <strong>{group.displayName}</strong>
                     <p className="summary-count row gap-half ai-cen">
-                      {group.rowCount === 0 ? "Simple product" : `${group.rowCount} SKU${group.rowCount === 1 ? "" : "s"}`}
+                      {group.rowCount === 0
+                        ? "Simple product"
+                        : `${group.rowCount} SKU${group.rowCount === 1 ? "" : "s"}`}
                       {!group.wooId || !group.lastHash ? (
-                        <span className="published-status-badge">Unpublished</span>
+                        <span className="published-status-badge">
+                          Unpublished
+                        </span>
                       ) : group.publishedStatus === "draft" ? (
                         <span className="published-status-badge">Draft</span>
                       ) : null}
@@ -587,72 +605,102 @@ export default function InventoryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {group.rowCount === 0 && (() => {
-                      const sku = group.sku;
-                      const dirtyChange = state.dirtyBySku[sku];
-                      const isDirty = dirtyChange !== undefined;
-                      const displayStockQty = dirtyChange?.stockQty !== undefined ? dirtyChange.stockQty : group.stockQty;
-                      const normalizedDisplay = displayStockQty === "" || displayStockQty == null ? null : Number(displayStockQty);
-                      const normalizedWoo = group.wooStock == null ? null : Number(group.wooStock);
-                      // Only flag mismatch when the product is actually on the site;
-                      // an unpublished product with no wooId has no Woo counterpart to conflict with.
-                      const mismatch = !!group.wooId && normalizedDisplay !== normalizedWoo;
-                      const isSelected = selectedSkus.has(sku);
-                      return (
-                        <tr
-                          key={sku}
-                          data-sku={sku}
-                          data-dirty={isDirty ? "true" : undefined}
-                          data-selected={selectMode && isSelected ? "true" : undefined}
-                          className={mismatch ? "merch-status merch-status--mismatch" : "merch-status merch-status--ok"}
-                        >
-                          {selectMode && (
-                            <td className="select-cell">
-                              <label className="item-selection">
-                                <input
-                                  type="checkbox"
-                                  className="row-checkbox"
-                                  checked={isSelected}
-                                  aria-label={`Select ${group.displayName} (SKU: ${sku})`}
-                                  onChange={(e) => toggleSku(sku, e.target.checked)}
-                                />
-                              </label>
+                    {group.rowCount === 0 &&
+                      (() => {
+                        const sku = group.sku;
+                        const dirtyChange = state.dirtyBySku[sku];
+                        const isDirty = dirtyChange !== undefined;
+                        const displayStockQty =
+                          dirtyChange?.stockQty !== undefined
+                            ? dirtyChange.stockQty
+                            : group.stockQty;
+                        const normalizedDisplay =
+                          displayStockQty === "" || displayStockQty == null
+                            ? null
+                            : Number(displayStockQty);
+                        const normalizedWoo =
+                          group.wooStock == null
+                            ? null
+                            : Number(group.wooStock);
+                        // Only flag mismatch when the product is actually on the site;
+                        // an unpublished product with no wooId has no Woo counterpart to conflict with.
+                        const mismatch =
+                          !!group.wooId && normalizedDisplay !== normalizedWoo;
+                        normalizedDisplay;
+                        const isSelected = selectedSkus.has(sku);
+                        return (
+                          <tr
+                            key={sku}
+                            data-sku={sku}
+                            data-dirty={isDirty ? "true" : undefined}
+                            data-selected={
+                              selectMode && isSelected ? "true" : undefined
+                            }
+                            className={
+                              mismatch
+                                ? "merch-status merch-status--mismatch"
+                                : "merch-status merch-status--ok"
+                            }
+                          >
+                            {selectMode && (
+                              <td className="select-cell">
+                                <label className="item-selection">
+                                  <input
+                                    type="checkbox"
+                                    className="row-checkbox"
+                                    checked={isSelected}
+                                    aria-label={`Select ${group.displayName} (SKU: ${sku})`}
+                                    onChange={(e) =>
+                                      toggleSku(sku, e.target.checked)
+                                    }
+                                  />
+                                </label>
+                              </td>
+                            )}
+                            <td className="sku-cell">{sku}</td>
+                            <td className="variant-cell">
+                              {group.displayName}
                             </td>
-                          )}
-                          <td className="sku-cell">{sku}</td>
-                          <td className="variant-cell">{group.displayName}</td>
-                          <td>
-                            {canEdit ? (
+                            <td>
+                              {canEdit ? (
+                                <input
+                                  type="number"
+                                  name={`stock-${sku}`}
+                                  aria-label={`Stock quantity for ${group.displayName} (SKU: ${sku})`}
+                                  className="stock-input ta-cen"
+                                  min={0}
+                                  value={displayStockQty ?? ""}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value
+                                      ? event.target.value
+                                      : group.stockQty;
+                                    setStockQty(
+                                      sku,
+                                      nextValue === "" ? "" : Number(nextValue),
+                                      group.stockQty ?? null,
+                                    );
+                                    if (selectMode) toggleSku(sku, true);
+                                  }}
+                                />
+                              ) : (
+                                <span className="ta-cen display-block">
+                                  {group.stockQty ?? ""}
+                                </span>
+                              )}
+                            </td>
+                            <td data-mismatch={mismatch} className="ta-cen">
                               <input
                                 type="number"
-                                name={`stock-${sku}`}
-                                aria-label={`Stock quantity for ${group.displayName} (SKU: ${sku})`}
+                                name={`woo-${sku}`}
+                                aria-label={`Website stock for ${group.displayName} (SKU: ${sku})`}
                                 className="stock-input ta-cen"
-                                min={0}
-                                value={displayStockQty ?? ""}
-                                onChange={(event) => {
-                                  const nextValue = event.target.value ? event.target.value : group.stockQty;
-                                  setStockQty(sku, nextValue === "" ? "" : Number(nextValue), group.stockQty ?? null);
-                                  if (selectMode) toggleSku(sku, true);
-                                }}
+                                value={group.wooStock ?? ""}
+                                disabled
                               />
-                            ) : (
-                              <span className="ta-cen display-block">{group.stockQty ?? ""}</span>
-                            )}
-                          </td>
-                          <td data-mismatch={mismatch} className="ta-cen">
-                            <input
-                              type="number"
-                              name={`woo-${sku}`}
-                              aria-label={`Website stock for ${group.displayName} (SKU: ${sku})`}
-                              className="stock-input ta-cen"
-                              value={group.wooStock ?? ""}
-                              disabled
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })()}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     {group.rows.map((row) => {
                       const dirtyChange = state.dirtyBySku[row.sku];
                       const isDirty = dirtyChange !== undefined;
@@ -674,6 +722,9 @@ export default function InventoryPage() {
                         !!group.wooId &&
                         normalizedDisplayStockQty !== normalizedWooStock;
 
+                      const isOutOfStock =
+                        row.stockQty === 0 || row.wooStock === 0;
+
                       const isSelected = selectedSkus.has(row.sku);
 
                       return (
@@ -681,6 +732,7 @@ export default function InventoryPage() {
                           key={row.sku}
                           data-sku={row.sku}
                           data-dirty={isDirty ? "true" : undefined}
+                          data-out-of-stock={isOutOfStock ? "true" : undefined}
                           data-selected={
                             selectMode && isSelected ? "true" : undefined
                           }
@@ -729,12 +781,23 @@ export default function InventoryPage() {
                                 }}
                               />
                             ) : (
-                              <span className="ta-cen display-block">
+                              <span
+                                className="ta-cen display-block"
+                                data-out-of-stock={
+                                  row.stockQty === 0 ? "true" : undefined
+                                }
+                              >
                                 {row.stockQty ?? ""}
                               </span>
                             )}
                           </td>
-                          <td data-mismatch={mismatch} className="ta-cen">
+                          <td
+                            data-mismatch={mismatch}
+                            data-out-of-stock={
+                              row.wooStock === 0 ? "true" : undefined
+                            }
+                            className="ta-cen"
+                          >
                             <input
                               type="number"
                               name={`woo-${row.sku}`}

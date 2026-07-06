@@ -22,7 +22,7 @@ export function MerchShell({ children }: MerchShellProps) {
   const { user } = useAuth();
   const userInitials = `${user?.givenName?.slice(0, 1) || "G"}${user?.familyName?.slice(0, 1) || ""}`;
   const canEdit = user?.canEdit;
-
+  const isBeta = true;
   const [showProfile, setShowProfile] = useState(false);
   const [showFAQ, setShowFAQ] = useState(false);
   const [showBugReport, setShowBugReport] = useState(false);
@@ -107,7 +107,10 @@ export function MerchShell({ children }: MerchShellProps) {
             <div className="merch-brand">
               <div className="merch-brand__meta grid gap-quarter">
                 <p className="merch-brand__eyebrow">CHR Merch</p>
-                <h1 className="merch-brand__title">Merch Hub</h1>
+                <h1 className="merch-brand__title">
+                  Merch Hub{" "}
+                  <span className="small clr-muted lowercase">(Beta)</span>
+                </h1>
               </div>
             </div>
             <div className="row ai-cen gap-half">

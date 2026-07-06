@@ -93,7 +93,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const API_URL = process.env.VITE_API_URL || `http://localhost:${PORT}`;
 const TARGET_ENV = process.env.TARGET_ENV || "unknown";
 const manualGuardProducts = false;
-const guardProducts = TARGET_ENV === "production" ? true : manualGuardProducts;
+
+// switch to true to block product management endpoints in non-production environments
+const guardProducts = TARGET_ENV === "production" ? false : manualGuardProducts;
 
 // Add CORS middleware
 app.use(
@@ -1653,12 +1655,18 @@ app.post(
           "Product management is still in progress - inventory changes only for now",
       });
     try {
-      const { productIds, publish, mode, stockOverrides } = req.body as {
-        productIds?: string[];
-        publish?: boolean;
-        mode?: "selected" | "sync_all";
-        stockOverrides?: Record<string, number>;
-      };
+      const { productIds, publish, mode, stockOverrides, forceProductIds } =
+        req.body as {
+          productIds?: string[];
+          publish?: boolean;
+          mode?: "selected" | "sync_all";
+          stockOverrides?: Record<string, number>;
+          // Product IDs the caller already confirmed (via a ground-truth Woo
+          // status check) have drifted status — must sync even if the sheet
+          // content hash looks unchanged. See syncCatalogGroupsToWoo's doc
+          // comment.
+          forceProductIds?: string[];
+        };
       const syncMode = mode === "sync_all" ? "sync_all" : "selected";
 
       if (
@@ -1741,7 +1749,13 @@ app.post(
         spreadsheetId,
         targetGroups,
         Boolean(publish),
-        { skipUnchanged: syncMode === "sync_all", forceStockSkus },
+        {
+          skipUnchanged: syncMode === "sync_all",
+          forceStockSkus,
+          forceProductIds: forceProductIds?.length
+            ? new Set(forceProductIds)
+            : undefined,
+        },
       );
 
       // Content sync never touches stock itself (see syncCatalogGroupsToWoo's
@@ -1864,12 +1878,10 @@ app.post(
         .json({ ok: false, error: "productName is required" });
     }
     if (!pastedUrl && (!files || files.length === 0)) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          error: "Provide an image URL or upload at least one file",
-        });
+      return res.status(400).json({
+        ok: false,
+        error: "Provide an image URL or upload at least one file",
+      });
     }
 
     const method = files && files.length > 0 ? "upload" : "link";
@@ -2023,7 +2035,7 @@ app.post(
         return res.status(400).json({
           ok: false,
           error:
-            "\"What did you expect to happen\" and \"What happened\" are required",
+            '"What did you expect to happen" and "What happened" are required',
         });
       }
 
@@ -2102,7 +2114,9 @@ app.post(
 
       return res.json({
         ok: true,
-        ...(driveError ? { warning: `Screenshot upload failed: ${driveError}` } : {}),
+        ...(driveError
+          ? { warning: `Screenshot upload failed: ${driveError}` }
+          : {}),
       });
     } catch (error: any) {
       console.error("POST /api/bug_report failed:", error);

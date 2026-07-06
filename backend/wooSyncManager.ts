@@ -380,7 +380,10 @@ export function buildWooParentPayload(
     // to click through despite there being nothing to actually choose.
     // default_attributes is Woo's native pre-selection mechanism for this —
     // it pre-fills the dropdowns to the matching variation on page load.
-    ...(group.rows.length === 1
+    // Only do this when that one variant actually has stock — defaulting to
+    // (and enabling Add to Cart for) something out of stock would be worse
+    // than just showing "Choose an option."
+    ...(group.rows.length === 1 && (group.rows[0].stockQty ?? 0) > 0
       ? { default_attributes: buildVariantAttrs(group.rows[0], isSticker, attrPlan) }
       : {}),
     weight: normalizeWeightOzToLbs(group.weightOz),
@@ -1088,7 +1091,17 @@ export async function syncCatalogGroupsToWoo(
   spreadsheetId: string,
   groups: CatalogGroup[],
   publish: boolean,
-  opts: { skipUnchanged?: boolean; forceStockSkus?: Set<string> } = {},
+  opts: {
+    skipUnchanged?: boolean;
+    forceStockSkus?: Set<string>;
+    // Product IDs to always push even if skipUnchanged is set and the
+    // content hash matches — for status drift the content hash can never
+    // see (the sheet didn't change, only Woo's actual status did, e.g. a
+    // manual wp-admin unpublish/republish). Sync All's ground-truth check
+    // detects this drift and needs it to actually get corrected, not just
+    // warned about.
+    forceProductIds?: Set<string>;
+  } = {},
 ): Promise<CatalogSyncSummary> {
   assertNoVariationAttributeCollisions(groups);
 
@@ -1096,7 +1109,11 @@ export async function syncCatalogGroupsToWoo(
   const results: ProductSyncResult[] = [];
 
   for (const group of groups) {
-    if (opts.skipUnchanged && group.lastHash) {
+    if (
+      opts.skipUnchanged &&
+      group.lastHash &&
+      !opts.forceProductIds?.has(group.productId)
+    ) {
       const currentHash = computeProductSyncHash(group);
       if (currentHash === group.lastHash) {
         results.push({

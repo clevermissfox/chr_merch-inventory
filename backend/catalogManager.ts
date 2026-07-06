@@ -2264,6 +2264,41 @@ export async function writeSheetLog(
   });
 }
 
+export interface ActivityLogEntry {
+  timestamp: string;
+  email: string;
+  action: string;
+  detail: string;
+}
+
+// Reads the most recent N rows from merch_app_logs, newest first. Positional
+// (not header-name) column access — matches the fixed [timestamp, email,
+// action, detail, env] array shape every writeSheetLog("merch_app_logs", ...)
+// call already uses, so this can't drift from a header rename.
+export async function getRecentActivity(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  limit: number,
+): Promise<ActivityLogEntry[]> {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "merch_app_logs",
+  });
+  const values = res.data.values ?? [];
+  if (values.length <= 1) return [];
+
+  return values
+    .slice(1)
+    .slice(-limit)
+    .reverse()
+    .map((row) => ({
+      timestamp: String((row as string[])[0] ?? ""),
+      email: String((row as string[])[1] ?? ""),
+      action: String((row as string[])[2] ?? ""),
+      detail: String((row as string[])[3] ?? ""),
+    }));
+}
+
 export function rowsToObjects<T>(rawValues: string[][]): T[] {
   if (!rawValues?.length) return [];
 

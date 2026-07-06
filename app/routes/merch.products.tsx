@@ -261,69 +261,71 @@ function ProductGroup({
           )}
         </div>
 
-        {canEdit && (
-          <div className="product-actions-wrapper">
+        <div className="product-actions-wrapper">
+          <button
+            type="button"
+            className="btn-ghost padding-i-half"
+            aria-label="Product actions"
+            popoverTarget={`product-actions-${group.productId}`}
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </button>
+          <menu
+            className="product-actions"
+            popover="auto"
+            id={`product-actions-${group.productId}`}
+          >
             <button
               type="button"
-              className="btn-ghost padding-i-half"
-              aria-label="Product actions"
-              popoverTarget={`product-actions-${group.productId}`}
+              className="btn-secondary row gap-half ai-cen"
+              onClick={() => onPublishRequest(group)}
+              disabled={!canEdit}
             >
-              <MoreHorizontal aria-hidden="true" />
+              <Globe aria-hidden="true" />
+              <span>{getSyncButtonLabel(group)}</span>
             </button>
-            <menu
-              className="product-actions"
-              popover="auto"
-              id={`product-actions-${group.productId}`}
+            {wooSiteUrl &&
+              group.wooId &&
+              group.publishedStatus === "publish" && (
+                <a
+                  className="pseudo-btn-secondary row gap-half ai-cen"
+                  href={`${wooSiteUrl}/?post_type=product&p=${group.wooId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink aria-hidden="true" />
+                  <span>View Product</span>
+                </a>
+              )}
+            <button
+              type="button"
+              className="btn-secondary row gap-half ai-cen"
+              onClick={() => onAddVariantsRequest(group)}
+              disabled={!canEdit}
             >
-              <button
-                type="button"
-                className="btn-secondary row gap-half ai-cen"
-                onClick={() => onPublishRequest(group)}
-              >
-                <Globe aria-hidden="true" />
-                <span>{getSyncButtonLabel(group)}</span>
-              </button>
-              {wooSiteUrl &&
-                group.wooId &&
-                group.publishedStatus === "publish" && (
-                  <a
-                    className="pseudo-btn-secondary row gap-half ai-cen"
-                    href={`${wooSiteUrl}/?post_type=product&p=${group.wooId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <ExternalLink aria-hidden="true" />
-                    <span>View Product</span>
-                  </a>
-                )}
-              <button
-                type="button"
-                className="btn-secondary row gap-half ai-cen"
-                onClick={() => onAddVariantsRequest(group)}
-              >
-                <Plus aria-hidden="true" />
-                <span>Add Variants</span>
-              </button>
-              <button
-                type="button"
-                className="btn-secondary row gap-half ai-cen"
-                onClick={() => onEditRequest(group)}
-              >
-                <Pencil aria-hidden="true" />
-                <span>Edit</span>
-              </button>
-              <button
-                type="button"
-                className="btn-secondary btn-danger row gap-half ai-cen"
-                onClick={() => onDeleteRequest(group)}
-              >
-                <Trash2 aria-hidden="true" />
-                <span>Delete</span>
-              </button>
-            </menu>
-          </div>
-        )}
+              <Plus aria-hidden="true" />
+              <span>Add Variants</span>
+            </button>
+            <button
+              type="button"
+              className="btn-secondary row gap-half ai-cen"
+              onClick={() => onEditRequest(group)}
+              disabled={!canEdit}
+            >
+              <Pencil aria-hidden="true" />
+              <span>Edit</span>
+            </button>
+            <button
+              type="button"
+              className="btn-secondary btn-danger row gap-half ai-cen"
+              onClick={() => onDeleteRequest(group)}
+              disabled={!canEdit}
+            >
+              <Trash2 aria-hidden="true" />
+              <span>Delete</span>
+            </button>
+          </menu>
+        </div>
       </div>
 
       {!isSimple && (
@@ -682,6 +684,34 @@ export default function ProductsPage() {
         }
       }
 
+      // Sync All's "publish drafts" checkbox only ever gated whether these
+      // never-published products get skipped entirely — it never actually
+      // flipped their published_status to "publish", so they synced as
+      // still-draft. Reaffirm status for each candidate first, same as the
+      // single-product flow above.
+      if (syncRequest.type === "all" && publishDrafts && catalog) {
+        const candidates = getFirstPublishCandidates(catalog);
+        await Promise.all(
+          candidates.map(async (g) => {
+            const updateRes = await fetch(
+              `/api/catalog/product/${encodeURIComponent(g.sku)}`,
+              {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ publishedStatus: "publish" }),
+              },
+            );
+            const updateData = await updateRes.json();
+            if (!updateData.ok)
+              throw new Error(
+                updateData.error ||
+                  `Failed to update published status for ${g.sku}`,
+              );
+          }),
+        );
+      }
+
       // Convert string inputs to numbers, dropping blanks/zeros. stockOverrides
       // is one piece of state shared across every sync dialog the page can
       // open in a session — it's only ever cleared when a NEW dialog opens
@@ -717,6 +747,30 @@ export default function ProductsPage() {
           .filter(([, n]) => Number.isFinite(n) && (n as number) > 0),
       );
 
+      // Sync All's skipUnchanged relies on the sheet's own content hash,
+      // which can never see status drift (sheet didn't change, only Woo's
+      // actual status did — e.g. a manual wp-admin publish/unpublish). The
+      // ground-truth check that drives this dialog's warning text already
+      // knows which products drifted; those have to be force-synced or
+      // they'd get silently skipped as "unchanged" despite needing a fix.
+      const forceProductIds =
+        syncRequest.type === "all" &&
+        catalog &&
+        syncRequest.wooStatuses !== "loading"
+          ? catalog.groups
+              .filter((g) => {
+                if (!g.wooId) return false;
+                const wooStatus = syncRequest.wooStatuses[Number(g.wooId)];
+                if (wooStatus === undefined) return false;
+                const sheetWantsDraft =
+                  !g.publishedStatus || g.publishedStatus === "draft";
+                return sheetWantsDraft
+                  ? wooStatus === "publish"
+                  : wooStatus !== "publish";
+              })
+              .map((g) => g.productId)
+          : [];
+
       const body =
         syncRequest.type === "single"
           ? {
@@ -733,6 +787,7 @@ export default function ProductsPage() {
               ...(Object.keys(parsedOverrides).length
                 ? { stockOverrides: parsedOverrides }
                 : {}),
+              ...(forceProductIds.length ? { forceProductIds } : {}),
             };
 
       const res = await fetch("/api/catalog/sync_to_site", {
@@ -1265,6 +1320,20 @@ export default function ProductsPage() {
             mode === "publish" ||
             isAmbiguous ||
             (isConfirmed && !isCurrentlyLive);
+          // Content already auto-syncs on every edit (Edit Product/Variant,
+          // Add Variants) — by the time this dialog opens there's usually
+          // nothing new to push, so "Sync changes" as the primary label is
+          // misleading outside the one case where it's actually true: a
+          // stock decision is being made (new/never-confirmed rows). In
+          // every other confirmed-mode case, the primary action is really
+          // just "reaffirm the current status," not "sync."
+          const isSimple = syncRequest.group.rowCount === 0;
+          const hasZeroStock =
+            syncRequest.type === "single" &&
+            (syncRequest.forceStockPrompt ||
+              (isSimple
+                ? syncRequest.group.wooStock == null
+                : syncRequest.group.rows.some((r) => r.wooStock == null)));
 
           return (
             <DialogConfirm
@@ -1275,7 +1344,11 @@ export default function ProductsPage() {
                     ? "Publish this product?"
                     : isAmbiguous
                       ? "Couldn't confirm the site's current status"
-                      : "Sync changes to the site?"
+                      : hasZeroStock
+                        ? "Sync changes to the site?"
+                        : isCurrentlyLive
+                          ? "Keep this product published?"
+                          : "Keep this product as a draft?"
               }
               confirmIcon={<Globe aria-hidden="true" />}
               confirmLabel={
@@ -1285,7 +1358,11 @@ export default function ProductsPage() {
                     ? "Publish"
                     : isAmbiguous
                       ? "Publish"
-                      : "Sync changes"
+                      : hasZeroStock
+                        ? "Sync changes"
+                        : isCurrentlyLive
+                          ? "Keep it Published"
+                          : "Keep it Draft"
               }
               confirmingLabel={
                 mode === "publish" || isAmbiguous ? "Publishing…" : "Syncing…"
@@ -1379,23 +1456,6 @@ export default function ProductsPage() {
               )}
               {!isChecking &&
                 (() => {
-                  const isSimple = syncRequest.group.rowCount === 0;
-                  // The real question is "has Woo ever actually been told a
-                  // stock number for this exact row" — wooStock === null
-                  // means it hasn't, wooStock === 0 means it has (and is
-                  // genuinely, legitimately sold out, so don't re-nag).
-                  // wooId/wooVariantId existence is NOT the same thing:
-                  // converting the last variant back to a simple product
-                  // keeps the parent's existing wooId (inherited from its
-                  // variable past), but its OWN stock has never been
-                  // communicated to Woo as a simple product — wooId-based
-                  // checks wrongly treated that as "already established"
-                  // and skipped the force-stock prompt entirely.
-                  const hasZeroStock =
-                    syncRequest.forceStockPrompt ||
-                    (isSimple
-                      ? syncRequest.group.wooStock == null
-                      : syncRequest.group.rows.some((r) => r.wooStock == null));
                   if (!hasZeroStock) return null;
                   const existingStock = isSimple
                     ? (syncRequest.group.wooStock ?? syncRequest.group.stockQty)

@@ -560,7 +560,7 @@ export default function DialogCreateProduct({
               <legend>
                 Dimensions <span className="clr-muted xsmall">(optional)</span>
               </legend>
-              <div className="row gap-1 fw-wrap">
+              <div className="row gap-1 ai-end fw-wrap">
                 <div className="form-group flex-1">
                   <label htmlFor="cp-dim-w" className="bold">
                     Width (in)

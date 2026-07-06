@@ -166,6 +166,11 @@ body {
   list-style: "";
 }
 
+:is(ul, ol, li):not([role="list"]) {
+  margin: revert;
+  padding: revert;
+}
+
 img,
 svg {
   display: block;

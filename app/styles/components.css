@@ -545,7 +545,7 @@ menu.user-menu {
 }
 
 .toggle-group:has(
-    tr:is([data-dirty="true"]),
+    tr:is([data-dirty="true"], [data-out-of-stock="true"]),
     td:is([data-mismatch="true"]),
     summary:is([data-unsynced="true"])
   )
@@ -574,12 +574,16 @@ menu.user-menu {
   --_clr-feedback: var(--clr-danger);
 }
 
-.inventory-group:has(tr:is([data-dirty="true"])) :is(.summary-title) {
-  --_clr-feedback: var(--clr-accent);
+.inventory-group:has(tr:is([data-out-of-stock="true"])) :is(.summary-title) {
+  --_clr-feedback: var(--clr-warning);
 }
 
 .product-group:has(summary:is([data-unsynced="true"])) :is(.summary-title) {
   --_clr-feedback: var(--clr-warning);
+}
+
+.inventory-group:has(tr:is([data-dirty="true"])) :is(.summary-title) {
+  --_clr-feedback: var(--clr-accent);
 }
 
 /* Briefly rings the product card that was deep-linked to (e.g. from the
@@ -597,6 +601,17 @@ menu.user-menu {
 
 .faq-entry summary::-webkit-details-marker {
   display: initial;
+}
+
+.faq-content,
+.faq-content *,
+.faq-content.small,
+.faq-content .small {
+  line-height: var(--lh-400);
+}
+
+.faq-list li + li {
+  margin-block-start: var(--spacing-075, 0.75rem);
 }
 
 @keyframes product-highlight-ring {
@@ -657,6 +672,10 @@ menu.user-menu {
   --_clr-feedback: var(--clr-danger);
 }
 
+:where(.inventory-table tr:has(td[data-out-of-stock="true"])) {
+  --_clr-feedback: var(--clr-warning);
+}
+
 :where(.inventory-table tr[data-dirty="true"]) {
   --_clr-feedback: var(--clr-accent);
 }
@@ -665,13 +684,25 @@ menu.user-menu {
   background: color-mix(in oklch, var(--clr-danger) 18%, transparent);
 }
 
+.inventory-table tr td[data-out-of-stock="true"] {
+  background: color-mix(in oklch, var(--clr-warning) 18%, transparent);
+}
+
 .inventory-table
-  tr:is([data-dirty="true"], :has(td:is([data-mismatch="true"]))) {
+  tr:is(
+    [data-dirty="true"],
+    [data-out-of-stock="true"],
+    :has(td:is([data-mismatch="true"]))
+  ) {
   background-color: oklch(from var(--_clr-feedback) l c h / 0.2);
 }
 
 .inventory-table
-  tr:is([data-dirty="true"], :has(td[data-mismatch="true"]))
+  tr:is(
+    [data-dirty="true"],
+    [data-out-of-stock="true"],
+    :has(td[data-mismatch="true"])
+  )
   > td:first-child {
   position: relative;
 
