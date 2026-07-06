@@ -1829,6 +1829,24 @@ app.post(
         ? new Set(Object.keys(stockOverrides))
         : undefined;
 
+      // computeProductSyncHash includes stock_qty for simple (no-variant)
+      // products — it must be sourced from inventory_index (the confirmed
+      // value), not the raw formula-derived stock_qty column read above, or
+      // the hash this request writes can permanently disagree with what the
+      // next catalog load independently recomputes, leaving contentUnsynced
+      // falsely stuck on every future sync. Same fix as inventory/sync_stock
+      // (see its own comment on this). Skipped when stockOverrides already
+      // patched targetGroups in-memory — those explicit numbers are
+      // authoritative for this request, not whatever inventory_index has
+      // before this request's own write below lands.
+      if (!stockOverrides || Object.keys(stockOverrides).length === 0) {
+        targetGroups = await patchGroupsWithConfirmedStock(
+          sheets,
+          spreadsheetId,
+          targetGroups,
+        );
+      }
+
       const summary = await syncCatalogGroupsToWoo(
         sheets,
         spreadsheetId,
