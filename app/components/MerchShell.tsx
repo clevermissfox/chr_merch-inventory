@@ -114,7 +114,7 @@ export function MerchShell({ children }: MerchShellProps) {
                 <p className="merch-brand__eyebrow">CHR Merch</p>
                 <h1 className="merch-brand__title">
                   Merch Hub{" "}
-                  <span className="small clr-muted lowercase">(Beta)</span>
+                  <sup className="small clr-muted lowercase">(Beta)</sup>
                 </h1>
               </div>
             </div>

@@ -4,6 +4,7 @@ import type { Route } from "./+types/merch._index";
 import SearchComponent from "~/components/SearchComponent";
 import type { SearchResult } from "~/components/SearchComponent";
 import ActivityPanel from "~/components/ActivityPanel";
+import TopSellersPanel from "~/components/TopSellersPanel";
 import { useCatalog } from "~/context/CatalogContext";
 import { useAuth } from "~/context/AuthContext";
 import type { CatalogGroup, CatalogPayload, CatalogRow } from "~/types/catalog";
@@ -489,7 +490,7 @@ export default function MerchDashboard() {
           <h2>Needs attention</h2>
           <p className="small clr-muted">
             Split by where the fix actually happens — a product can appear in
-            both if it has both kinds of issue.
+            both sections if it has both issues.
           </p>
         </hgroup>
         {hasAttention ? (
@@ -517,6 +518,8 @@ export default function MerchDashboard() {
           <p className="small clr-muted">Nothing needs attention right now.</p>
         )}
       </section>
+
+      <TopSellersPanel />
 
       <ActivityPanel />
     </>

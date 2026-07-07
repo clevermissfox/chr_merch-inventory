@@ -193,18 +193,18 @@ function renderListValue(value: unknown): ReactNode | null {
 // e.g. "Jan. 1 08:30pm"
 function formatActivityTimestamp(timestamp: string): string {
   const months = [
-    "Jan.",
-    "Feb.",
-    "Mar.",
-    "Apr.",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
     "May",
-    "Jun.",
-    "Jul.",
-    "Aug.",
-    "Sep.",
-    "Oct.",
-    "Nov.",
-    "Dec.",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
   ];
   const d = new Date(timestamp);
   const hours24 = d.getHours();
@@ -212,19 +212,23 @@ function formatActivityTimestamp(timestamp: string): string {
   const hours12 = hours24 % 12 || 12;
   const hh = String(hours12).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${months[d.getMonth()]} ${d.getDate()} ${hh}:${mm}${ampm}`;
+  return `${months[d.getMonth()]} ${d.getDate()} | ${hh}:${mm}${ampm}`;
 }
 
 export default function ActivityPanel() {
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const entryLimit = 5;
 
   const loadActivity = useCallback(async () => {
     try {
-      const r = await fetch("/api/catalog/recent_activity?limit=5", {
-        credentials: "include",
-      });
+      const r = await fetch(
+        `/api/catalog/recent_activity?limit=${entryLimit}`,
+        {
+          credentials: "include",
+        },
+      );
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || "Failed to load activity");
       setEntries(data.entries);
@@ -249,7 +253,9 @@ export default function ActivityPanel() {
       <div className="row jc-sb ai-cen">
         <hgroup>
           <h2>Recent activity</h2>
-          <p className="small clr-muted">The last 5 actions taken in the app.</p>
+          <p className="small clr-muted">
+            The last {entryLimit} actions taken in the app.
+          </p>
         </hgroup>
         <button
           type="button"

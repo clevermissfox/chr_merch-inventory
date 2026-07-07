@@ -112,7 +112,10 @@ export default function DialogUserProfile({ onClose }: DialogUserProfileProps) {
         {devEmail && (
           <p className="small clr-muted">
             Need support?{" "}
-            <a href={`mailto:${devEmail}`} className="underline">
+            <a
+              href={`mailto:${devEmail}?subject=Merch%20App%20Support%20Request`}
+              className="underline"
+            >
               {devEmail}
             </a>
           </p>

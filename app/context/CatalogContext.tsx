@@ -41,13 +41,11 @@ interface CatalogContextValue {
     originalStockQty?: number | null,
   ) => void;
   clearDirty: () => void;
-  syncCatalogStock: (mode?: StockSyncMode) => Promise<void>;
   syncSelectedSkus: (
     skus: string[],
     overrideDirty?: Record<string, DirtyStockChange>,
     mode?: StockSyncMode,
   ) => Promise<SyncResult>;
-  resolveCatalogConflicts: () => Promise<void>;
   resetError: () => void;
 }
 
@@ -189,73 +187,6 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "CLEAR_DIRTY" });
   }, []);
 
-  /*
-    LEGACY: Used to sync via worker + GAS- removed from interface + values too
-  */
-  // const saveCatalogChanges = useCallback(async () => {
-  //   const changes = Object.values(state.dirtyBySku);
-
-  //   if (!changes.length) {
-  //     return;
-  //   }
-
-  //   dispatch({ type: "SAVE_START" });
-
-  //   try {
-  //     await postCatalogChanges({
-  //       changes,
-  //       mode: "standard_sync",
-  //     });
-
-  //     clearDirty();
-  //     await loadCatalog();
-  //   } catch (error) {
-  //     const message =
-  //       error instanceof Error ? error.message : "Failed to sync stock";
-  //     dispatch({ type: "LOAD_ERROR", payload: message });
-  //   } finally {
-  //     dispatch({ type: "SAVE_END" });
-  //   }
-  // }, [state.dirtyBySku, clearDirty, loadCatalog]);
-
-  /**
-   * Sends the current catalog snapshot to the backend stock sync route.
-   * Includes current dirty rows so the backend can support delta-style syncs if needed.
-   * Uses the confirmed catalog the sync response itself returns to update state,
-   * instead of issuing a separate follow-up GET — a fresh read immediately
-   * after a write isn't guaranteed to see it, so trust this request's own
-   * confirmed result rather than re-reading a second time.
-   */
-  const syncCatalogStock = useCallback(
-    async (mode: StockSyncMode = "standard_sync") => {
-      if (!state.catalog) {
-        return;
-      }
-
-      dispatch({ type: "SAVE_START" });
-
-      try {
-        const data = await postCatalogStockSync({
-          catalog: state.catalog,
-          dirtyBySku: state.dirtyBySku,
-          mode,
-        });
-        if (data?.catalog) {
-          dispatch({ type: "LOAD_SUCCESS", payload: data.catalog });
-        } else {
-          await loadCatalog({ withStock: true });
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to sync stock";
-        dispatch({ type: "LOAD_ERROR", payload: message });
-      } finally {
-        dispatch({ type: "SAVE_END" });
-      }
-    },
-    [state.catalog, state.dirtyBySku, clearDirty, loadCatalog],
-  );
-
   const syncSelectedSkus = useCallback(
     async (
       skus: string[],
@@ -340,84 +271,9 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     [state.catalog, state.dirtyBySku, loadCatalog],
   );
 
-  const resolveCatalogConflicts = useCallback(async () => {
-    if (!state.catalog) {
-      return;
-    }
-
-    const changes: Array<{ sku: string; stockQty: number | "" }> =
-      state.catalog.groups.flatMap((group) =>
-        group.rows
-          .filter((row) => row.stockQty !== row.wooStock)
-          .map((row) => ({
-            sku: row.sku,
-            stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
-          })),
-      );
-
-    if (!changes.length) {
-      return;
-    }
-
-    dispatch({ type: "SAVE_START" });
-
-    try {
-      await postCatalogChanges({
-        changes,
-        mode: "resolve_conflicts",
-      });
-
-      await loadCatalog({ withStock: true });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to resolve conflicts";
-      dispatch({ type: "LOAD_ERROR", payload: message });
-    } finally {
-      dispatch({ type: "SAVE_END" });
-    }
-  }, [state.catalog, loadCatalog]);
-
   const resetError = useCallback(() => {
     dispatch({ type: "RESET_ERROR" });
   }, []);
-
-  async function postCatalogChanges({
-    changes,
-    mode,
-  }: {
-    changes: Array<{ sku: string; stockQty: number | "" }>;
-    mode?: "standard_sync" | "resolve_conflicts";
-  }) {
-    const response = await fetch("/api/catalog/inventory/sync_stock", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        ...(mode ? { mode } : {}),
-        changes,
-      }),
-    });
-
-    const data = await response.json();
-
-    const topLevelOk =
-      typeof data === "object" && data !== null && "ok" in data
-        ? data.ok !== false
-        : true;
-
-    if (!response.ok || !topLevelOk) {
-      const errorMessage =
-        (typeof data === "object" && data !== null && "error" in data
-          ? String(data.error)
-          : null) || "Failed to sync stock";
-
-      throw new Error(errorMessage);
-    }
-
-    return data;
-  }
 
   /**
    * Posts the current catalog snapshot and sync metadata to the backend stock sync route.
@@ -471,9 +327,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         loadCatalog,
         setStockQty,
         clearDirty,
-        syncCatalogStock,
         syncSelectedSkus,
-        resolveCatalogConflicts,
         resetError,
       }}
     >

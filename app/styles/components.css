@@ -320,6 +320,77 @@ menu.user-menu {
   align-items: start;
 }
 
+.seller-bar-row {
+  display: grid;
+  grid-template-columns: 15ch 1fr auto;
+  align-items: center;
+  gap: var(--spacing-050, 0.5rem);
+}
+
+.seller-bar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Styling the native <meter> element. -webkit-appearance: none (not just
+   the unprefixed `appearance`) is required for Chrome to actually hand the
+   internal value-bar part over to author CSS — without it, the element
+   stays in native-painted mode and its own gradient keeps rendering
+   underneath regardless of selector specificity. Firefox styles the value
+   fill via ::-moz-meter-bar and takes the track's own background/border
+   directly off the element. */
+.seller-bar-track {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  inline-size: 100%;
+  block-size: 0.5rem;
+  border: none;
+  border-radius: var(--br-round, 999px);
+  overflow: hidden;
+}
+
+.seller-bar-track::-webkit-meter-bar {
+  background: var(--clr-surface-tertiary);
+  border: none;
+  border-radius: var(--br-round, 999px);
+  block-size: 100%;
+}
+
+.seller-bar-track::-moz-meter-bar {
+  background: var(--clr-surface-secondary);
+  border-radius: var(--br-round, 999px);
+}
+
+.seller-bar-track::-webkit-meter-optimum-value {
+  border-radius: var(--br-round, 999px);
+  transition: inline-size var(--default-trans-dur, 0.2s) ease;
+}
+
+/* Gradient, not a flat color — matches the UA rule's own background
+   shorthand shape (a linear-gradient) rather than assuming a solid color
+   is an equivalent override. */
+.seller-bar-track--accent::-webkit-meter-optimum-value {
+  background: linear-gradient(var(--clr-accent), var(--clr-accent));
+}
+
+.seller-bar-track--accent::-moz-meter-bar {
+  background: var(--clr-accent);
+}
+
+.seller-bar-track--warning::-webkit-meter-optimum-value {
+  background: linear-gradient(var(--clr-warning), var(--clr-warning));
+}
+
+.seller-bar-track--warning::-moz-meter-bar {
+  background: var(--clr-warning);
+}
+
+.seller-bar-value {
+  white-space: nowrap;
+}
+
 .merch-card,
 .merch-note-box,
 .metric {
@@ -425,6 +496,10 @@ menu.user-menu {
 
 .form-select-mode {
   display: contents;
+}
+
+select.select-mode {
+  min-inline-size: 15ch;
 }
 
 :is(.select-mode option:checked, .select-mode option:focus) {
@@ -633,6 +708,21 @@ menu.user-menu {
 
 .faq-list li + li {
   margin-block-start: var(--spacing-075, 0.75rem);
+}
+
+.faq-list .dot {
+  display: inline-flex;
+  place-content: center;
+
+  &::before {
+    content: "";
+    display: block;
+    inline-size: 1ch;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background-color: currentColor;
+  }
 }
 
 @keyframes product-highlight-ring {

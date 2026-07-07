@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Route } from "./+types/merch.products";
 import { useCatalog } from "~/context/CatalogContext";
@@ -491,6 +491,34 @@ export default function ProductsPage() {
   const [relinkStatus, setRelinkStatus] = useState<DialogConfirmStatus>("idle");
   const [relinkError, setRelinkError] = useState<string | null>(null);
 
+  // Every single-product sync/publish entry point (card's Status button,
+  // Add & Sync's force-stock prompt, delete-last-variant's
+  // convert-to-simple prompt) must open the confirm dialog through this one
+  // function — it's the one place that opens in a "checking status" loading
+  // state and then patches in the real Woo ground-truth status once
+  // fetchWooLiveStatus resolves. Before this was three separate inline
+  // copies of the same open-then-patch sequence (two effects below, plus
+  // one inline in onPublishRequest) that could silently drift apart; now a
+  // fix or bug here applies identically everywhere that opens this dialog.
+  const openSingleSyncRequest = useCallback(
+    (group: CatalogGroup, opts?: { forceStockPrompt?: boolean }) => {
+      setSyncRequest({
+        type: "single",
+        group,
+        wooLiveStatus: "loading",
+        forceStockPrompt: opts?.forceStockPrompt,
+      });
+      void fetchWooLiveStatus(group).then((wooLiveStatus) => {
+        setSyncRequest((prev) =>
+          prev?.type === "single" && prev.group.sku === group.sku
+            ? { ...prev, wooLiveStatus }
+            : prev,
+        );
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!catalog && !loading) {
       loadCatalog();
@@ -545,20 +573,9 @@ export default function ProductsPage() {
       // product, and it must start blank rather than inheriting stale input
       // from whatever was last typed elsewhere.
       setStockOverrides({});
-      setSyncRequest({
-        type: "single",
-        group: freshGroup,
-        wooLiveStatus: "loading",
-      });
-      void fetchWooLiveStatus(freshGroup).then((wooLiveStatus) => {
-        setSyncRequest((prev) =>
-          prev?.type === "single" && prev.group.sku === freshGroup.sku
-            ? { ...prev, wooLiveStatus }
-            : prev,
-        );
-      });
+      openSingleSyncRequest(freshGroup);
     }
-  }, [catalog, loading, pendingSyncProductId]);
+  }, [catalog, loading, pendingSyncProductId, openSingleSyncRequest]);
 
   // Converting a product's last variant away (variable → simple) has its
   // own, stricter rule than the generic force-stock flow above:
@@ -583,20 +600,8 @@ export default function ProductsPage() {
     setStockOverrides({
       [freshGroup.sku]: existing != null ? String(existing) : "0",
     });
-    setSyncRequest({
-      type: "single",
-      group: freshGroup,
-      wooLiveStatus: "loading",
-      forceStockPrompt: true,
-    });
-    void fetchWooLiveStatus(freshGroup).then((wooLiveStatus) => {
-      setSyncRequest((prev) =>
-        prev?.type === "single" && prev.group.sku === freshGroup.sku
-          ? { ...prev, wooLiveStatus }
-          : prev,
-      );
-    });
-  }, [catalog, loading, pendingConvertToSimpleId]);
+    openSingleSyncRequest(freshGroup, { forceStockPrompt: true });
+  }, [catalog, loading, pendingConvertToSimpleId, openSingleSyncRequest]);
 
   const handlePending = () => {
     setShowCreate(false);
@@ -839,7 +844,7 @@ export default function ProductsPage() {
         if (data.skippedUnchangedCount)
           parts.push(`${data.skippedUnchangedCount} unchanged`);
         if (data.skippedDraftCount)
-          parts.push(`${data.skippedDraftCount} drafts skipped`);
+          parts.push(`${data.skippedDraftCount} unpublished skipped`);
         if (data.failedCount) parts.push(`${data.failedCount} failed`);
         summary = `Sync all complete — ${parts.join(", ")}`;
         if (data.failedCount) {
@@ -1134,24 +1139,14 @@ export default function ProductsPage() {
               onEditVariantRequest={(row, grp) =>
                 setPendingEditVariant({ row, group: grp })
               }
-              onPublishRequest={async (grp) => {
+              onPublishRequest={(grp) => {
                 setPublishStatus("idle");
                 setPublishError(null);
                 setLastCreated(null);
                 setLastDeleted(null);
                 setLastSynced(null);
                 setStockOverrides({});
-                setSyncRequest({
-                  type: "single",
-                  group: grp,
-                  wooLiveStatus: "loading",
-                });
-                const wooLiveStatus = await fetchWooLiveStatus(grp);
-                setSyncRequest((prev) =>
-                  prev?.type === "single" && prev.group.sku === grp.sku
-                    ? { ...prev, wooLiveStatus }
-                    : prev,
-                );
+                openSingleSyncRequest(grp);
               }}
               onEditRequest={setPendingEdit}
             />
@@ -1653,8 +1648,11 @@ export default function ProductsPage() {
           const wooStatuses = isChecking ? {} : syncRequest.wooStatuses;
           // Ground truth: only count products Woo directly confirms are
           // still "publish" — syncing them with the sheet's draft status
-          // will actually take them offline.
-          const unpublishCount = sheetSaysDraft.filter(
+          // will actually take them offline. Named distinctly from
+          // unpublishedCount above (never-published products) — the two
+          // names being this close was itself a readability risk, not just
+          // a coincidence to preserve.
+          const takenOfflineCount = sheetSaysDraft.filter(
             (g) => g.wooId && wooStatuses[Number(g.wooId)] === "publish",
           ).length;
           // Mirror-image drift: the sheet says published, but Woo confirms
@@ -1814,12 +1812,13 @@ export default function ProductsPage() {
                   </ul>
                 </form>
               )}
-              {unpublishCount > 0 && (
+              {takenOfflineCount > 0 && (
                 <p className="small clr-warning">
-                  {unpublishCount} product{unpublishCount !== 1 ? "s" : ""}{" "}
-                  {unpublishCount !== 1 ? "are" : "is"} currently Published on
-                  the site but marked Draft in the sheet —{" "}
-                  {unpublishCount !== 1 ? "they" : "it"} will be unpublished
+                  {takenOfflineCount} product
+                  {takenOfflineCount !== 1 ? "s" : ""}{" "}
+                  {takenOfflineCount !== 1 ? "are" : "is"} currently Published
+                  on the site but marked Draft in the sheet —{" "}
+                  {takenOfflineCount !== 1 ? "they" : "it"} will be unpublished
                   when synced.
                 </p>
               )}

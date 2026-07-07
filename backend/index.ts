@@ -63,6 +63,7 @@ import {
   removeWooVariationImage,
   getWooProductStatus,
   getWooProductStatuses,
+  getWooProductSales,
 } from "./wooSyncManager";
 import { sendImageNotification, sendBugReportNotification } from "./mailer";
 
@@ -498,6 +499,61 @@ app.get("/api/catalog", async (req: Request, res: Response) => {
     return res
       .status(500)
       .json({ ok: false, error: error?.message || "Failed to load catalog" });
+  }
+});
+
+// Lifetime units-sold leaderboard for the Dashboard — top N and bottom N
+// products by Woo's own total_sales field (see getWooProductSales). Only
+// products with a wooId have anything to report; a product that's never
+// been published has no Woo sales history to speak of, so it's excluded
+// entirely rather than showing as "0 sold" alongside genuinely slow movers.
+app.get("/api/catalog/top_sellers", async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 2, 1), 10);
+    const { sheets, spreadsheetId } = getSheets();
+
+    const response = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: ["products_values", "variants_values"],
+    });
+    const valueRanges = response.data.valueRanges ?? [];
+    const productRows = rowsToObjects<ProductSheetRow>(
+      valueRanges[0]?.values ?? [],
+    );
+    const variantRows = rowsToObjects<VariantSheetRow>(
+      valueRanges[1]?.values ?? [],
+    );
+    const { groups } = shapeToCatalogPayload(productRows, variantRows);
+
+    const publishedGroups = groups.filter((g) => g.wooId);
+    const salesByWooId = await getWooProductSales(
+      publishedGroups.map((g) => Number(g.wooId)),
+    );
+
+    const ranked = publishedGroups
+      .map((g) => ({
+        sku: g.sku,
+        displayName: g.displayName,
+        unitsSold: salesByWooId.get(Number(g.wooId)) ?? 0,
+      }))
+      .sort((a, b) => b.unitsSold - a.unitsSold);
+
+    const topSellers = ranked.slice(0, limit);
+    // Bottom slice, kept in descending order (worst-of-the-worst last) and
+    // never overlapping topSellers — a catalog with fewer than 2×limit
+    // published products would otherwise show the same product in both
+    // lists.
+    const bottomSellers = ranked
+      .slice(Math.max(ranked.length - limit, limit))
+      .reverse();
+
+    return res.json({ ok: true, topSellers, bottomSellers });
+  } catch (error: any) {
+    console.error("GET /api/catalog/top_sellers failed:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to load top sellers",
+    });
   }
 });
 

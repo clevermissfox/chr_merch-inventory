@@ -1,5 +1,6 @@
 {
   "name": "chr_merch-inventory",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,9 +15,7 @@
     "@react-router/express": "^7.18.0",
     "@react-router/node": "^7.18.0",
     "@react-router/serve": "^7.18.0",
-    "@tiptap/extension-link": "^3.27.1",
     "@tiptap/extension-placeholder": "^3.27.1",
-    "@tiptap/extension-underline": "^3.27.1",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "compression": "^1.8.1",

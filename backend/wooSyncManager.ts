@@ -591,6 +591,41 @@ export async function getWooProductStatuses(
   return result;
 }
 
+// Lifetime units-sold count, straight off Woo's own `total_sales` field on
+// each product — no date range, no separate Analytics API call. Same
+// batching pattern as getWooProductStatuses (Woo's list endpoint caps at
+// 100 per page). Products Woo doesn't return (e.g. deleted on the Woo side
+// but still wooId'd in the sheet) are simply absent from the result map.
+export async function getWooProductSales(
+  wooIds: number[],
+): Promise<Map<number, number>> {
+  const result = new Map<number, number>();
+  const woo = getWooConfig();
+  for (let i = 0; i < wooIds.length; i += 100) {
+    const batch = wooIds.slice(i, i + 100);
+    if (!batch.length) continue;
+    const url = buildWooUrl(woo, "products", {
+      include: batch.join(","),
+      per_page: "100",
+      _fields: "id,total_sales",
+      _: String(Date.now()),
+    });
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    });
+    if (!res.ok) continue;
+    const arr = (await res.json()) as Array<{
+      id: number;
+      total_sales?: string | number;
+    }>;
+    for (const p of arr) {
+      const sales = Number(p.total_sales ?? 0);
+      result.set(p.id, Number.isFinite(sales) ? sales : 0);
+    }
+  }
+  return result;
+}
+
 // Default product list/lookup excludes trashed items — Woo still reserves
 // the SKU for a trashed product, so a plain SKU lookup won't explain a
 // "SKU already in use" error caused by one. Only called as a fallback when

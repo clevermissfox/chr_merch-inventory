@@ -296,7 +296,11 @@ export default function InventoryPage() {
     setSyncFeedbackTone("loading");
     setSyncSkipped([]);
     try {
-      const result = await syncSelectedSkus(skusToSync, undefined, selectedMode);
+      const result = await syncSelectedSkus(
+        skusToSync,
+        undefined,
+        selectedMode,
+      );
       const message = `Pushed ${result.updatedCount} SKU${result.updatedCount !== 1 ? "s" : ""} to website.`;
       setSyncFeedback(message);
       setSyncFeedbackTone("success");
@@ -403,15 +407,15 @@ export default function InventoryPage() {
       </section>
 
       <section className="toolbar grid gap-1 card">
-        <div className="toolbar-actions row fw-wrap gap-1 ai-st">
+        <div className="toolbar-actions row fw-wrap gap-1 ai-end">
           <form className="form-select-mode">
             {canEdit && (
-              <div className="form-group">
+              <div className="form-group flex-1">
                 <label className="bold ls-1" htmlFor="select-mode">
                   Select edit mode:
                 </label>
                 <select
-                  className="select-mode"
+                  className="select-mode flex-1"
                   id="select-mode"
                   size={4}
                   value={selectedMode}
@@ -432,7 +436,7 @@ export default function InventoryPage() {
                 </select>
               </div>
             )}
-            <div className="form-group row gap-1 fw-wrap w-100">
+            <div className="row gap-1 fw-wrap w-100">
               <button
                 type="button"
                 className="btn-secondary btn-lg flex-1 row gap-half jc-cen ai-cen"
@@ -450,9 +454,7 @@ export default function InventoryPage() {
                   className={state.loading ? "rotate" : ""}
                 />
                 <span>
-                  {state.loading
-                    ? "Refreshing..."
-                    : "Refresh Current Website Stock"}
+                  {state.loading ? "Refreshing..." : "Refresh Live Stock"}
                 </span>
               </button>
 
@@ -592,7 +594,10 @@ export default function InventoryPage() {
               </summary>
 
               <div className="table-wrapper">
-                <table className="data-table inventory-table">
+                <table
+                  className="data-table inventory-table
+                surface-tertiary"
+                >
                   <colgroup>
                     {selectMode && <col style={{ width: "fit-content" }} />}
                     <col style={{ width: "fit-content" }} />
