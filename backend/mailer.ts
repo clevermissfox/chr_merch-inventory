@@ -162,6 +162,130 @@ export async function sendImageNotification(
   if (error) throw new Error(`Resend error: ${error.message}`);
 }
 
+export interface CreationNotificationParams {
+  kind: "product" | "variant";
+  sku: string;
+  productName: string;
+  creatorEmail: string;
+  publishedStatus: string;
+  editLink: string;
+  // Only set for kind: "variant" — the actual new SKU(s), since `sku`/
+  // `productName` above identify the parent product they were added to.
+  variantSkus?: string[];
+}
+
+// Fires unconditionally on every product/variant creation, independent of
+// whether an image was attached — sendImageNotification only ever fires
+// from the separate image-upload endpoint, so a product created with no
+// image previously generated no email at all, just a merch_app_logs row.
+export async function sendCreationNotification(
+  params: CreationNotificationParams,
+): Promise<void> {
+  const { kind, sku, productName, creatorEmail, publishedStatus, editLink, variantSkus = [] } =
+    params;
+
+  const devEmail = process.env.DEV_EMAIL;
+  if (!devEmail) {
+    throw new Error(
+      "Email not configured — set DEV_EMAIL environment variable.",
+    );
+  }
+
+  const resend = getResend();
+
+  const heading =
+    kind === "product"
+      ? "New product created"
+      : `${variantSkus.length} new variant${variantSkus.length !== 1 ? "s" : ""} added`;
+
+  const variantListHtml =
+    kind === "variant" && variantSkus.length
+      ? `<tr><td style="padding:20px 0 0;">
+          <p style="margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">New variant SKU${variantSkus.length !== 1 ? "s" : ""}</p>
+          <p style="margin:0;font-size:13px;color:#282828;font-family:monospace;line-height:1.6;">${variantSkus.map(escapeHtml).join("<br>")}</p>
+        </td></tr>`
+      : "";
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f0ede6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#282828;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0ede6;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+
+        <!-- Header -->
+        <tr><td style="background:#282828;border-radius:12px 12px 0 0;padding:24px 32px;">
+          <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#d3aa56;font-weight:600;">CHR Merch Hub</p>
+          <h1 style="margin:8px 0 0;font-size:20px;font-weight:700;color:#ffffff;line-height:1.3;">
+            ${heading}
+          </h1>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="background:#ffffff;padding:28px 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+
+            <!-- Product info -->
+            <tr><td style="padding-bottom:20px;border-bottom:1px solid #e8e4dc;">
+              <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">Product</p>
+              <p style="margin:0;font-size:18px;font-weight:700;color:#282828;">${escapeHtml(productName)}</p>
+              <p style="margin:4px 0 0;font-size:13px;color:#666;font-family:monospace;">${escapeHtml(sku)}</p>
+            </td></tr>
+
+            <!-- Created by -->
+            <tr><td style="padding:20px 0;border-bottom:1px solid #e8e4dc;">
+              <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#888;">Created by</p>
+              <p style="margin:0;font-size:14px;color:#282828;">${escapeHtml(creatorEmail)}</p>
+              <p style="margin:4px 0 0;font-size:12px;color:#999;">Status: ${escapeHtml(publishedStatus)}</p>
+            </td></tr>
+
+            ${variantListHtml}
+
+            <!-- Edit link -->
+            <tr><td style="padding:20px 0 4px;">
+              <a href="${editLink}" style="display:inline-block;background:#282828;color:#d3aa56;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open in Merch Hub →</a>
+            </td></tr>
+
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f7f4ef;border-radius:0 0 12px 12px;padding:16px 32px;border-top:1px solid #e8e4dc;">
+          <p style="margin:0;font-size:12px;color:#999;line-height:1.5;">
+            Sent from <strong style="color:#666;">CHR Merch Hub</strong>.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const textLines = [
+    `${creatorEmail} ${kind === "product" ? "created a new product" : `added ${variantSkus.length} new variant${variantSkus.length !== 1 ? "s" : ""} to`} ${productName} (${sku}).`,
+    `Status: ${publishedStatus}`,
+    kind === "variant" && variantSkus.length
+      ? `New SKUs: ${variantSkus.join(", ")}`
+      : "",
+    `Open in Merch Hub: ${editLink}`,
+  ].filter(Boolean);
+
+  const { error } = await resend.emails.send({
+    from: "CHR Merch Hub <onboarding@resend.dev>",
+    to: devEmail,
+    subject:
+      kind === "product"
+        ? `[CHR Merch] New product — ${productName} (${sku})`
+        : `[CHR Merch] ${variantSkus.length} new variant${variantSkus.length !== 1 ? "s" : ""} — ${productName} (${sku})`,
+    html,
+    text: textLines.join("\n\n"),
+  });
+
+  if (error) throw new Error(`Resend error: ${error.message}`);
+}
+
 export interface BugReportNotificationParams {
   reporterEmail: string;
   page: string;

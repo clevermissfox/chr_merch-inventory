@@ -29,6 +29,7 @@ import {
   ensureDimensionExists,
   getEmailNameMap,
   getProductWooId,
+  getProductInfo,
   getRecentActivity,
   toTitleCase,
   parseCreateVariantsBody,
@@ -65,7 +66,11 @@ import {
   getWooProductStatuses,
   getWooProductSales,
 } from "./wooSyncManager";
-import { sendImageNotification, sendBugReportNotification } from "./mailer";
+import {
+  sendImageNotification,
+  sendBugReportNotification,
+  sendCreationNotification,
+} from "./mailer";
 
 import {
   applyWooStockMapToCatalogGroups,
@@ -100,6 +105,17 @@ const manualGuardProducts = false;
 
 // switch to true to block product management endpoints in non-production environments
 const guardProducts = TARGET_ENV === "production" ? false : manualGuardProducts;
+
+// Same production/non-production split already used for the post-login
+// redirect above — deliberately NOT derived from req.protocol/req.get, since
+// in dev the Vite proxy's changeOrigin:true rewrites the Host header to the
+// backend's own address (localhost:3001), not the port the browser actually
+// serves the frontend from.
+function buildAppUrl(path: string): string {
+  const base =
+    TARGET_ENV === "production" ? process.env.PRODUCTION_APP_URL : FRONTEND_URL;
+  return `${base}${path}`;
+}
 
 // Add CORS middleware
 app.use(
@@ -1194,6 +1210,23 @@ app.post(
         TARGET_ENV,
       ]).catch((e) => console.error("action log failed:", e));
 
+      // Fires unconditionally, not just when an image is attached — see
+      // sendCreationNotification's own doc comment. Best-effort: the
+      // product is already fully created at this point, so an email
+      // failure shouldn't fail the request, just get logged.
+      sendCreationNotification({
+        kind: "product",
+        sku,
+        productName: fields.displayName || sku,
+        creatorEmail: actor.email,
+        publishedStatus: fields.publishedStatus || "draft",
+        editLink: buildAppUrl(
+          `/products?highlight=${encodeURIComponent(productId)}`,
+        ),
+      }).catch((e) =>
+        console.error("create_product: notification email failed:", e),
+      );
+
       return res
         .status(200)
         .json({ ok: true, productId, sku, rowId, sheetRow });
@@ -1549,6 +1582,28 @@ app.post(
         }),
         TARGET_ENV,
       ]).catch((e) => console.error("log failed:", e));
+
+      // Same unconditional notification as create_product — see
+      // sendCreationNotification's doc comment. Needs a fresh lookup here
+      // (unlike create_product) since this handler only ever had
+      // productId/parentSku in scope, not the product's display name.
+      getProductInfo(sheets, spreadsheetId, productId)
+        .then((info) =>
+          sendCreationNotification({
+            kind: "variant",
+            sku: parentSku,
+            productName: info?.displayName || parentSku,
+            creatorEmail: actor.email,
+            publishedStatus: info?.publishedStatus || "draft",
+            editLink: buildAppUrl(
+              `/products?highlight=${encodeURIComponent(productId)}`,
+            ),
+            variantSkus: result.skus,
+          }),
+        )
+        .catch((e) =>
+          console.error("create_variants: notification email failed:", e),
+        );
 
       return res.status(201).json({ ok: true, skus: result.skus });
     } catch (error: any) {

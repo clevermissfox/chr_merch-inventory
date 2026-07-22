@@ -776,6 +776,45 @@ export async function getProductWooId(
   throw new Error(`Product SKU "${sku}" not found`);
 }
 
+// Cheap lookup for contexts that only have a productId and need to name the
+// product (e.g. the create_variants creation-notification email) — reads
+// just the products sheet rather than a full shapeToCatalogPayload pass.
+export async function getProductInfo(
+  sheets: SheetsClient,
+  spreadsheetId: string,
+  productId: string,
+): Promise<{ sku: string; displayName: string; publishedStatus: string } | null> {
+  const productData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "products_values",
+  });
+  const values = productData.data.values ?? [];
+  if (!values.length) return null;
+
+  const headers = (values[0] as string[]).map((h) => String(h).trim());
+  const productIdIdx = colByHeader(headers, "product_id");
+  const skuIdx = colByHeader(headers, "sku");
+  const displayNameIdx = colByHeader(headers, "display_name");
+  const productNameIdx = colByHeader(headers, "product_name");
+  const publishedStatusIdx = colByHeader(headers, "published_status");
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] as string[];
+    if (String(row[productIdIdx] ?? "").trim() === productId) {
+      const displayName =
+        String(row[displayNameIdx] ?? "").trim() ||
+        String(row[productNameIdx] ?? "").trim() ||
+        productId;
+      return {
+        sku: String(row[skuIdx] ?? "").trim(),
+        displayName,
+        publishedStatus: String(row[publishedStatusIdx] ?? "draft").trim(),
+      };
+    }
+  }
+  return null;
+}
+
 export async function updateProduct(
   sheets: SheetsClient,
   spreadsheetId: string,
