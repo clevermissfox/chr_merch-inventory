@@ -126,7 +126,7 @@ export function variationSignature(attrs: WooVariantAttr[]): string {
 // correctly rules this variant out when a customer picks a different value.
 const NO_ATTRIBUTE_VALUE = "—";
 
-type VariantAttrName = "Color" | "Size" | "Design";
+type VariantAttrName = "Color" | "Size" | "Design" | "Dimensions";
 
 interface GroupAttrPlan {
   // Used by some but not all variants — needs the NO_ATTRIBUTE_VALUE
@@ -144,18 +144,24 @@ interface GroupAttrPlan {
 }
 
 // Single pass over a product's variant rows to classify each of
-// Color/Size/Design as: unused (excluded entirely), partial (needs a
-// placeholder), uniform (collapses to a non-selector spec), or a normal
-// multi-value variation attribute (no special handling needed).
+// Color/Size/Design/Dimensions as: unused (excluded entirely), partial
+// (needs a placeholder), uniform (collapses to a non-selector spec), or a
+// normal multi-value variation attribute (no special handling needed).
 function computeGroupAttrPlan(
   rows: CatalogRow[],
   isSticker: boolean,
 ): GroupAttrPlan {
-  const presence: Record<VariantAttrName, number> = { Color: 0, Size: 0, Design: 0 };
+  const presence: Record<VariantAttrName, number> = {
+    Color: 0,
+    Size: 0,
+    Design: 0,
+    Dimensions: 0,
+  };
   const rawValues: Record<VariantAttrName, Set<string>> = {
     Color: new Set(),
     Size: new Set(),
     Design: new Set(),
+    Dimensions: new Set(),
   };
   for (const row of rows) {
     for (const a of buildVariantAttrs(row, isSticker)) {
@@ -191,7 +197,12 @@ function buildVariantAttrs(
   plan: GroupAttrPlan = {
     partialAttrNames: new Set(),
     nonVariationAttrNames: new Set(),
-    rawValues: { Color: new Set(), Size: new Set(), Design: new Set() },
+    rawValues: {
+      Color: new Set(),
+      Size: new Set(),
+      Design: new Set(),
+      Dimensions: new Set(),
+    },
   },
 ): WooVariantAttr[] {
   const attrs: WooVariantAttr[] = [];
@@ -218,6 +229,19 @@ function buildVariantAttrs(
     attrs.push({ name: "Design", option: designLabel });
   else if (!designLabel && partialAttrNames.has("Design"))
     attrs.push({ name: "Design", option: NO_ATTRIBUTE_VALUE });
+
+  // Not gated behind !isSticker — dimensions (e.g. "3x5" print sizes) are
+  // exactly what stickers/prints use in place of Size, per the SKU
+  // formula's own dimension-over-size precedence (see variantDupeKey).
+  // Previously never read here at all: this attribute existed on every
+  // CatalogRow (row.dimensions) and drove SKU generation, but never made it
+  // into the Woo payload — variants differing only by dimensions synced
+  // with no distinguishing attribute on the Woo side whatsoever.
+  if (row.dimensions && !nonVariationAttrNames.has("Dimensions"))
+    attrs.push({ name: "Dimensions", option: row.dimensions });
+  else if (!row.dimensions && partialAttrNames.has("Dimensions"))
+    attrs.push({ name: "Dimensions", option: NO_ATTRIBUTE_VALUE });
+
   return attrs;
 }
 
@@ -337,9 +361,12 @@ export function buildWooParentPayload(
     group.publishedStatus === "draft" ? "draft" : "publish";
 
   const attrPlan = computeGroupAttrPlan(group.rows, isSticker);
-  const attrOrder = (isSticker ? ["Design"] : ["Color", "Size", "Design"]) as Array<
-    "Color" | "Size" | "Design"
-  >;
+  // Dimensions is never gated by isSticker — see buildVariantAttrs' comment.
+  const attrOrder = (
+    isSticker
+      ? ["Design", "Dimensions"]
+      : ["Color", "Size", "Design", "Dimensions"]
+  ) as VariantAttrName[];
   // An attribute every variant shares the identical value for isn't a real
   // choice — expose it as a plain (non-variation) spec instead of a
   // pointless single-option dropdown customers have to click through. A
