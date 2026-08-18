@@ -38,8 +38,8 @@ export function meta({}: Route.MetaArgs) {
 
 export const handle = {
   page: "products",
-  title: "Catalog",
-  eyebrow: "Manage products",
+  title: "Products",
+  eyebrow: "Manage catalog",
 };
 
 // The sheet's published_status is only what we last wrote there — it's
@@ -274,7 +274,7 @@ function ProductGroup({
             aria-label="Product actions"
             popoverTarget={`product-actions-${group.productId}`}
           >
-            <MoreHorizontal aria-hidden="true" />
+            <MoreHorizontal className="fs-0" aria-hidden="true" />
           </button>
           <menu
             className="product-actions"
@@ -287,7 +287,7 @@ function ProductGroup({
               onClick={() => onPublishRequest(group)}
               disabled={!canEdit}
             >
-              <Globe aria-hidden="true" />
+              <Globe className="fs-0" aria-hidden="true" />
               <span>{getSyncButtonLabel(group)}</span>
             </button>
             {wooSiteUrl &&
@@ -299,7 +299,7 @@ function ProductGroup({
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  <ExternalLink aria-hidden="true" />
+                  <ExternalLink className="fs-0" aria-hidden="true" />
                   <span>View Product</span>
                 </a>
               )}
@@ -309,7 +309,7 @@ function ProductGroup({
               onClick={() => onAddVariantsRequest(group)}
               disabled={!canEdit}
             >
-              <Plus aria-hidden="true" />
+              <Plus className="fs-0" aria-hidden="true" />
               <span>Add Variants</span>
             </button>
             <button
@@ -318,7 +318,7 @@ function ProductGroup({
               onClick={() => onEditRequest(group)}
               disabled={!canEdit}
             >
-              <Pencil aria-hidden="true" />
+              <Pencil className="fs-0" aria-hidden="true" />
               <span>Edit</span>
             </button>
             <button
@@ -327,7 +327,7 @@ function ProductGroup({
               onClick={() => onDeleteRequest(group)}
               disabled={!canEdit}
             >
-              <Trash2 aria-hidden="true" />
+              <Trash2 className="fs-0" aria-hidden="true" />
               <span>Delete</span>
             </button>
           </menu>
@@ -391,7 +391,7 @@ function ProductGroup({
                           }
                           disabled={!canEdit}
                         >
-                          <Pencil aria-hidden="true" />
+                          <Pencil className="fs-0" aria-hidden="true" />
                         </button>
                         <button
                           type="button"
@@ -402,7 +402,7 @@ function ProductGroup({
                           }
                           disabled={!canEdit}
                         >
-                          <Trash2 aria-hidden="true" />
+                          <Trash2 className="fs-0" aria-hidden="true" />
                         </button>
                       </div>
                     </td>
@@ -1046,34 +1046,34 @@ export default function ProductsPage() {
               )}
           </div>
 
-          <div className="row gap-1 fw-wrap ai-cen">
+          <div className="row gap-1 ai-cen fw-wrap">
             <button
               type="button"
-              className="btn-secondary btn-lg row gap-half ai-cen"
+              className="btn-secondary btn-lg row gap-half ai-cen jc-cen flex-1"
               onClick={() => loadCatalog()}
               disabled={loading}
             >
-              <RefreshCw aria-hidden="true" />
+              <RefreshCw className="fs-0" aria-hidden="true" />
               <span>Refresh</span>
             </button>
             {canEdit && (
               <button
                 type="button"
-                className="btn-secondary btn-lg row gap-half ai-cen"
+                className="btn-secondary btn-lg row gap-half ai-cen jc-cen flex-1"
                 onClick={() => {
                   setFailedCreateFields(null);
                   setShowCreate(true);
                 }}
                 disabled={loading}
               >
-                <Plus aria-hidden="true" />
+                <Plus className="fs-0" aria-hidden="true" />
                 <span>New Product</span>
               </button>
             )}
             {canEdit && (
               <button
                 type="button"
-                className="btn-primary btn-lg row gap-half ai-cen"
+                className="btn-primary btn-lg row gap-half ai-cen jc-cen flex-1"
                 onClick={async () => {
                   setPublishDrafts(false);
                   setStockOverrides({});
@@ -1115,7 +1115,7 @@ export default function ProductsPage() {
                 }}
                 disabled={loading || !catalog?.groups.length}
               >
-                <Globe aria-hidden="true" />
+                <Globe className="fs-0" aria-hidden="true" />
                 <span>Sync All</span>
               </button>
             )}
@@ -1318,7 +1318,7 @@ export default function ProductsPage() {
       {pendingDelete && (
         <DialogConfirm
           title="Delete product?"
-          confirmIcon={<Trash2 aria-hidden="true" />}
+          confirmIcon={<Trash2 className="fs-0" aria-hidden="true" />}
           confirmLabel="Delete"
           confirmingLabel="Deleting…"
           confirmVariant="danger"
@@ -1402,7 +1402,7 @@ export default function ProductsPage() {
                           ? "Keep this product published?"
                           : "Keep this product as a draft?"
               }
-              confirmIcon={<Globe aria-hidden="true" />}
+              confirmIcon={<Globe className="fs-0" aria-hidden="true" />}
               confirmLabel={
                 isChecking
                   ? "Checking…"
@@ -1445,7 +1445,7 @@ export default function ProductsPage() {
               }
               secondaryIcon={
                 isAmbiguous || isConfirmed ? (
-                  <RefreshCw aria-hidden="true" />
+                  <RefreshCw className="fs-0" aria-hidden="true" />
                 ) : undefined
               }
               secondaryConfirmingLabel={
@@ -1604,7 +1604,7 @@ export default function ProductsPage() {
       {pendingRelink && (
         <DialogConfirm
           title="Relink to existing WooCommerce product?"
-          confirmIcon={<Globe aria-hidden="true" />}
+          confirmIcon={<Globe className="fs-0" aria-hidden="true" />}
           confirmLabel="Relink & sync"
           confirmingLabel="Relinking…"
           confirmVariant="primary"
