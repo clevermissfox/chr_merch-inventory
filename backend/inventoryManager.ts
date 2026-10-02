@@ -1262,28 +1262,37 @@ export function buildStockSyncChangesFromCatalog(
     return catalog.groups.flatMap((group) =>
       group.rows
         .filter((row) => row.stockQty !== row.wooStock)
-        .map((row) => ({
-          sku: row.sku,
-          stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
-        })),
+        .map((row) => {
+          const dirty = dirtyBySku[row.sku];
+          const stockQty = dirty !== undefined ? dirty.stockQty : row.stockQty;
+          return {
+            sku: row.sku,
+            stockQty: typeof stockQty === "number" ? stockQty : "",
+          };
+        }),
     );
   }
 
   if (mode === "sync_all") {
     return catalog.groups.flatMap((group) => {
       if (group.rows.length > 0) {
-        return group.rows.map((row) => ({
-          sku: row.sku,
-          stockQty: typeof row.stockQty === "number" ? row.stockQty : "",
-        }));
+        return group.rows.map((row) => {
+          const dirty = dirtyBySku[row.sku];
+          const stockQty = dirty !== undefined ? dirty.stockQty : row.stockQty;
+          return {
+            sku: row.sku,
+            stockQty: typeof stockQty === "number" ? stockQty : "",
+          };
+        });
       }
 
+      const dirty = group.sku ? dirtyBySku[group.sku] : undefined;
+      const stockQty = dirty !== undefined ? dirty.stockQty : group.stockQty;
       return group.sku
         ? [
             {
               sku: group.sku,
-              stockQty:
-                typeof group.stockQty === "number" ? group.stockQty : "",
+              stockQty: typeof stockQty === "number" ? stockQty : "",
             },
           ]
         : [];
